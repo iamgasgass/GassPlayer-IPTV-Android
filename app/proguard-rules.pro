@@ -1,0 +1,3 @@
+-keepattributes Signature,*Annotation*
+-keep class kotlinx.serialization.** { *; }
+-keepclassmembers class com.iamgasgass.gassplayer.data.** { *; }
