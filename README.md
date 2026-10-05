@@ -34,6 +34,3 @@ L'APK sarà in `app/build/outputs/apk/debug/`. Su GitHub è sufficiente caricare
 
 Le credenziali restano nel DataStore privato dell'app. Prima della distribuzione pubblica è consigliato integrare un backend o cifratura Keystore specifica per le credenziali provider. Non inserire API key in Git.
 
-## Nota di equivalenza
-
-Android non espone gli stessi framework e servizi di sistema di iOS. AirPlay/iCloud/Network Extension non possono essere copiati letteralmente: richiedono equivalenti Android o servizi esterni. Il progetto conserva flussi, sezioni e comportamento principale, ma la parità visuale assoluta richiede test comparativi su hardware reale e screenshot di riferimento per ogni stato.
