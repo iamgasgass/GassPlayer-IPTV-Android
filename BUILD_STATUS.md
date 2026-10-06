@@ -1,11 +1,18 @@
 # Stato build
 
-La repository include Gradle Wrapper e workflow GitHub Actions. Nel sandbox di generazione non erano installati JDK e Android SDK e l'installazione di toolchain eseguibili è stata bloccata; sono stati eseguiti controlli statici su XML, manifest, parentesi Kotlin, struttura Gradle e risorse.
+La versione corrente corregge il Gradle Wrapper, completa il percorso sorgenti → catalogo → EPG → player e aggiunge preferiti dedicati e backup/import JSON.
 
-La verifica definitiva si esegue automaticamente con GitHub Actions oppure localmente tramite:
+Controlli eseguiti nel sandbox:
+
+- struttura Gradle e Wrapper verificati;
+- manifest XML valido e componenti dichiarati presenti nel codice;
+- nessun riferimento residuo a `OpenTV`/`opentv`;
+- nessun `TODO`, `FIXME` o `NotImplemented` nel codice applicativo;
+- file sorgente e risorse inclusi nello ZIP verificati;
+- `./gradlew --version` arriva al download di Gradle 8.11.1, ma la rete del sandbox non risolve `services.gradle.org`.
+
+Verifica definitiva consigliata in un ambiente Android/CI con accesso alla rete:
 
 ```bash
-./verify-project.sh
+./gradlew lintDebug testDebugUnitTest assembleDebug
 ```
-
-Il workflow esegue `lintDebug`, test unitari e `assembleDebug`, quindi pubblica l'APK come artifact.

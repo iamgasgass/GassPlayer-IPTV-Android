@@ -1,36 +1,43 @@
 # GassPlayer IPTV — Android / Android TV
 
-Porting nativo Kotlin/Jetpack Compose di GassPlayer IPTV per telefoni, tablet, Android TV, Google TV e dispositivi compatibili Fire OS.
+GassPlayer è il client IPTV nativo Kotlin/Jetpack Compose per telefoni, tablet, Android TV, Google TV e dispositivi Fire OS compatibili.
 
-## Funzioni incluse
+## Funzioni implementate
 
-- Xtream Codes: autenticazione, categorie, Live TV, VOD, serie ed episodi.
-- Playlist M3U/M3U8 con attributi `tvg-id`, `tvg-logo`, `group-title` e catch-up.
-- UI responsive con navigazione D-pad, focus TV, griglia compatta e numeri canale.
-- Home, Live TV, Film, Serie, episodi, ricerca globale, preferiti, cronologia e Continua a guardare.
-- Player Media3/ExoPlayer, controlli TV, PiP, tracce audio/sottotitoli supportate dal flusso e ripresa della posizione.
-- Cache catalogo, DataStore, import/export JSON e GitHub Actions.
-- Parser XMLTV, client TMDB/OMDb, Trakt device flow e OpenSubtitles.
-- Download VOD, parental PIN, promemoria EPG, diagnostica rete e punto di integrazione VPN.
+- Xtream Codes con verifica credenziali, categorie, Live TV, VOD, serie ed episodi.
+- Playlist M3U/M3U8 con `tvg-id`, `tvg-name`, `tvg-logo`, `group-title` e rilevamento catch-up.
+- Cache catalogo locale con scadenza e aggiornamento forzato.
+- UI responsive per touch e D-pad con focus visibile, griglia compatta e numerazione canali.
+- Home, Live TV, Film, Serie, episodi, ricerca globale, preferiti e Continua a guardare.
+- Player Media3/ExoPlayer collegato a `MediaSession`, HLS/MPEG-TS/DASH/file progressivi compatibili con Media3, ripresa posizione e Picture-in-Picture.
+- EPG reale: `get_short_epg` per Xtream e XMLTV opzionale per M3U.
+- DataStore per sorgenti, preferiti e cronologia.
+- Import/export JSON completo.
+- Parser XMLTV, client TMDB/OMDb, Trakt device flow, OpenSubtitles, download VOD, parental PIN, promemoria EPG e diagnostica rete come servizi riutilizzabili.
+- GitHub Actions per build release e pubblicazione dell'APK come artifact.
 
 ## Build
 
-Requisiti: JDK 17, Android SDK 35 e Gradle 8.11.1.
+Requisiti locali: JDK 17, Android SDK 35 e Gradle 8.11.1.
 
 ```bash
-gradle assembleDebug
+./gradlew :app:lintDebug :app:testDebugUnitTest :app:assembleDebug
 ```
 
-L'APK sarà in `app/build/outputs/apk/debug/`. Su GitHub è sufficiente caricare la repository e avviare **Android CI**.
+Lo script `verify-project.sh` esegue gli stessi controlli. In CI il workflow `.github/workflows/android.yml` usa Java 17 e produce una release firmata come artifact.
 
 ## Primo avvio
 
 1. Aprire **Sorgenti**.
-2. Aggiungere account Xtream Codes oppure URL M3U.
-3. Attendere il caricamento e scegliere la sorgente attiva.
-4. Usare telecomando, tastiera, touch o controller.
+2. Aggiungere un account Xtream Codes oppure una playlist M3U.
+3. Per M3U, inserire facoltativamente l'URL XMLTV per avere la guida EPG.
+4. L'app verifica la sorgente prima di renderla attiva e scarica il catalogo.
+5. Usare telecomando, tastiera, touch o controller.
 
 ## Sicurezza
 
-Le credenziali restano nel DataStore privato dell'app. Prima della distribuzione pubblica è consigliato integrare un backend o cifratura Keystore specifica per le credenziali provider. Non inserire API key in Git.
+Le credenziali provider sono salvate nel DataStore privato dell'app. Per una distribuzione commerciale è consigliabile cifrare le credenziali tramite Android Keystore e non inserire API key di TMDB/OMDb/Trakt/OpenSubtitles nel repository.
 
+## Verifica dell'ambiente
+
+Il progetto include il Gradle Wrapper corretto. Nel sandbox di lavorazione la compilazione non può essere conclusa perché l'ambiente non può risolvere `services.gradle.org` per scaricare Gradle 8.11.1; il progetto è stato comunque sottoposto a controlli statici su sorgenti, manifest, wrapper, riferimenti locali e struttura del pacchetto.

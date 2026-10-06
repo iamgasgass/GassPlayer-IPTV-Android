@@ -5,8 +5,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -16,6 +20,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.iamgasgass.gassplayer.ui.screens.EpgScreen
+import com.iamgasgass.gassplayer.ui.screens.FavoritesScreen
 import com.iamgasgass.gassplayer.ui.screens.HomeScreen
 import com.iamgasgass.gassplayer.ui.screens.LiveScreen
 import com.iamgasgass.gassplayer.ui.screens.PlayerScreen
@@ -35,6 +40,7 @@ object Routes {
     const val SERIES = "series"
     const val EPG = "epg"
     const val SEARCH = "search"
+    const val FAVORITES = "favorites"
     const val SOURCES = "sources"
     const val SETTINGS = "settings"
     const val EPISODES = "episodes/{id}"
@@ -42,12 +48,8 @@ object Routes {
 
     fun episodes(id: String): String = "episodes/${Uri.encode(id)}"
 
-    fun player(
-        id: String,
-        url: String = "",
-        title: String = "",
-    ): String = "player/${Uri.encode(id)}" +
-        "?url=${Uri.encode(url)}&title=${Uri.encode(title)}"
+    fun player(id: String, url: String = "", title: String = ""): String =
+        "player/${Uri.encode(id)}?url=${Uri.encode(url)}&title=${Uri.encode(title)}"
 }
 
 @Composable
@@ -55,10 +57,20 @@ fun GassPlayerApp(vm: MainViewModel) {
     GassTheme {
         val navController = rememberNavController()
         val state by vm.state.collectAsState()
-        val startDestination = if (state.sources.isEmpty()) {
-            Routes.SOURCES
-        } else {
-            Routes.HOME
+        val startDestination = if (state.sources.isEmpty()) Routes.SOURCES else Routes.HOME
+        var hadSourceAtStartup by rememberSaveable { mutableStateOf(state.sources.isNotEmpty()) }
+
+        LaunchedEffect(state.sources.isNotEmpty()) {
+            val hasSource = state.sources.isNotEmpty()
+            if (!hadSourceAtStartup && hasSource &&
+                navController.currentDestination?.route == Routes.SOURCES
+            ) {
+                navController.navigate(Routes.HOME) {
+                    popUpTo(Routes.SOURCES) { inclusive = true }
+                    launchSingleTop = true
+                }
+            }
+            if (hasSource) hadSourceAtStartup = true
         }
 
         Box(
@@ -78,8 +90,16 @@ fun GassPlayerApp(vm: MainViewModel) {
                 composable(Routes.HOME) {
                     HomeScreen(
                         state = state,
-                        navigate = { route -> navController.navigate(route) },
-                        play = { id -> navController.navigate(Routes.player(id)) },
+                        navigate = navController::navigate,
+                        continuePlaying = { progress ->
+                            navController.navigate(
+                                Routes.player(
+                                    id = progress.mediaId,
+                                    url = progress.streamUrl,
+                                    title = progress.title,
+                                ),
+                            )
+                        },
                     )
                 }
 
@@ -87,7 +107,7 @@ fun GassPlayerApp(vm: MainViewModel) {
                     LiveScreen(
                         state = state,
                         onBack = { navController.popBackStack() },
-                        onFavorite = { id -> vm.favorite(id) },
+                        onFavorite = vm::favorite,
                         play = { id -> navController.navigate(Routes.player(id)) },
                     )
                 }
@@ -96,7 +116,7 @@ fun GassPlayerApp(vm: MainViewModel) {
                     VodScreen(
                         state = state,
                         onBack = { navController.popBackStack() },
-                        onFavorite = { id -> vm.favorite(id) },
+                        onFavorite = vm::favorite,
                         play = { id -> navController.navigate(Routes.player(id)) },
                     )
                 }
@@ -105,7 +125,7 @@ fun GassPlayerApp(vm: MainViewModel) {
                     SeriesScreen(
                         state = state,
                         onBack = { navController.popBackStack() },
-                        onFavorite = { id -> vm.favorite(id) },
+                        onFavorite = vm::favorite,
                         open = { id -> navController.navigate(Routes.episodes(id)) },
                     )
                 }
@@ -113,6 +133,7 @@ fun GassPlayerApp(vm: MainViewModel) {
                 composable(Routes.EPG) {
                     EpgScreen(
                         state = state,
+                        vm = vm,
                         onBack = { navController.popBackStack() },
                         play = { id -> navController.navigate(Routes.player(id)) },
                     )
@@ -133,33 +154,40 @@ fun GassPlayerApp(vm: MainViewModel) {
                     )
                 }
 
+                composable(Routes.FAVORITES) {
+                    FavoritesScreen(
+                        state = state,
+                        onBack = { navController.popBackStack() },
+                        toggle = vm::favorite,
+                        play = { id -> navController.navigate(Routes.player(id)) },
+                        openSeries = { id -> navController.navigate(Routes.episodes(id)) },
+                    )
+                }
+
                 composable(Routes.SOURCES) {
                     SourcesScreen(
                         state = state,
                         onBack = { navController.popBackStack() },
-                        add = { name, type, url, user, password ->
-                            vm.add(name, type, url, user, password)
-                        },
-                        select = { source -> vm.select(source) },
-                        delete = { id -> vm.delete(id) },
+                        add = vm::add,
+                        select = vm::select,
+                        delete = vm::delete,
                     )
                 }
 
                 composable(Routes.SETTINGS) {
                     SettingsScreen(
                         state = state,
+                        vm = vm,
                         onBack = { navController.popBackStack() },
-                        compact = { enabled -> vm.setCompact(enabled) },
-                        numbers = { enabled -> vm.setNumbers(enabled) },
+                        compact = vm::setCompact,
+                        numbers = vm::setNumbers,
                         refresh = { vm.reload(true) },
                     )
                 }
 
                 composable(
                     route = Routes.EPISODES,
-                    arguments = listOf(
-                        navArgument("id") { type = NavType.StringType },
-                    ),
+                    arguments = listOf(navArgument("id") { type = NavType.StringType }),
                 ) { entry ->
                     SeriesEpisodesScreen(
                         state = state,
@@ -167,9 +195,7 @@ fun GassPlayerApp(vm: MainViewModel) {
                         vm = vm,
                         onBack = { navController.popBackStack() },
                         play = { url, title, id ->
-                            navController.navigate(
-                                Routes.player(id = id, url = url, title = title),
-                            )
+                            navController.navigate(Routes.player(id, url, title))
                         },
                     )
                 }
@@ -194,7 +220,7 @@ fun GassPlayerApp(vm: MainViewModel) {
                         explicitUrl = entry.arguments?.getString("url").orEmpty(),
                         explicitTitle = entry.arguments?.getString("title").orEmpty(),
                         onBack = { navController.popBackStack() },
-                        save = { progress -> vm.saveProgress(progress) },
+                        save = vm::saveProgress,
                     )
                 }
             }

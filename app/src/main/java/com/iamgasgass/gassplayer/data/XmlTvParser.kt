@@ -7,17 +7,76 @@ import java.text.SimpleDateFormat
 import java.util.Locale
 
 object XmlTvParser {
-    private val formats=listOf("yyyyMMddHHmmss Z","yyyyMMddHHmmssZ","yyyyMMddHHmmss")
-    fun parse(input:InputStream):List<EpgProgramme> {
-        val parser=Xml.newPullParser().apply { setInput(input,null) }; val out=mutableListOf<EpgProgramme>()
-        var event=parser.eventType; var channel=""; var start=0L; var stop=0L; var title=""; var desc=""; var tag=""
-        while(event!=XmlPullParser.END_DOCUMENT){
-            when(event){
-                XmlPullParser.START_TAG -> { tag=parser.name; if(tag=="programme"){channel=parser.getAttributeValue(null,"channel").orEmpty(); start=date(parser.getAttributeValue(null,"start")); stop=date(parser.getAttributeValue(null,"stop")); title=""; desc=""} }
-                XmlPullParser.TEXT -> when(tag){"title"->title+=parser.text; "desc"->desc+=parser.text}
-                XmlPullParser.END_TAG -> { if(parser.name=="programme" && channel.isNotBlank() && title.isNotBlank()) out+=EpgProgramme(channel,title.trim(),desc.trim(),start,stop); tag="" }
-            }; event=parser.next()
-        }; return out
+    private val formats = listOf(
+        "yyyyMMddHHmmss Z",
+        "yyyyMMddHHmmssZ",
+        "yyyyMMddHHmmss",
+    )
+
+    fun parse(input: InputStream): List<EpgProgramme> {
+        input.use { stream ->
+            val parser = Xml.newPullParser().apply { setInput(stream, null) }
+            val out = mutableListOf<EpgProgramme>()
+            var event = parser.eventType
+            var channel = ""
+            var start = 0L
+            var stop = 0L
+            var title = ""
+            var desc = ""
+            var tag = ""
+            var icon = ""
+
+            while (event != XmlPullParser.END_DOCUMENT) {
+                when (event) {
+                    XmlPullParser.START_TAG -> {
+                        tag = parser.name.orEmpty()
+                        when (tag) {
+                            "programme" -> {
+                                channel = parser.getAttributeValue(null, "channel").orEmpty()
+                                start = date(parser.getAttributeValue(null, "start"))
+                                stop = date(parser.getAttributeValue(null, "stop"))
+                                title = ""
+                                desc = ""
+                                icon = ""
+                            }
+                            "icon" -> icon = parser.getAttributeValue(null, "src").orEmpty()
+                        }
+                    }
+                    XmlPullParser.TEXT -> when (tag) {
+                        "title" -> title += parser.text.orEmpty()
+                        "desc" -> desc += parser.text.orEmpty()
+                    }
+                    XmlPullParser.END_TAG -> {
+                        if (parser.name == "programme" && channel.isNotBlank() && title.isNotBlank()) {
+                            out += EpgProgramme(
+                                channelId = channel,
+                                title = title.trim(),
+                                description = desc.trim(),
+                                startMillis = start,
+                                endMillis = stop,
+                                icon = icon,
+                            )
+                        }
+                        tag = ""
+                    }
+                }
+                event = parser.next()
+            }
+            return out.sortedWith(compareBy<EpgProgramme> { it.channelId }.thenBy { it.startMillis })
+        }
     }
-    private fun date(value:String?):Long { val clean=value.orEmpty().trim(); for(f in formats) try{return SimpleDateFormat(f,Locale.US).parse(clean)?.time?:0}catch(_:Exception){}; return 0 }
+
+    private fun date(value: String?): Long {
+        val clean = value.orEmpty().trim()
+        for (format in formats) {
+            try {
+                return SimpleDateFormat(format, Locale.US).apply {
+                    isLenient = false
+                }.parse(clean)?.time ?: 0L
+            } catch (_: Exception) {
+                // Try the next XMLTV variant.
+            }
+        }
+        return 0L
+    }
 }

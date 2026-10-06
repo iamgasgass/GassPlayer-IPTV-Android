@@ -28,6 +28,7 @@ app/src/main/java/com/iamgasgass/gassplayer/ui/MainViewModel.kt
 app/src/main/java/com/iamgasgass/gassplayer/ui/screens/Common.kt
 app/src/main/java/com/iamgasgass/gassplayer/ui/screens/EpgScreen.kt
 app/src/main/java/com/iamgasgass/gassplayer/ui/screens/HomeScreen.kt
+app/src/main/java/com/iamgasgass/gassplayer/ui/screens/FavoritesScreen.kt
 app/src/main/java/com/iamgasgass/gassplayer/ui/screens/LiveScreen.kt
 app/src/main/java/com/iamgasgass/gassplayer/ui/screens/PlayerScreen.kt
 app/src/main/java/com/iamgasgass/gassplayer/ui/screens/SearchScreen.kt
