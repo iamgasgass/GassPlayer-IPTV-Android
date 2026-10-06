@@ -1,0 +1,5 @@
+package com.iamgasgass.gassplayer.services
+import com.iamgasgass.gassplayer.network.HttpClient
+import kotlinx.serialization.json.*
+import java.net.URLEncoder
+class OpenSubtitlesService(private val http:HttpClient,private val apiKey:String){data class Subtitle(val id:String,val language:String,val name:String,val downloadCount:Int);suspend fun search(title:String,languages:String="it,en"):List<Subtitle>{if(apiKey.isBlank())return emptyList();val url="https://api.opensubtitles.com/api/v1/subtitles?query=${URLEncoder.encode(title,"UTF-8")}&languages=$languages";val root=Json.parseToJsonElement(http.text(url,mapOf("Api-Key" to apiKey,"User-Agent" to "GassPlayer v1.0"))).jsonObject;return root["data"]?.jsonArray?.mapNotNull{e->val o=e.jsonObject;val a=o["attributes"]?.jsonObject?:return@mapNotNull null;Subtitle(o["id"]?.jsonPrimitive?.content.orEmpty(),a["language"]?.jsonPrimitive?.content.orEmpty(),a["release"]?.jsonPrimitive?.content.orEmpty(),a["download_count"]?.jsonPrimitive?.intOrNull?:0)}?:emptyList()}}

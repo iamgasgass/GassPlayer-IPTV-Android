@@ -1,0 +1,18 @@
+package com.iamgasgass.gassplayer.ui.screens
+import androidx.compose.foundation.*
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.*
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import com.iamgasgass.gassplayer.ui.*
+import com.iamgasgass.gassplayer.ui.theme.*
+
+@Composable fun HomeScreen(state:AppState,navigate:(String)->Unit,play:(String)->Unit){if(state.loading){LoadingView();return};LazyColumn(Modifier.fillMaxSize(),contentPadding=PaddingValues(28.dp),verticalArrangement=Arrangement.spacedBy(22.dp)){item{Row(verticalAlignment=Alignment.CenterVertically){Column{Text("GassPlayer",style=MaterialTheme.typography.displaySmall,fontWeight=FontWeight.Black);Text(state.selectedSource?.name?:"Nessuna sorgente",color=Muted)};Spacer(Modifier.weight(1f));IconButton({navigate(Routes.SEARCH)}){Icon(Icons.Default.Search,"Ricerca")};IconButton({navigate(Routes.SETTINGS)}){Icon(Icons.Default.Settings,"Impostazioni")}}};item{GlassCard(Modifier.fillMaxWidth().height(210.dp),onClick={navigate(Routes.LIVE)}){Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(Color(0xFF28164E),Color.Transparent)))){Column(Modifier.padding(20.dp)){Text("Guarda ora",color=Color(0xFFBFA7FF));Text("La tua TV, senza limiti",style=MaterialTheme.typography.displaySmall,fontWeight=FontWeight.Bold);Spacer(Modifier.height(10.dp));Text("${state.catalog.channels.size} canali • ${state.catalog.movies.size} film • ${state.catalog.series.size} serie",color=Muted);Button({navigate(Routes.LIVE)},colors=ButtonDefaults.buttonColors(containerColor=Purple)){Icon(Icons.Default.PlayArrow,null);Text(" Live TV")}}}}};item{Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(14.dp)){HomeTile("Live TV","${state.catalog.channels.size} canali",Icons.Default.LiveTv,Modifier.weight(1f)){navigate(Routes.LIVE)};HomeTile("Film","${state.catalog.movies.size} titoli",Icons.Default.Movie,Modifier.weight(1f)){navigate(Routes.VOD)};HomeTile("Serie TV","${state.catalog.series.size} serie",Icons.Default.Tv,Modifier.weight(1f)){navigate(Routes.SERIES)};HomeTile("Guida TV","EPG",Icons.Default.CalendarMonth,Modifier.weight(1f)){navigate(Routes.EPG)}}};if(state.progress.isNotEmpty()){item{Text("Continua a guardare",style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.Bold)};item{LazyRow(horizontalArrangement=Arrangement.spacedBy(14.dp)){items(state.progress,key={it.mediaId}){p->PosterCard(p.title,p.poster,"${(p.fraction*100).toInt()}%",onClick={play(p.mediaId)})}}}};item{Row(horizontalArrangement=Arrangement.spacedBy(14.dp)){HomeTile("Sorgenti","Gestisci playlist",Icons.Default.Dns,Modifier.weight(1f)){navigate(Routes.SOURCES)};HomeTile("Ricerca","Tutto il catalogo",Icons.Default.Search,Modifier.weight(1f)){navigate(Routes.SEARCH)};HomeTile("Preferiti","${state.favorites.size} elementi",Icons.Default.Favorite,Modifier.weight(1f)){navigate(Routes.LIVE)}}}}}
+@Composable private fun HomeTile(title:String,subtitle:String,icon:androidx.compose.ui.graphics.vector.ImageVector,modifier:Modifier,onClick:()->Unit){GlassCard(modifier.height(125.dp),onClick){Icon(icon,null,tint=Purple,modifier=Modifier.size(34.dp));Spacer(Modifier.weight(1f));Text(title,fontWeight=FontWeight.Bold);Text(subtitle,color=Muted,style=MaterialTheme.typography.bodySmall)}}
