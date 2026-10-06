@@ -108,7 +108,7 @@ fun EpgScreen(
                         contentPadding = PaddingValues(bottom = 28.dp),
                     ) {
                         items(programmes, key = { "${it.channelId}-${it.startMillis}" }) {
-                            ProgrammeCard(it, onClick = { play(selected.id) })
+                            ProgrammeCard(it, onClick = { selected?.let { channel -> play(channel.id) } })
                         }
                     }
                 }

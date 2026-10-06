@@ -62,6 +62,7 @@ fun PlayerScreen(
         channel?.name ?: movie?.name ?: "Riproduzione"
     }
     val poster = movie?.poster ?: channel?.logo.orEmpty()
+    val resumePositionMs = progress?.positionMs ?: 0L
 
     var controller by remember(url) { mutableStateOf<MediaController?>(null) }
 
@@ -78,8 +79,8 @@ fun PlayerScreen(
                 runCatching { future.get() }
                     .onSuccess { mediaController ->
                         mediaController.setMediaItem(MediaItem.fromUri(url))
-                        if (progress?.positionMs ?: 0L > 0L) {
-                            mediaController.seekTo(progress.positionMs)
+                        if (resumePositionMs > 0L) {
+                            mediaController.seekTo(resumePositionMs)
                         }
                         mediaController.prepare()
                         mediaController.playWhenReady = true
