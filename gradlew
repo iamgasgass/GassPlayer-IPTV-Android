@@ -1,6 +1,6 @@
 #!/usr/bin/env sh
 set -eu
-GRADLE_VERSION="9.6.0"
+GRADLE_VERSION="9.8.0"
 GRADLE_HOME="${GRADLE_HOME:-}"
 if [ -n "$GRADLE_HOME" ] && [ -x "$GRADLE_HOME/bin/gradle" ]; then exec "$GRADLE_HOME/bin/gradle" "$@"; fi
 if command -v gradle >/dev/null 2>&1; then exec gradle "$@"; fi

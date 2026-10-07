@@ -43,7 +43,7 @@ class PlaybackController(private val context: Context, private val diagnostics: 
     private var simpleCache: SimpleCache? = null
     private var currentItem: MediaItem? = null
     private var startPosition = 0L
-    private var urlCandidates: List<StreamUrlCandidates.StreamCandidate> = emptyList()
+    private var urlCandidates: List<String> = emptyList()
     private var urlIndex = 0
     private var userAgents: List<String> = emptyList()
     private var userAgentIndex = 0
@@ -89,7 +89,7 @@ class PlaybackController(private val context: Context, private val diagnostics: 
         _current.value = item
         currentItem = item
         this.startPosition = startPosition.coerceAtLeast(0L)
-        urlCandidates = StreamUrlCandidates.playbackCandidates(item.streamUrl, item.kind)
+        urlCandidates = StreamUrlCandidates.ordered(item.streamUrl)
         urlIndex = 0
         userAgents = buildList {
             settings.value.customUserAgent.trim().takeIf { it.isNotBlank() }?.let(::add)
@@ -133,17 +133,30 @@ class PlaybackController(private val context: Context, private val diagnostics: 
     private fun applyUserAgent() { httpFactory.setDefaultRequestProperties(mapOf("User-Agent" to userAgents.getOrNull(userAgentIndex).orEmpty().ifBlank { effectiveUserAgent() })) }
 
     private fun setCurrentUrlAndPrepare(position: Long) {
-        val candidate = urlCandidates.getOrNull(urlIndex)
-            ?: StreamUrlCandidates.StreamCandidate(currentItem?.streamUrl.orEmpty())
-        val dataBuilder = androidx.media3.common.MediaItem.Builder()
-            .setUri(candidate.url)
+        val source = urlCandidates.getOrElse(urlIndex) { currentItem?.streamUrl.orEmpty() }
+        val builder = androidx.media3.common.MediaItem.Builder()
+            .setUri(source)
             .setMediaId(currentItem?.id.orEmpty())
             .setTag(currentItem)
-        candidate.mimeType?.let(dataBuilder::setMimeType)
-        player.setMediaItem(dataBuilder.build())
+        mimeTypeFor(source)?.let(builder::setMimeType)
+        player.setMediaItem(builder.build())
         player.prepare()
         if (position > 0) player.seekTo(position)
         player.playWhenReady = true
+    }
+
+
+    private fun mimeTypeFor(url: String): String? {
+        val path = runCatching { java.net.URI(url).path.orEmpty() }.getOrDefault(url).lowercase()
+        return when {
+            path.endsWith(".m3u8") -> androidx.media3.common.MimeTypes.APPLICATION_M3U8
+            path.endsWith(".mpd") -> androidx.media3.common.MimeTypes.APPLICATION_MPD
+            path.endsWith(".ts") || path.endsWith(".mts") -> androidx.media3.common.MimeTypes.VIDEO_MP2T
+            path.endsWith(".mp4") || path.endsWith(".m4v") || path.endsWith(".mov") -> androidx.media3.common.MimeTypes.VIDEO_MP4
+            path.endsWith(".webm") -> androidx.media3.common.MimeTypes.VIDEO_WEBM
+            path.endsWith(".mp3") -> androidx.media3.common.MimeTypes.AUDIO_MPEG
+            else -> null
+        }
     }
 
     private fun tryResolvePlaybackError(error: PlaybackException): Boolean {
@@ -157,8 +170,7 @@ class PlaybackController(private val context: Context, private val diagnostics: 
         }
         if (urlIndex + 1 < urlCandidates.size) {
             urlIndex++
-            val retryCandidate = urlCandidates[urlIndex]
-            diagnostics.log("WARN", "player", "Retry stream candidate ${urlIndex + 1}/${urlCandidates.size}: ${retryCandidate.url} ${retryCandidate.mimeType.orEmpty()}")
+            diagnostics.log("WARN", "player", "Retry URL candidato ${urlIndex + 1}/${urlCandidates.size}")
             setCurrentUrlAndPrepare(player.currentPosition)
             return true
         }
