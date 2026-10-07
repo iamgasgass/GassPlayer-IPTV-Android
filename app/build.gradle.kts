@@ -64,7 +64,8 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:5.5.0")
     implementation("io.coil-kt.coil3:coil-compose:3.6.3")
     implementation("io.coil-kt.coil3:coil-network-okhttp:3.6.3")
-    implementation("com.wireguard.android:tunnel:1.0.20260315")
+    // Published WireGuard Android tunnel artifact; 1.0.20260315 is not present on Maven Central.
+    implementation("com.wireguard.android:tunnel:1.0.20260102")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
 }
