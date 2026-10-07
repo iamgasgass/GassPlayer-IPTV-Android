@@ -2,12 +2,15 @@ package com.gassplayer.android.media
 
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import androidx.core.content.ContextCompat
 import androidx.media3.common.Player
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DefaultDataSource
-import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.TransferListener
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
@@ -18,6 +21,8 @@ import androidx.media3.exoplayer.LoadControl
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.exoplayer.upstream.DefaultAllocator
+import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
+import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.session.MediaSession
 import com.gassplayer.android.data.AppSettings
 import com.gassplayer.android.data.DiagnosticsService
@@ -31,6 +36,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import java.io.File
+import java.io.IOException
+import java.util.concurrent.TimeUnit
+import okhttp3.ConnectionSpec
+import okhttp3.OkHttpClient
 
 @OptIn(UnstableApi::class)
 class PlaybackController(private val context: Context, private val diagnostics: DiagnosticsService) {
@@ -47,10 +56,35 @@ class PlaybackController(private val context: Context, private val diagnostics: 
     private var urlIndex = 0
     private var userAgents: List<String> = emptyList()
     private var userAgentIndex = 0
-    private val httpFactory = DefaultHttpDataSource.Factory()
-        .setAllowCrossProtocolRedirects(true)
-        .setConnectTimeoutMs(12_000)
-        .setReadTimeoutMs(30_000)
+    private var streamHeaders: Map<String, String> = emptyMap()
+
+    private fun newStreamingClient(protocols: List<okhttp3.Protocol>, legacyTls: Boolean = false) = OkHttpClient.Builder()
+        .retryOnConnectionFailure(true)
+        .followRedirects(true)
+        .followSslRedirects(true)
+        .connectTimeout(20, TimeUnit.SECONDS)
+        .readTimeout(120, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
+        .connectionPool(okhttp3.ConnectionPool(8, 5, TimeUnit.MINUTES))
+        // API 25 devices and older IPTV TLS endpoints benefit from a compatible TLS profile.
+        // Keep a modern profile first; use the legacy-compatible profile only after a transport
+        // failure so well-configured HTTPS servers retain the stronger default behaviour.
+        .connectionSpecs(if (legacyTls) {
+            listOf(ConnectionSpec.COMPATIBLE_TLS, ConnectionSpec.CLEARTEXT)
+        } else {
+            listOf(ConnectionSpec.MODERN_TLS, ConnectionSpec.COMPATIBLE_TLS, ConnectionSpec.CLEARTEXT)
+        })
+        .protocols(protocols)
+        .build()
+
+    // Prefer HTTP/2, then strict HTTP/1.1, then a legacy-compatible TLS/HTTP1 path for
+    // providers/CDNs that mishandle HTTP/2 or expose older TLS stacks.
+    private val httpFactories = listOf(
+        OkHttpDataSource.Factory(newStreamingClient(listOf(okhttp3.Protocol.HTTP_2, okhttp3.Protocol.HTTP_1_1))),
+        OkHttpDataSource.Factory(newStreamingClient(listOf(okhttp3.Protocol.HTTP_1_1))),
+        OkHttpDataSource.Factory(newStreamingClient(listOf(okhttp3.Protocol.HTTP_1_1), legacyTls = true))
+    )
+
     private val mediaSourceFactory = createMediaSourceFactory()
 
     val player: ExoPlayer = ExoPlayer.Builder(context)
@@ -80,7 +114,7 @@ class PlaybackController(private val context: Context, private val diagnostics: 
             .setMaxVideoSize(if (value.adaptiveBitrate) Int.MAX_VALUE else 1280, if (value.adaptiveBitrate) Int.MAX_VALUE else 720)
             .build()
         trackSelector.parameters = ts
-        httpFactory.setDefaultRequestProperties(mapOf("User-Agent" to effectiveUserAgent()))
+        applyUserAgent()
         player.repeatMode = if (value.loopPlayback) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
     }
 
@@ -91,9 +125,12 @@ class PlaybackController(private val context: Context, private val diagnostics: 
         this.startPosition = startPosition.coerceAtLeast(0L)
         urlCandidates = StreamUrlCandidates.ordered(item.streamUrl)
         urlIndex = 0
+        streamHeaders = item.streamHeaders.filterKeys { it.isNotBlank() }
+        val playlistUserAgent = streamHeaders["User-Agent"] ?: streamHeaders["user-agent"]
         userAgents = buildList {
+            playlistUserAgent?.trim()?.takeIf { it.isNotBlank() }?.let(::add)
             settings.value.customUserAgent.trim().takeIf { it.isNotBlank() }?.let(::add)
-            addAll(StreamUrlCandidates.userAgentLadder.filterNot { it == firstOrNull() })
+            addAll(StreamUrlCandidates.userAgentLadder)
         }.distinct()
         userAgentIndex = 0
         applyUserAgent()
@@ -125,12 +162,22 @@ class PlaybackController(private val context: Context, private val diagnostics: 
     fun release() { scope.cancel(); session?.release(); session = null; player.release(); simpleCache?.release(); simpleCache = null }
 
     fun handoffExternal(context: Context, url: String): Boolean {
-        val intent = Intent(Intent.ACTION_VIEW).apply { setDataAndType(android.net.Uri.parse(url), "video/*"); addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+        val intent = Intent(Intent.ACTION_VIEW).apply { setDataAndType(Uri.parse(url), "video/*"); addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
         return runCatching { context.startActivity(intent); true }.getOrDefault(false)
     }
 
-    private fun effectiveUserAgent(): String = settings.value.customUserAgent.trim().takeIf { it.isNotBlank() } ?: StreamUrlCandidates.userAgentLadder.first()
-    private fun applyUserAgent() { httpFactory.setDefaultRequestProperties(mapOf("User-Agent" to userAgents.getOrNull(userAgentIndex).orEmpty().ifBlank { effectiveUserAgent() })) }
+    private fun effectiveUserAgent(): String = userAgents.getOrNull(userAgentIndex)?.takeIf { it.isNotBlank() }
+        ?: settings.value.customUserAgent.trim().takeIf { it.isNotBlank() }
+        ?: StreamUrlCandidates.userAgentLadder.first()
+
+    private fun applyUserAgent() {
+        val headers = linkedMapOf<String, String>().apply {
+            putAll(streamHeaders)
+            this["User-Agent"] = effectiveUserAgent()
+            this["Accept-Encoding"] = "identity"
+        }
+        httpFactories.forEach { it.setDefaultRequestProperties(headers) }
+    }
 
     private fun setCurrentUrlAndPrepare(position: Long) {
         val source = urlCandidates.getOrElse(urlIndex) { currentItem?.streamUrl.orEmpty() }
@@ -138,23 +185,31 @@ class PlaybackController(private val context: Context, private val diagnostics: 
             .setUri(source)
             .setMediaId(currentItem?.id.orEmpty())
             .setTag(currentItem)
-        mimeTypeFor(source)?.let(builder::setMimeType)
+        val explicitMime = currentItem?.streamMimeType.takeIf { source == currentItem?.streamUrl }
+        mimeTypeFor(source, explicitMime)?.let(builder::setMimeType)
         player.setMediaItem(builder.build())
         player.prepare()
         if (position > 0) player.seekTo(position)
         player.playWhenReady = true
     }
 
-
-    private fun mimeTypeFor(url: String): String? {
-        val path = runCatching { java.net.URI(url).path.orEmpty() }.getOrDefault(url).lowercase()
+    private fun mimeTypeFor(url: String, explicit: String?): String? {
+        if (!explicit.isNullOrBlank()) return explicit.trim()
+        val path = runCatching { Uri.parse(url).path.orEmpty() }.getOrDefault(url).lowercase()
         return when {
-            path.endsWith(".m3u8") -> androidx.media3.common.MimeTypes.APPLICATION_M3U8
+            path.endsWith(".m3u8") || path.endsWith(".m3u") -> androidx.media3.common.MimeTypes.APPLICATION_M3U8
             path.endsWith(".mpd") -> androidx.media3.common.MimeTypes.APPLICATION_MPD
             path.endsWith(".ts") || path.endsWith(".mts") -> androidx.media3.common.MimeTypes.VIDEO_MP2T
             path.endsWith(".mp4") || path.endsWith(".m4v") || path.endsWith(".mov") -> androidx.media3.common.MimeTypes.VIDEO_MP4
             path.endsWith(".webm") -> androidx.media3.common.MimeTypes.VIDEO_WEBM
+            path.endsWith(".mkv") -> "video/x-matroska"
+            path.endsWith(".avi") -> "video/x-msvideo"
+            path.endsWith(".flv") -> "video/x-flv"
             path.endsWith(".mp3") -> androidx.media3.common.MimeTypes.AUDIO_MPEG
+            path.endsWith(".aac") -> androidx.media3.common.MimeTypes.AUDIO_AAC
+            path.endsWith(".m4a") -> "audio/mp4"
+            path.endsWith(".ogg") || path.endsWith(".oga") -> "audio/ogg"
+            path.endsWith(".wav") -> "audio/wav"
             else -> null
         }
     }
@@ -194,16 +249,85 @@ class PlaybackController(private val context: Context, private val diagnostics: 
         return scan(error)
     }
 
-    private fun createLoadControl(): LoadControl = DefaultLoadControl.Builder()
-        .setAllocator(DefaultAllocator(true, 64 * 1024))
-        .setBufferDurationsMs(settings.value.minBufferSec * 1000, settings.value.maxBufferSec * 1000, 1500, 3000)
-        .build()
+    private fun createLoadControl(): LoadControl {
+        val minMs = (settings.value.minBufferSec.coerceAtLeast(10) * 1000)
+        val maxMs = (settings.value.maxBufferSec.coerceAtLeast((minMs / 1000) + 40).coerceAtLeast(60) * 1000)
+        return DefaultLoadControl.Builder()
+            .setAllocator(DefaultAllocator(true, 128 * 1024))
+            .setBufferDurationsMs(minMs, maxMs, 5000, 10000)
+            .setBackBuffer(30_000, true)
+            .build()
+    }
 
     private fun createMediaSourceFactory(): DefaultMediaSourceFactory {
-        val upstream = DefaultDataSource.Factory(context, httpFactory)
-        if (!settings.value.httpCache) return DefaultMediaSourceFactory(upstream)
-        val cache = SimpleCache(File(context.cacheDir, "media3"), LeastRecentlyUsedCacheEvictor(256L * 1024 * 1024), StandaloneDatabaseProvider(context))
-        simpleCache = cache
-        return DefaultMediaSourceFactory(CacheDataSource.Factory().setCache(cache).setUpstreamDataSourceFactory(upstream))
+        val upstreamFactories = httpFactories.map { DefaultDataSource.Factory(context, it) }
+        val failoverFactory = DataSource.Factory { FailoverDataSource(upstreamFactories, diagnostics) }
+        val factory = if (!settings.value.httpCache) {
+            DefaultMediaSourceFactory(failoverFactory)
+        } else {
+            val cache = SimpleCache(File(context.cacheDir, "media3"), LeastRecentlyUsedCacheEvictor(256L * 1024 * 1024), StandaloneDatabaseProvider(context))
+            simpleCache = cache
+            DefaultMediaSourceFactory(
+                CacheDataSource.Factory()
+                    .setCache(cache)
+                    .setUpstreamDataSourceFactory(failoverFactory)
+                    .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+            )
+        }
+        return factory.setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(6))
     }
+}
+
+@OptIn(UnstableApi::class)
+private class FailoverDataSource(
+    private val factories: List<DataSource.Factory>,
+    private val diagnostics: DiagnosticsService
+) : DataSource {
+    private val listeners = mutableListOf<TransferListener>()
+    private var current: DataSource? = null
+
+    override fun addTransferListener(transferListener: TransferListener) {
+        listeners += transferListener
+        current?.addTransferListener(transferListener)
+    }
+
+    override fun open(dataSpec: DataSpec): Long {
+        var lastError: IOException? = null
+        val candidates = StreamUrlCandidates.ordered(dataSpec.uri.toString())
+        var attempt = 0
+        for ((urlIndex, candidate) in candidates.withIndex()) {
+            for ((networkIndex, factory) in factories.withIndex()) {
+                attempt++
+                val source = factory.createDataSource()
+                listeners.forEach(source::addTransferListener)
+                try {
+                    val opened = source.open(dataSpec.withUri(Uri.parse(candidate)))
+                    current = source
+                    if (attempt > 1) {
+                        val transport = if (networkIndex == 0) "HTTP/2+HTTP/1.1" else "HTTP/1.1"
+                        diagnostics.log("WARN", "stream", "Fallback tentativo ${attempt}: $transport / URL ${urlIndex + 1}/${candidates.size}: $candidate")
+                    }
+                    return opened
+                } catch (t: Throwable) {
+                    lastError = when (t) {
+                        is IOException -> t
+                        else -> IOException(t)
+                    }
+                    runCatching { source.close() }
+                }
+            }
+        }
+        throw lastError ?: IOException("Unable to open stream")
+    }
+
+    override fun read(buffer: ByteArray, offset: Int, length: Int): Int = current?.read(buffer, offset, length) ?: -1
+
+    override fun close() {
+        current?.close()
+        current = null
+    }
+
+    override fun getUri(): Uri? = current?.uri
+
+    override fun getResponseHeaders(): Map<String, List<String>> = current?.responseHeaders ?: emptyMap()
 }

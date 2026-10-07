@@ -2,6 +2,10 @@ package com.gassplayer.android.data
 
 import java.net.URI
 
+/**
+ * IPTV playback candidate ladder. It deliberately keeps query strings/tokens untouched,
+ * but also knows the common Xtream HTTP/HTTPS port pairs and output-container variants.
+ */
 object StreamUrlCandidates {
     val userAgentLadder = listOf(
         "VLC/3.0.20 LibVLC/3.0.20",
@@ -10,48 +14,51 @@ object StreamUrlCandidates {
         "okhttp/4.12.0",
         "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124.0 Mobile Safari/537.36"
     )
-    private val streamExtensions = listOf("m3u8", "ts", "mp4", "mkv", "avi", "mov", "m4v", "webm", "flv", "wmv", "mpg", "mpeg")
-    private const val maxAlternatives = 12
 
     fun ordered(url: String): List<String> {
-        val baseUrls = protocolAlternatives(url)
-        val expanded = linkedSetOf<String>()
-        for (base in baseUrls) {
-            expanded += base
-            val uri = runCatching { URI(base) }.getOrNull() ?: continue
-            val path = uri.path ?: continue
-            val filename = path.substringAfterLast('/')
-            val dot = filename.lastIndexOf('.')
-            if (dot > 0) {
-                val current = filename.substring(dot + 1).lowercase()
-                val folder = base.substringBeforeLast('/')
-                val stem = filename.substring(0, dot)
-                streamExtensions.filter { it != current }.take(maxAlternatives).forEach { ext ->
-                    expanded += "$folder/$stem.$ext"
-                }
-            }
-            if (expanded.size >= maxAlternatives + baseUrls.size) break
-        }
-        return expanded.take(maxAlternatives + baseUrls.size)
+        val baseCandidates = NetworkApi.candidateUrls(url)
+        val result = LinkedHashSet<String>()
+        // Keep the provider's original URL and all transport/port candidates first.
+        // Container variants are added afterwards so a valid protocol is never crowded out.
+        baseCandidates.forEach(result::add)
+        containerAlternatives(baseCandidates).forEach(result::add)
+        return result.toList().take(16)
     }
 
-    private fun protocolAlternatives(url: String): List<String> {
-        val normalized = url.trim()
-        val uri = runCatching { URI(normalized) }.getOrNull() ?: return listOf(normalized)
-        val scheme = uri.scheme?.lowercase() ?: return listOf(normalized)
-        val opposite = when (scheme) {
-            "https" -> "http"
-            "http" -> "https"
-            else -> return listOf(normalized)
+    private fun containerAlternatives(candidates: List<String>): List<String> {
+        val out = LinkedHashSet<String>()
+        candidates.forEach { raw ->
+            val uri = runCatching { URI(raw) }.getOrNull() ?: return@forEach
+            val path = uri.rawPath.orEmpty()
+            val lower = path.lowercase()
+            val isXtream = listOf("/live/", "/movie/", "/series/").any { lower.contains(it) }
+            val dot = path.lastIndexOf('.')
+            val hasExtension = dot > path.lastIndexOf('/')
+            val currentExt = if (hasExtension) path.substring(dot + 1).lowercase() else ""
+            val replacements = when {
+                "/live/" in lower -> listOf("m3u8", "ts")
+                "/series/" in lower -> listOf("mp4", "mkv", "ts", "m3u8")
+                "/movie/" in lower -> listOf("mp4", "mkv", "avi", "ts", "m3u8")
+                !hasExtension && ("m3u8" in raw.lowercase() || "hls" in raw.lowercase() || "manifest" in raw.lowercase()) -> listOf("m3u8", "ts")
+                !hasExtension -> listOf("m3u8", "ts", "mp4", "mkv")
+                else -> emptyList()
+            }
+            if (!isXtream && hasExtension && replacements.isEmpty()) return@forEach
+            replacements.filterNot { it == currentExt }.forEach { ext ->
+                val newPath = if (hasExtension) path.substring(0, dot + 1) + ext else "$path.$ext"
+                out += buildUrl(uri, newPath)
+            }
         }
-        val swappedPort = when {
-            scheme == "https" && (uri.port == -1 || uri.port == 443) -> 80
-            scheme == "http" && uri.port == 80 -> 443
-            else -> uri.port
+        return out.toList()
+    }
+
+    private fun buildUrl(uri: URI, path: String): String {
+        val authority = uri.rawAuthority ?: return uri.toString()
+        return buildString {
+            append(uri.scheme).append("://").append(authority)
+            append(path)
+            uri.rawQuery?.let { append('?').append(it) }
+            uri.rawFragment?.let { append('#').append(it) }
         }
-        val swapped = runCatching {
-            URI(opposite, uri.userInfo, uri.host, swappedPort, uri.path, uri.query, uri.fragment).toString()
-        }.getOrNull()
-        return listOfNotNull(normalized, swapped).distinct()
     }
 }

@@ -16,11 +16,13 @@ class M3UParserTest {
             http://example.com/episode.mp4\n
         """.trimIndent()
         val result = M3UParser.parse("source", data)
-        assertEquals(2, result.size)
-        assertEquals(MediaKind.LIVE, result[0].kind)
-        assertEquals(MediaKind.SERIES, result[1].kind)
-        assertEquals(2, result[1].seasonNumber)
-        assertEquals(3, result[1].episodeNumber)
-        assertTrue(result[0].logoUrl!!.contains("logo.png"))
+        val live = result.first { it.kind == MediaKind.LIVE }
+        val episode = result.first { it.kind == MediaKind.EPISODE }
+        val series = result.first { it.kind == MediaKind.SERIES }
+        assertEquals(3, result.size)
+        assertEquals(2, episode.seasonNumber)
+        assertEquals(3, episode.episodeNumber)
+        assertEquals(series.id.substringAfterLast(':'), episode.seriesId)
+        assertTrue(live.logoUrl!!.contains("logo.png"))
     }
 }

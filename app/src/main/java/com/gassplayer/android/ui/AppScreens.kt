@@ -389,7 +389,15 @@ private fun AddSourceDialog(app: GassPlayerApplication, vm: MainViewModel, onDis
                     val result = runCatching {
                         when (type) {
                             SourceType.XTREAM -> app.xtream.authenticate(XtreamCredentials(candidate.host, candidate.username.orEmpty(), candidate.password.orEmpty()))
-                            SourceType.M3U8 -> app.network.getText(candidate.playlistUrl ?: candidate.host).takeIf { it.isNotBlank() } ?: error("Playlist vuota")
+                            SourceType.M3U8 -> {
+                                val playlistUrl = candidate.playlistUrl ?: candidate.host
+                                val fetched = app.network.getTextResult(
+                                    playlistUrl,
+                                    mapOf("Accept" to "application/vnd.apple.mpegurl, application/x-mpegURL, audio/mpegurl, text/plain, */*")
+                                )
+                                M3UParser.parse(candidate.id, fetched.text, NetworkApi.stripInlineHeaders(fetched.finalUrl)).takeIf { it.isNotEmpty() }
+                                    ?: error("Playlist M3U/M3U8 vuota o non riconosciuta")
+                            }
                             else -> Unit
                         }
                     }

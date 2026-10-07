@@ -26,7 +26,11 @@ class SourceRepository(private val context: Context, private val prefs: AppPrefe
     suspend fun verify(source: MediaSourceConfig): Result<Int> = runCatching {
         val count = when (source.type) {
             SourceType.XTREAM -> { val catalog = xtream.loadCatalog(source); catalog.live.size + catalog.movies.size }
-            SourceType.M3U8 -> M3UParser.parse(source.id, network.getText(source.playlistUrl ?: source.host)).size
+            SourceType.M3U8 -> {
+                val playlistUrl = source.playlistUrl ?: source.host
+                val fetched = network.getTextResult(playlistUrl, mapOf("Accept" to "application/vnd.apple.mpegurl, application/x-mpegURL, audio/mpegurl, text/plain, */*"))
+                M3UParser.parse(source.id, fetched.text, NetworkApi.stripInlineHeaders(fetched.finalUrl)).size
+            }
             else -> 0
         }
         updateById(source.id) { it.copy(lastVerifiedAt = System.currentTimeMillis(), lastVerificationSucceeded = true, lastKnownChannelCount = count) }

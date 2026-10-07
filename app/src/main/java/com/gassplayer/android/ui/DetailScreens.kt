@@ -61,17 +61,76 @@ fun MovieDetailScreen(app: GassPlayerApplication, item: MediaItem, allItems: Lis
 fun SeriesDetailScreen(app: GassPlayerApplication, series: MediaItem, episodes: List<MediaItem>, favorite: FavoriteState, onBack: () -> Unit, onPlay: (MediaItem, Long) -> Unit) {
     val settings by app.prefs.settingsFlow.collectAsStateWithLifecycle(AppSettings())
     val watch by app.watch.flow.collectAsStateWithLifecycle(emptyList())
-    val showEpisodes = episodes.filter { it.seriesId == series.id.substringAfterLast(':') }.sortedWith(compareBy({ it.seasonNumber ?: 0 }, { it.episodeNumber ?: 0 }))
-    val seasons = showEpisodes.groupBy { it.seasonNumber ?: 0 }
-    val scope = rememberCoroutineScope()
-    var season by remember(showEpisodes) { mutableStateOf(seasons.keys.minOrNull() ?: 0) }
+    var loadedEpisodes by remember(series.id) { mutableStateOf(episodes.filter { it.seriesId == series.id.substringAfterLast(':') }) }
+    var loadingEpisodes by remember(series.id) { mutableStateOf(false) }
+    var loadError by remember(series.id) { mutableStateOf<String?>(null) }
     var meta by remember(series.id) { mutableStateOf<MetadataResult?>(null) }
-    LaunchedEffect(series.id, settings.tmdbApiKey) { meta = if(settings.tmdbApiKey.isBlank()) null else runCatching{app.tmdb.search(series.title, settings.tmdbApiKey).firstOrNull()}.getOrNull() }
+    val scope = rememberCoroutineScope()
+
+    fun reloadEpisodes() {
+        scope.launch {
+            loadingEpisodes = true
+            loadError = null
+            val seriesKey = series.id.substringAfterLast(':')
+            val result = runCatching { app.catalog.loadSeriesEpisodes(series.sourceId, seriesKey, series.title) }
+            result.onSuccess { fetched ->
+                loadedEpisodes = (loadedEpisodes + fetched).filter { it.seriesId == seriesKey }.distinctBy { it.id }
+            }.onFailure { loadError = it.message ?: "Impossibile caricare gli episodi" }
+            loadingEpisodes = false
+        }
+    }
+
+    LaunchedEffect(series.id, settings.tmdbApiKey) {
+        meta = if (settings.tmdbApiKey.isBlank()) null else runCatching { app.tmdb.search(series.title, settings.tmdbApiKey).firstOrNull() }.getOrNull()
+    }
+    LaunchedEffect(series.id) { reloadEpisodes() }
+
+    val showEpisodes = loadedEpisodes.sortedWith(compareBy({ it.seasonNumber ?: 0 }, { it.episodeNumber ?: 0 }, { it.title.lowercase() }))
+    val seasons = showEpisodes.groupBy { it.seasonNumber ?: 0 }
+    var season by remember(series.id) { mutableStateOf(0) }
+    LaunchedEffect(showEpisodes) { if (seasons.isNotEmpty() && season !in seasons.keys) season = seasons.keys.minOrNull() ?: 0 }
+    val scopeSettings = settings
+
     Column(Modifier.fillMaxSize()) {
         IconButton(onBack, modifier=Modifier.focusable()){Icon(Icons.Default.ArrowBack,"Indietro")}
         Row(Modifier.fillMaxSize(),horizontalArrangement=Arrangement.spacedBy(24.dp)){
-            Box(Modifier.width(300.dp).fillMaxHeight(.72f).background(Color(0xFF0C0E13))){(meta?.posterUrl?:series.posterUrl)?.let{AsyncImage(it,null,Modifier.fillMaxSize(),contentScale=ContentScale.Crop)}}
-            Column(Modifier.fillMaxSize()){Text(meta?.title?:series.title,color=Color.White,fontSize=30.sp,fontWeight=FontWeight.Bold);Spacer(Modifier.height(8.dp));Text(meta?.overview?:series.plot.orEmpty(),color=Color.White.copy(.75f),maxLines=5,overflow=TextOverflow.Ellipsis);Spacer(Modifier.height(10.dp));Row{seasons.keys.sorted().forEach{s->FilterChip(s==season,{season=s},label={Text("S$s")})}};Spacer(Modifier.height(10.dp));LazyColumn(verticalArrangement=Arrangement.spacedBy(7.dp),contentPadding=PaddingValues(bottom=40.dp)){items(seasons[season].orEmpty()){ep->val wp=watch.firstOrNull{it.contentId==ep.id};Card(onClick={onPlay(ep,wp?.positionMs?:0L)},modifier=Modifier.fillMaxWidth().focusable()){Row(Modifier.padding(12.dp),verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text("E${ep.episodeNumber?:0} • ${ep.title}",color=Color.White,fontWeight=FontWeight.SemiBold);ep.plot?.let{Text(it,maxLines=2,overflow=TextOverflow.Ellipsis,color=Color.White.copy(.65f))}};IconButton({app.downloads.enqueue(ep,settings.downloadWifiOnly)}){Icon(Icons.Default.Download,null)}}}}}}
+            Box(Modifier.width(300.dp).fillMaxHeight(.72f).background(Color(0xFF0C0E13))){
+                (meta?.posterUrl ?: series.posterUrl)?.let{AsyncImage(it,null,Modifier.fillMaxSize(),contentScale=ContentScale.Crop)}
+            }
+            Column(Modifier.fillMaxSize()){
+                Text(meta?.title ?: series.title,color=Color.White,fontSize=30.sp,fontWeight=FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
+                Text(meta?.overview ?: series.plot.orEmpty(),color=Color.White.copy(.75f),maxLines=5,overflow=TextOverflow.Ellipsis)
+                Spacer(Modifier.height(10.dp))
+                Row(horizontalArrangement=Arrangement.spacedBy(8.dp), verticalAlignment=Alignment.CenterVertically) {
+                    seasons.keys.sorted().forEach{s->FilterChip(s==season,{season=s},label={Text("S$s")})}
+                    if (loadingEpisodes) CircularProgressIndicator(modifier=Modifier.size(22.dp), strokeWidth=2.dp)
+                    OutlinedButton({ reloadEpisodes() }, enabled = !loadingEpisodes) { Text("Aggiorna") }
+                }
+                loadError?.let { err ->
+                    Spacer(Modifier.height(6.dp))
+                    Text(err, color=Color(0xFFFF9E9E), maxLines=2, overflow=TextOverflow.Ellipsis)
+                }
+                Spacer(Modifier.height(10.dp))
+                if (!loadingEpisodes && seasons.isEmpty()) {
+                    Text("Nessun episodio disponibile: il provider non ha restituito i dettagli della serie.", color=Color.White.copy(.65f))
+                } else {
+                    LazyColumn(verticalArrangement=Arrangement.spacedBy(7.dp),contentPadding=PaddingValues(bottom=40.dp)){
+                        items(seasons[season].orEmpty()){ep->
+                            val wp=watch.firstOrNull{it.contentId==ep.id}
+                            Card(onClick={onPlay(ep,wp?.positionMs?:0L)},modifier=Modifier.fillMaxWidth().focusable()){
+                                Row(Modifier.padding(12.dp),verticalAlignment=Alignment.CenterVertically){
+                                    Column(Modifier.weight(1f)){
+                                        Text("E${ep.episodeNumber?:0} • ${ep.title}",color=Color.White,fontWeight=FontWeight.SemiBold)
+                                        ep.plot?.let{Text(it,maxLines=2,overflow=TextOverflow.Ellipsis,color=Color.White.copy(.65f))}
+                                    }
+                                    IconButton({app.downloads.enqueue(ep,scopeSettings.downloadWifiOnly)}){Icon(Icons.Default.Download,null)}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

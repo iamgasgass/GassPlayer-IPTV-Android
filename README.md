@@ -6,7 +6,7 @@ Port nativo del progetto iOS `GassPlayer-IPTV` allegato, ricostruito per Android
 
 - Kotlin 2.4.20 / JVM 17
 - Android Gradle Plugin 9.4.x
-- compile SDK 37 / target SDK 36 / min SDK 26
+- compile SDK 37 / target SDK 37 / min SDK 25
 - Jetpack Compose + Compose for TV
 - AndroidX Media3 1.11.1
 - WorkManager 2.12.0

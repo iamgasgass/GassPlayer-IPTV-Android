@@ -62,7 +62,9 @@ data class MediaItem(
     val seasonNumber: Int? = null,
     val seriesId: String? = null,
     val hasArchive: Boolean = false,
-    val metadataTag: String? = null
+    val metadataTag: String? = null,
+    val streamHeaders: Map<String, String> = emptyMap(),
+    val streamMimeType: String? = null
 )
 
 @Serializable
@@ -100,8 +102,8 @@ data class AppSettings(
     val showEpgInChannelTiles: Boolean = true,
     val preloadSeries: Boolean = true,
     val epgAutoUpdateEnabled: Boolean = true,
-    val minBufferSec: Int = 5,
-    val maxBufferSec: Int = 30,
+    val minBufferSec: Int = 15,
+    val maxBufferSec: Int = 90,
     val accurateSeek: Boolean = true,
     val hardwareDecode: Boolean = true,
     val asyncDecode: Boolean = true,

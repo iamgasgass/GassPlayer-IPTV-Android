@@ -29,11 +29,13 @@ class CatalogRepository(private val context: Context, private val prefs: AppPref
             SourceType.XTREAM -> {
                 val b = xtream.loadCatalog(source)
                 val preload = prefs.settingsFlow.first().preloadSeries
-                val episodes = if (preload) b.series.take(40).flatMap { runCatching { xtream.seriesEpisodes(source, it.id.substringAfterLast(':')) }.getOrDefault(emptyList()) } else emptyList()
+                val episodes = if (preload) b.episodes + b.series.take(12).flatMap { runCatching { xtream.seriesEpisodes(source, it.id.substringAfterLast(':'), it.title) }.getOrDefault(emptyList()) } else b.episodes
                 SourceSnapshot(source.id, b.liveCategories, b.vodCategories, b.seriesCategories, b.live, b.movies, b.series, episodes, System.currentTimeMillis())
             }
             SourceType.M3U8 -> {
-                val parsed = M3UParser.parse(source.id, network.getText(source.playlistUrl ?: source.host))
+                val playlistUrl = source.playlistUrl ?: source.host
+                val fetched = network.getTextResult(playlistUrl, mapOf("Accept" to "application/vnd.apple.mpegurl, application/x-mpegURL, audio/mpegurl, text/plain, */*"))
+                val parsed = M3UParser.parse(source.id, fetched.text, NetworkApi.stripInlineHeaders(fetched.finalUrl))
                 SourceSnapshot(source.id, emptyList(), emptyList(), emptyList(), parsed.filter { it.kind == MediaKind.LIVE }, parsed.filter { it.kind == MediaKind.MOVIE }, parsed.filter { it.kind == MediaKind.SERIES }, parsed.filter { it.kind == MediaKind.EPISODE }, System.currentTimeMillis())
             }
             else -> SourceSnapshot(source.id, emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), System.currentTimeMillis())
@@ -41,9 +43,23 @@ class CatalogRepository(private val context: Context, private val prefs: AppPref
         persist(snapshot); return snapshot
     }
 
+    suspend fun loadSeriesEpisodes(sourceId: String, seriesId: String, seriesTitle: String? = null): List<MediaItem> = withContext(Dispatchers.IO) {
+        val source = prefs.sourcesFlow.first().firstOrNull { it.id == sourceId } ?: return@withContext emptyList()
+        val cached = restore(sourceId)?.episodes.orEmpty().filter { it.seriesId == seriesId }
+        if (source.type != SourceType.XTREAM) return@withContext cached
+        val fetched = runCatching { xtream.seriesEpisodes(source, seriesId, seriesTitle) }.getOrDefault(emptyList())
+        if (fetched.isEmpty()) return@withContext cached
+        val previous = restore(sourceId)
+        if (previous != null) {
+            val mergedEpisodes = (previous.episodes.filterNot { it.seriesId == seriesId } + fetched).distinctBy { it.id }
+            persist(previous.copy(episodes = mergedEpisodes, updatedAt = System.currentTimeMillis()))
+        }
+        fetched
+    }
+
     private fun emptySnapshot(sourceId: String) = SourceSnapshot(sourceId, emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), 0L)
 
-    private fun file(sourceId: String): File = File(context.filesDir, "catalog_${sourceId.hashCode()}.json")
+    private fun file(sourceId: String): File = File(context.filesDir, "catalog_v2_${sourceId.hashCode()}.json")
     private fun persist(snapshot: SourceSnapshot) { file(snapshot.sourceId).writeText(JsonStore.json.encodeToString(snapshot)) }
     private fun restore(sourceId: String): SourceSnapshot? = runCatching { JsonStore.json.decodeFromString<SourceSnapshot>(file(sourceId).readText()) }.getOrNull()
     fun clearCache() = context.filesDir.listFiles()?.filter { it.name.startsWith("catalog_") }?.forEach { it.delete() }

@@ -9,7 +9,7 @@ android {
     compileSdk = 37
     defaultConfig {
         applicationId = "com.gassgass.gassplayer"
-        minSdk = 26
+        minSdk = 25
         targetSdk = 37
         versionCode = 1000
         versionName = "1.0.0-android"
@@ -53,6 +53,7 @@ dependencies {
     implementation("androidx.tv:tv-material:1.1.0")
     implementation("androidx.tv:tv-foundation:1.0.0")
     implementation("androidx.media3:media3-exoplayer:1.11.1")
+    implementation("androidx.media3:media3-datasource-okhttp:1.11.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.11.1")
     implementation("androidx.media3:media3-exoplayer-dash:1.11.1")
     implementation("androidx.media3:media3-exoplayer-rtsp:1.11.1")
