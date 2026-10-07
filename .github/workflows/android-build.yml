@@ -20,20 +20,22 @@ jobs:
         with:
           packages: 'platforms/android-37 build-tools/35.0.0 platform-tools'
       - name: Build debug APK and run unit tests
-        run: |
-          set -o pipefail
-          ./gradlew testDebugUnitTest assembleDebug --stacktrace 2>&1 | tee build.log
-      - name: Upload build log
+        shell: bash
+        run: ./gradlew testDebugUnitTest assembleDebug --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+      - name: Rename APK
+        if: success()
+        run: cp "$(find . -type f -path '*/build/outputs/apk/debug/*.apk' | head -n 1)" "$GITHUB_WORKSPACE/app-debug.apk"
+      - name: Upload log
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: build-log
           path: build.log
           if-no-files-found: warn
-      - name: Upload installable APK
-        if: always()
+      - name: Upload APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: app-debug-apk
-          path: '**/build/outputs/apk/debug/*.apk'
-          if-no-files-found: warn
+          name: GassPlayer-IPTV-Android-apk
+          path: GassPlayer-IPTV-Android.apk
+          if-no-files-found: error
