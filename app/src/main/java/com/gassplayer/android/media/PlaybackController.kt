@@ -53,7 +53,8 @@ class PlaybackController(private val context: Context, private val diagnostics: 
         .setReadTimeoutMs(30_000)
     private val mediaSourceFactory = createMediaSourceFactory()
 
-    val player: ExoPlayer = ExoPlayer.Builder(context, createLoadControl())
+    val player: ExoPlayer = ExoPlayer.Builder(context)
+        .setLoadControl(createLoadControl())
         .setTrackSelector(trackSelector)
         .setMediaSourceFactory(mediaSourceFactory)
         .build().apply {

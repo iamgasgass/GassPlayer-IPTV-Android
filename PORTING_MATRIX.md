@@ -61,3 +61,10 @@ Un'app SwiftUI/iOS non può essere convertita letteralmente a livello di API, re
 ## Stato di verifica
 
 È stato eseguito un audit statico del sorgente e un passaggio del parser Kotlin locale per intercettare errori sintattici puri. La build Android completa non è stata eseguita in questo sandbox: non è disponibile un Android SDK/Gradle distribution locale compatibile e la rete del sandbox non consente il download delle toolchain. Il workflow GitHub Actions incluso esegue invece `testDebugUnitTest` e `assembleDebug` su una macchina Android CI reale.
+
+
+## Kotlin/Media3 compile fixes (FIXED10)
+- Fixed nullable `SourceSnapshot` fallback in `CatalogRepository`.
+- Updated Media3 `ExoPlayer.Builder` usage to `setLoadControl(...)`.
+- Fixed Trakt device-code expiration field usage (`expiresInSec`).
+- Added Kotlin Serialization `jsonObject` extension import for VPN discovery.

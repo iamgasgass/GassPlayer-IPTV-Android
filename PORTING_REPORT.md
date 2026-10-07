@@ -61,3 +61,10 @@ Il progetto iOS contiene 119 file complessivi, 103 file Swift, XcodeGen `project
 - Download su rete unmetered/metered.
 - D-pad su più form factor TV.
 - 16 KB page-size / ABI sulle immagini native delle dipendenze.
+
+
+## Kotlin/Media3 compile fixes (FIXED10)
+- Fixed nullable `SourceSnapshot` fallback in `CatalogRepository`.
+- Updated Media3 `ExoPlayer.Builder` usage to `setLoadControl(...)`.
+- Fixed Trakt device-code expiration field usage (`expiresInSec`).
+- Added Kotlin Serialization `jsonObject` extension import for VPN discovery.

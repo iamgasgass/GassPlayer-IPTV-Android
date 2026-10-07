@@ -522,7 +522,7 @@ private fun TraktScreen(app: GassPlayerApplication, settings: AppSettings, vm: M
     LaunchedEffect(device?.deviceCode) {
         val code = device ?: return@LaunchedEffect
         val started = System.currentTimeMillis()
-        while (System.currentTimeMillis() - started < code.expiresIn * 1000L) {
+        while (System.currentTimeMillis() - started < code.expiresInSec * 1000L) {
             kotlinx.coroutines.delay(5000)
             val token = runCatching { app.trakt.pollDevice(local.traktClientId, local.traktClientSecret, code.deviceCode) }.getOrNull()
             if (token != null) { app.prefs.saveTrakt(token); device = null; message = "Trakt collegato"; break }

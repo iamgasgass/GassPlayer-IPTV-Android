@@ -10,6 +10,7 @@ import com.gassplayer.android.data.NetworkApi
 import com.gassplayer.android.data.VPNConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.jsonObject
 import java.lang.reflect.Proxy
 import java.util.Base64
 

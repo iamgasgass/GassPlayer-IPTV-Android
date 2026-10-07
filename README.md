@@ -37,3 +37,10 @@ Il repository contiene anche `.github/workflows/android-build.yml` per compilazi
 ## Nota sul porting
 
 Le funzioni Apple-specifiche non vengono emulate con stub: vengono riscritte usando le API Android equivalenti. Vedi `PORTING_MATRIX.md` per la copertura area-per-area e per le limitazioni ereditate dal progetto iOS, ad esempio OpenVPN engine non incluso nel sorgente originale.
+
+
+## Kotlin/Media3 compile fixes (FIXED10)
+- Fixed nullable `SourceSnapshot` fallback in `CatalogRepository`.
+- Updated Media3 `ExoPlayer.Builder` usage to `setLoadControl(...)`.
+- Fixed Trakt device-code expiration field usage (`expiresInSec`).
+- Added Kotlin Serialization `jsonObject` extension import for VPN discovery.

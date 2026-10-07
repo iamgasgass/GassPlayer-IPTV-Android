@@ -13,7 +13,7 @@ class CatalogRepository(private val context: Context, private val prefs: AppPref
         val sources = prefs.sourcesFlow.first().filter { it.isEnabled }
         val all = sources.map { source ->
             async {
-                runCatching { loadSource(source, force) }.getOrElse { restore(source.id) }
+                runCatching { loadSource(source, force) }.getOrElse { restore(source.id) ?: emptySnapshot(source.id) }
             }
         }.awaitAll()
         val live = all.flatMap { it.live }.dedupeMedia()
@@ -40,6 +40,8 @@ class CatalogRepository(private val context: Context, private val prefs: AppPref
         }
         persist(snapshot); return snapshot
     }
+
+    private fun emptySnapshot(sourceId: String) = SourceSnapshot(sourceId, emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), 0L)
 
     private fun file(sourceId: String): File = File(context.filesDir, "catalog_${sourceId.hashCode()}.json")
     private fun persist(snapshot: SourceSnapshot) { file(snapshot.sourceId).writeText(JsonStore.json.encodeToString(snapshot)) }
