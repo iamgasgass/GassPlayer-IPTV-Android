@@ -6,11 +6,11 @@ plugins {
 
 android {
     namespace = "com.gassplayer.android"
-    compileSdk = 36
+    compileSdk = 37
     defaultConfig {
         applicationId = "com.gassgass.gassplayer"
         minSdk = 26
-        targetSdk = 36
+        targetSdk = 37
         versionCode = 1000
         versionName = "1.0.0-android"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
