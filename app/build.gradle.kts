@@ -21,7 +21,11 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions { jvmTarget = "17" }
+    kotlin {
+        compilerOptions {
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+        }
+    }
     packaging.resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     buildTypes {
         getByName("release") {
@@ -34,9 +38,8 @@ android {
     androidResources { localeFilters += listOf("it", "en", "es") }
 }
 
-val composeBom = platform("androidx.compose:compose-bom:2026.09.00")
 dependencies {
-    implementation(composeBom)
+    implementation(platform("androidx.compose:compose-bom:2026.09.00"))
     implementation("androidx.core:core-ktx:1.17.0")
     implementation("androidx.activity:activity-compose:1.11.0")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.11.0")
