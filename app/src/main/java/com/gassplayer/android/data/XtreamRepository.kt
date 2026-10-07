@@ -29,8 +29,8 @@ class XtreamRepository(private val api: NetworkApi) {
         val liveCategories = requestArray(creds, "get_live_categories").map { Category(it.stringOrNull("category_id").orEmpty(), it.stringOrNull("category_name").orEmpty(), source.id) }
         val vodCategories = requestArray(creds, "get_vod_categories").map { Category(it.stringOrNull("category_id").orEmpty(), it.stringOrNull("category_name").orEmpty(), source.id) }
         val seriesCategories = requestArray(creds, "get_series_categories").map { Category(it.stringOrNull("category_id").orEmpty(), it.stringOrNull("category_name").orEmpty(), source.id) }
-        val live = requestArray(creds, "get_live_streams").mapIndexed { i, o -> o.toLive(source, i, creds) }.filter { it.id.substringAfterLast(':').isNotBlank() }.distinctBy { it.id }
-        val movies = requestArray(creds, "get_vod_streams").mapIndexed { i, o -> o.toVod(source, i, creds) }.filter { it.id.substringAfterLast(':').isNotBlank() }.distinctBy { it.id }
+        var live = requestArray(creds, "get_live_streams").mapIndexed { i, o -> o.toLive(source, i, creds) }.filter { it.id.substringAfterLast(':').isNotBlank() }.distinctBy { it.id }
+        var movies = requestArray(creds, "get_vod_streams").mapIndexed { i, o -> o.toVod(source, i, creds) }.filter { it.id.substringAfterLast(':').isNotBlank() }.distinctBy { it.id }
         var series = requestArray(creds, "get_series").map { it.toSeries(source) }.filter { it.id.substringAfterLast(':').isNotBlank() }.distinctBy { it.id }
 
         // A subset of panels expose get_series but return an empty/error response. Their
