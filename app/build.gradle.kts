@@ -1,13 +1,12 @@
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
 android {
     namespace = "com.gassplayer.android"
-    compileSdk = 37
+    compileSdk = 36
     defaultConfig {
         applicationId = "com.gassgass.gassplayer"
         minSdk = 26
