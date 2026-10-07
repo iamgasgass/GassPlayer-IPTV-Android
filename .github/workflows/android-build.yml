@@ -16,9 +16,13 @@ jobs:
           distribution: temurin
           java-version: '21'
           cache: gradle
-      - uses: premex-ab/setup-android-cli@v1
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
         with:
-          packages: 'platforms/android-37 build-tools/37.0.0 platform-tools'
+          packages: >-
+            platform-tools
+            platforms;android-37
+            build-tools;37.0.0
       - name: Build debug APK and run unit tests
         shell: bash
         run: ./gradlew testDebugUnitTest assembleDebug --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
