@@ -28,9 +28,9 @@ jobs:
         with:
           packages: >-
             platform-tools
-            platforms;android-37
-            build-tools;36.0.0
-
+            platforms;android-37.0
+            build-tools;37.0.0
+            
       - name: Set up Gradle 9.8.0
         uses: gradle/actions/setup-gradle@v4
         with:
@@ -50,16 +50,30 @@ jobs:
           UNSIGNED_APK="$(find app/build/outputs/apk/release -type f -name '*-unsigned.apk' -print -quit)"
           test -n "$UNSIGNED_APK"
 
-          BUILD_TOOLS="$ANDROID_HOME/build-tools/36.0.0"
+          BUILD_TOOLS="$ANDROID_HOME/build-tools/37.0.0"
           ALIGNED_APK="$RUNNER_TEMP/GassPlayer-release-aligned.apk"
           FINAL_APK="$GITHUB_WORKSPACE/GassPlayer-Android-TV-release.apk"
           KEYSTORE="$RUNNER_TEMP/gassplayer-release.keystore"
 
           "$BUILD_TOOLS/zipalign" -f -p 4 "$UNSIGNED_APK" "$ALIGNED_APK"
 
-          keytool -genkeypair             -keystore "$KEYSTORE"             -storepass android             -keypass android             -alias gassplayer             -keyalg RSA             -keysize 4096             -validity 10000             -dname "CN=GassPlayer, OU=Android, O=GassPlayer, L=Napoli, ST=Campania, C=IT"
+          keytool -genkeypair \
+            -keystore "$KEYSTORE" \
+            -storepass android \
+            -keypass android \
+            -alias gassplayer \
+            -keyalg RSA \
+            -keysize 4096 \
+            -validity 10000 \
+            -dname "CN=GassPlayer, OU=Android, O=GassPlayer, L=Napoli, ST=Campania, C=IT"
 
-          "$BUILD_TOOLS/apksigner" sign             --ks "$KEYSTORE"             --ks-key-alias gassplayer             --ks-pass pass:android             --key-pass pass:android             --out "$FINAL_APK"             "$ALIGNED_APK"
+          "$BUILD_TOOLS/apksigner" sign \
+            --ks "$KEYSTORE" \
+            --ks-key-alias gassplayer \
+            --ks-pass pass:android \
+            --key-pass pass:android \
+            --out "$FINAL_APK" \
+            "$ALIGNED_APK"
 
           "$BUILD_TOOLS/zipalign" -c -v 4 "$FINAL_APK"
           "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$FINAL_APK"
