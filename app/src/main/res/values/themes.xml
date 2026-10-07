@@ -1,0 +1,11 @@
+<resources>
+    <style name="Theme.GassPlayer" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">@color/gass_blue</item>
+        <item name="android:navigationBarColor">@color/gass_black</item>
+        <item name="android:statusBarColor">@color/gass_black</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:windowNoTitle">true</item>
+    </style>
+</resources>

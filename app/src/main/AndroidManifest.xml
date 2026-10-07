@@ -1,26 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <uses-permission android:name="android.permission.DOWNLOAD_WITHOUT_NOTIFICATION" />
-    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-feature android:name="android.software.leanback" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
-    <application android:name=".GassPlayerApplication" android:allowBackup="true" android:usesCleartextTraffic="true" android:theme="@style/Theme.GassPlayer" android:banner="@drawable/tv_banner" android:icon="@drawable/ic_launcher_foreground" android:label="GassPlayer IPTV" android:supportsRtl="true">
-        <activity android:name=".MainActivity" android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode" android:exported="true" android:screenOrientation="sensorLandscape" android:supportsPictureInPicture="true">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/>
-            </intent-filter>
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LEANBACK_LAUNCHER"/>
-            </intent-filter>
+    <application android:name=".GassPlayerApplication" android:allowBackup="true" android:fullBackupContent="@xml/backup_rules" android:icon="@drawable/gassplayer_icon" android:label="@string/app_name" android:theme="@style/Theme.GassPlayer" android:supportsRtl="true" android:banner="@drawable/tv_banner">
+        <activity android:name=".ui.MainActivity" android:exported="true" android:supportsPictureInPicture="true">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LEANBACK_LAUNCHER" /></intent-filter>
         </activity>
-        <service android:name=".playback.PlaybackService" android:exported="false" android:foregroundServiceType="mediaPlayback">
-            <intent-filter><action android:name="androidx.media3.session.MediaSessionService"/></intent-filter>
-        </service>
-            <receiver android:name=".services.ReminderReceiver" android:exported="false" />
+        <receiver android:name=".data.EpgReminderReceiver" android:exported="false" />
+        <service android:name=".media.GassPlayerMediaService" android:foregroundServiceType="mediaPlayback" android:exported="false"><intent-filter><action android:name="androidx.media3.session.MediaSessionService" /></intent-filter></service>
     </application>
 </manifest>

@@ -1,1 +1,4 @@
-<resources><string name="app_name">GassPlayer IPTV</string></resources>
+<resources>
+    <string name="app_name">GassPlayer IPTV</string>
+    <string name="app_description">IPTV, VOD, serie, EPG e VPN per Android e Android TV.</string>
+</resources>

@@ -1,36 +1,39 @@
-# GassPlayer IPTV — Android / Android TV
+# GassPlayer Android / Android TV
 
-Porting nativo Kotlin/Jetpack Compose di GassPlayer IPTV per telefoni, tablet, Android TV, Google TV e dispositivi compatibili Fire OS.
+Port nativo del progetto iOS `GassPlayer-IPTV` allegato, ricostruito per Android phone/tablet e Android TV.
 
-## Funzioni incluse
+## Stack
 
-- Xtream Codes: autenticazione, categorie, Live TV, VOD, serie ed episodi.
-- Playlist M3U/M3U8 con attributi `tvg-id`, `tvg-logo`, `group-title` e catch-up.
-- UI responsive con navigazione D-pad, focus TV, griglia compatta e numeri canale.
-- Home, Live TV, Film, Serie, episodi, ricerca globale, preferiti, cronologia e Continua a guardare.
-- Player Media3/ExoPlayer, controlli TV, PiP, tracce audio/sottotitoli supportate dal flusso e ripresa della posizione.
-- Cache catalogo, DataStore, import/export JSON e GitHub Actions.
-- Parser XMLTV, client TMDB/OMDb, Trakt device flow e OpenSubtitles.
-- Download VOD, parental PIN, promemoria EPG, diagnostica rete e punto di integrazione VPN.
+- Kotlin 2.4.20 / JVM 17
+- Android Gradle Plugin 9.4.x
+- compile SDK 37 / target SDK 36 / min SDK 26
+- Jetpack Compose + Compose for TV
+- AndroidX Media3 1.11.1
+- WorkManager 2.12.0
+- DataStore 1.2.x + Android Keystore
+- OkHttp 5.5.x / Coil 3.6.x
+- Official WireGuard Android tunnel
 
-## Build
+## Funzioni portate
 
-Requisiti: JDK 17, Android SDK 35 e Gradle 8.11.1.
-
-```bash
-gradle assembleDebug
-```
-
-L'APK sarà in `app/build/outputs/apk/debug/`. Su GitHub è sufficiente caricare la repository e avviare **Android CI**.
-
-## Primo avvio
-
-1. Aprire **Sorgenti**.
-2. Aggiungere account Xtream Codes oppure URL M3U.
-3. Attendere il caricamento e scegliere la sorgente attiva.
-4. Usare telecomando, tastiera, touch o controller.
+Xtream Codes, M3U/M3U8, sorgenti multiple con gestione avanzata, cache per sorgente, EPG XMLTV/M3U/external, catch-up, reminder, live/VOD/serie, ricerca globale, cronologia/ripresa, preferiti, metadata TMDB/OMDb/Trakt/OpenSubtitles, player HLS/DASH/progressive Media3, fallback URL/User-Agent, PiP, selezione tracce e velocità, download persistenti, parental PIN, backup JSON + Auto Backup Android, diagnostica, playlist unificate, personalizzazione Home, VPN personale IKEv2/WireGuard e UI ottimizzata per D-pad/Android TV.
 
 ## Sicurezza
 
-Le credenziali restano nel DataStore privato dell'app. Prima della distribuzione pubblica è consigliato integrare un backend o cifratura Keystore specifica per le credenziali provider. Non inserire API key in Git.
+Preferenze sensibili, sorgenti, VPN e token Trakt vengono cifrati con Android Keystore AES-GCM. I dati precedenti in chiaro vengono letti come fallback per permettere la migrazione.
 
+## Build
+
+Da Android Studio o da una macchina con SDK Android configurato:
+
+```bash
+./gradlew testDebugUnitTest
+./gradlew assembleDebug
+./gradlew assembleRelease
+```
+
+Il repository contiene anche `.github/workflows/android-build.yml` per compilazione e unit test in CI.
+
+## Nota sul porting
+
+Le funzioni Apple-specifiche non vengono emulate con stub: vengono riscritte usando le API Android equivalenti. Vedi `PORTING_MATRIX.md` per la copertura area-per-area e per le limitazioni ereditate dal progetto iOS, ad esempio OpenVPN engine non incluso nel sorgente originale.

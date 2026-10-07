@@ -1,3 +1,3 @@
--keepattributes Signature,*Annotation*
+-keep class com.gassplayer.android.** { *; }
 -keep class kotlinx.serialization.** { *; }
--keepclassmembers class com.iamgasgass.gassplayer.data.** { *; }
+-dontwarn org.conscrypt.**
