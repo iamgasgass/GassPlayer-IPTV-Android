@@ -15,19 +15,61 @@ object StreamUrlCandidates {
     private const val maxAlternatives = 6
 
     fun ordered(url: String): List<String> {
-        val uri = runCatching { URI(url) }.getOrNull() ?: return listOf(url)
+        val normalized = url.trim()
+        val uri = runCatching { URI(normalized) }.getOrNull() ?: return listOf(normalized)
         val parts = uri.path?.split('/').orEmpty().filter { it.isNotBlank() }
-        if (parts.size < 4) return listOf(url)
+        if (parts.size < 4) return listOf(normalized)
         val kind = parts[parts.size - 4].lowercase()
-        if (kind !in setOf("movie", "series", "live")) return listOf(url)
+        if (kind !in setOf("movie", "series", "live")) return listOf(normalized)
         val filename = parts.last()
         val dot = filename.lastIndexOf('.')
-        if (dot <= 0) return listOf(url)
+        val order = if (kind == "live") liveExtensions else vodExtensions
+
+        // Xtream endpoints are frequently extensionless; the server may expose
+        // the same stream as HLS or MPEG-TS depending on the requested suffix.
+        if (dot <= 0) {
+            val alternatives = order.take(maxAlternatives).map { suffix ->
+                "$normalized.$suffix"
+            }
+            return (listOf(normalized) + alternatives).distinct()
+        }
+
         val base = filename.substring(0, dot)
         val current = filename.substring(dot + 1).lowercase()
-        val order = if (kind == "live") liveExtensions else vodExtensions
-        val folder = url.substringBeforeLast('/')
-        val alternatives = order.filter { it != current }.take(maxAlternatives).map { "$folder/$base.$it" }
-        return listOf(url) + alternatives
+        val folder = normalized.substringBeforeLast('/')
+        val alternatives = order.filter { it != current }.take(maxAlternatives).map { suffix ->
+            "$folder/$base.$suffix"
+        }
+        return (listOf(normalized) + alternatives).distinct()
     }
+
+    fun playbackCandidates(url: String, kind: MediaKind): List<StreamCandidate> {
+        val urls = ordered(url)
+        return urls.flatMap { candidateUrl ->
+            val uri = runCatching { URI(candidateUrl) }.getOrNull()
+            val path = uri?.path?.lowercase().orEmpty()
+            val mime = when {
+                path.endsWith(".m3u8") -> androidx.media3.common.MimeTypes.APPLICATION_M3U8
+                path.endsWith(".mpd") -> androidx.media3.common.MimeTypes.APPLICATION_MPD
+                path.endsWith(".ts") || path.endsWith(".m2ts") -> androidx.media3.common.MimeTypes.VIDEO_MP2T
+                else -> null
+            }
+
+            // Extensionless live endpoints are most commonly HLS or MPEG-TS.
+            // Try HLS explicitly first, then let Media3 sniff a progressive stream.
+            if (mime == null && kind == MediaKind.LIVE) {
+                listOf(
+                    StreamCandidate(candidateUrl, androidx.media3.common.MimeTypes.APPLICATION_M3U8),
+                    StreamCandidate(candidateUrl, null)
+                )
+            } else {
+                listOf(StreamCandidate(candidateUrl, mime))
+            }
+        }.distinctBy { it.url to it.mimeType }
+    }
+
+    data class StreamCandidate(
+        val url: String,
+        val mimeType: String? = null
+    )
 }

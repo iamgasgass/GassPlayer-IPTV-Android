@@ -44,3 +44,14 @@ Le funzioni Apple-specifiche non vengono emulate con stub: vengono riscritte usa
 - Updated Media3 `ExoPlayer.Builder` usage to `setLoadControl(...)`.
 - Fixed Trakt device-code expiration field usage (`expiresInSec`).
 - Added Kotlin Serialization `jsonObject` extension import for VPN discovery.
+
+
+## Requested CI / streaming update (FIXED11)
+- Android 17 API / compileSdk 37 / targetSdk 37.
+- Gradle Wrapper 9.7.1, Kotlin 2.4.20, AGP 9.4.0.
+- Core KTX 1.19.0 and DataStore Preferences 1.2.1; other stable dependencies retained at their current stable versions.
+- Android equivalent of iOS ATS arbitrary loads: cleartext HTTP is explicitly permitted for playlist and stream endpoints.
+- Xtream stream URLs support extensionless endpoints plus explicit HLS/MPEG-TS MIME fallback in Media3.
+- GitHub Actions always publishes a root-level build log; successful builds publish a root-level installable debug APK.
+
+- Activity Compose updated to stable 1.13.0; CI actions pinned to current stable releases available at the time of this update.

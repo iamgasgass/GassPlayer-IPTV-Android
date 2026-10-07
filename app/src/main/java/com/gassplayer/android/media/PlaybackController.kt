@@ -43,7 +43,7 @@ class PlaybackController(private val context: Context, private val diagnostics: 
     private var simpleCache: SimpleCache? = null
     private var currentItem: MediaItem? = null
     private var startPosition = 0L
-    private var urlCandidates: List<String> = emptyList()
+    private var urlCandidates: List<StreamUrlCandidates.StreamCandidate> = emptyList()
     private var urlIndex = 0
     private var userAgents: List<String> = emptyList()
     private var userAgentIndex = 0
@@ -89,7 +89,7 @@ class PlaybackController(private val context: Context, private val diagnostics: 
         _current.value = item
         currentItem = item
         this.startPosition = startPosition.coerceAtLeast(0L)
-        urlCandidates = StreamUrlCandidates.ordered(item.streamUrl)
+        urlCandidates = StreamUrlCandidates.playbackCandidates(item.streamUrl, item.kind)
         urlIndex = 0
         userAgents = buildList {
             settings.value.customUserAgent.trim().takeIf { it.isNotBlank() }?.let(::add)
@@ -133,9 +133,14 @@ class PlaybackController(private val context: Context, private val diagnostics: 
     private fun applyUserAgent() { httpFactory.setDefaultRequestProperties(mapOf("User-Agent" to userAgents.getOrNull(userAgentIndex).orEmpty().ifBlank { effectiveUserAgent() })) }
 
     private fun setCurrentUrlAndPrepare(position: Long) {
-        val source = urlCandidates.getOrElse(urlIndex) { currentItem?.streamUrl.orEmpty() }
-        val data = androidx.media3.common.MediaItem.Builder().setUri(source).setMediaId(currentItem?.id.orEmpty()).setTag(currentItem).build()
-        player.setMediaItem(data)
+        val candidate = urlCandidates.getOrNull(urlIndex)
+            ?: StreamUrlCandidates.StreamCandidate(currentItem?.streamUrl.orEmpty())
+        val dataBuilder = androidx.media3.common.MediaItem.Builder()
+            .setUri(candidate.url)
+            .setMediaId(currentItem?.id.orEmpty())
+            .setTag(currentItem)
+        candidate.mimeType?.let(dataBuilder::setMimeType)
+        player.setMediaItem(dataBuilder.build())
         player.prepare()
         if (position > 0) player.seekTo(position)
         player.playWhenReady = true
@@ -152,7 +157,8 @@ class PlaybackController(private val context: Context, private val diagnostics: 
         }
         if (urlIndex + 1 < urlCandidates.size) {
             urlIndex++
-            diagnostics.log("WARN", "player", "Retry URL candidato ${urlIndex + 1}/${urlCandidates.size}")
+            val retryCandidate = urlCandidates[urlIndex]
+            diagnostics.log("WARN", "player", "Retry stream candidate ${urlIndex + 1}/${urlCandidates.size}: ${retryCandidate.url} ${retryCandidate.mimeType.orEmpty()}")
             setCurrentUrlAndPrepare(player.currentPosition)
             return true
         }
