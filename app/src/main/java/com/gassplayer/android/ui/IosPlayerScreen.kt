@@ -584,8 +584,11 @@ private fun PlayerControlsOverlay(
             }
             PlayerGlassButton(Icons.Default.OpenInNew, "Esterno", onClick = onExternal)
             PlayerGlassButton(Icons.Default.Lock, "Blocca", onClick = onLock)
-            PlayerGlassButton(Icons.Default.MoreVert, "Opzioni") {
-                onRequestDialog(IosPlayerDialog.OPTIONS)
+            PlayerGlassButton(
+                modifier = Modifier.size(44.dp),
+                onClick = { onRequestDialog(IosPlayerDialog.OPTIONS) }
+            ) {
+                Icon(Icons.Default.MoreVert, contentDescription = "Opzioni")
             }
         }
 
