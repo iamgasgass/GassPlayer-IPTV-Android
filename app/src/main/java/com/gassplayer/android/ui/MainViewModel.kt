@@ -20,6 +20,8 @@ class MainViewModel(val app: GassPlayerApplication) : ViewModel() {
     val watch = app.watch.flow.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val parental = app.parental.flow.stateIn(viewModelScope, SharingStarted.Eagerly, ParentalState())
     val activeSource = app.sources.activeSource.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+    /** Compatibility alias used by the iOS-style source manager. */
+    val currentSource = activeSource
 
     private val _catalog = MutableStateFlow<CatalogState?>(null)
     val catalog = _catalog.asStateFlow()
