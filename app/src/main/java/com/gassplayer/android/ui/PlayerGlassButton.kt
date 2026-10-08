@@ -38,7 +38,6 @@ fun PlayerGlassButton(
     contentDescription: String,
     size: Dp = 44.dp,
     enabled: Boolean = true,
-    tint: Color? = null,
     onClick: () -> Unit
 ) {
     Surface(
@@ -57,7 +56,7 @@ fun PlayerGlassButton(
             Icon(
                 icon,
                 contentDescription,
-                tint = tint ?: if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.28f)
+                tint = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.28f)
             )
         }
     }

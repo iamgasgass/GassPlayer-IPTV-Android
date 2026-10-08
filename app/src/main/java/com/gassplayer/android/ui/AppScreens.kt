@@ -54,7 +54,47 @@ private val Dark = Color(0xFF050609)
 
 @Composable
 fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
-    com.gassplayer.android.ui.ios.IosParityNavHost(vm, app)
+    var route by remember { mutableStateOf("home") }
+    var playerItem by remember { mutableStateOf<MediaItem?>(null) }
+    val catalog by vm.catalog.collectAsStateWithLifecycle()
+    val settings by vm.settings.collectAsStateWithLifecycle()
+    val favorite by vm.favorites.collectAsStateWithLifecycle()
+    val watch by vm.watch.collectAsStateWithLifecycle()
+    val sources by vm.sources.collectAsStateWithLifecycle()
+    val parental by vm.parental.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val tv = (context.resources.configuration.uiMode and Configuration.UI_MODE_TYPE_MASK) == Configuration.UI_MODE_TYPE_TELEVISION
+
+    if (playerItem != null) {
+        IosPlayerScreen(app, playerItem!!, settings, catalog, onBack = { playerItem = null }, onPip = { (context as? MainActivity)?.enterPlayerPip() }, onNavigateToItem = { playerItem = it }, onOpenSearch = { playerItem = null; route = "search" })
+        return
+    }
+
+    val loading by vm.loading.collectAsStateWithLifecycle()
+    val message by vm.message.collectAsStateWithLifecycle()
+    AdaptiveShell(route, tv, loading, message, onRetry = { vm.refresh(true) }, onRoute = { route = it }, title = when(route) {
+        "home" -> "GassPlayer"; "live" -> "Live TV"; "movies" -> "Film"; "series" -> "Serie"; "epg" -> "Guida TV"; "search" -> "Cerca"; "sources" -> "Sorgenti"; "downloads" -> "Download"; "settings" -> "Impostazioni"; "home-customize" -> "Personalizza Home"; "vpn" -> "VPN"; "parental" -> "Controllo genitori"; "diagnostics" -> "Diagnostica"; "backup" -> "Backup e migrazione"; "epg-manage" -> "Fonti EPG"; "merged" -> "Playlist unificate"; else -> "GassPlayer"
+    }) {
+        when (route) {
+            "home" -> HomeScreen(vm, catalog, favorite, watch, sources, onRoute = { route = it }, onPlay = { playerItem = it })
+            "live" -> CatalogScreen("Live TV", catalog?.live.orEmpty(), catalog?.liveCategories.orEmpty(), favorite, parental, vm, onPlay = { playerItem = it }, showNumbers = settings.showChannelNumbers)
+            "movies" -> CatalogScreen("Film", catalog?.movies.orEmpty(), catalog?.vodCategories.orEmpty(), favorite, parental, vm, onPlay = { playerItem = it }, detail = true)
+            "series" -> SeriesScreen(catalog?.series.orEmpty(), catalog?.episodes.orEmpty(), catalog?.seriesCategories.orEmpty(), favorite, parental, vm, onPlay = { playerItem = it })
+            "epg" -> EpgGridScreen(app, vm, catalog?.live.orEmpty(), catalog?.liveCategories.orEmpty(), favorite, settings, onPlay = { playerItem = it })
+            "epg-manage" -> ExternalEpgManageScreen(app)
+            "merged" -> MergedPlaylistScreen(app)
+            "home-customize" -> HomeCustomizationScreen(vm)
+            "trakt" -> TraktScreen(app, settings, vm)
+            "search" -> SearchScreen(app, catalog, onPlay = { playerItem = it }, onRoute = { route = it })
+            "sources" -> SourcesScreen(app, vm)
+            "downloads" -> DownloadsScreen(app)
+            "settings" -> SettingsHub(app, settings, vm, onOpen = { route = it })
+            "vpn" -> VpnScreen(app)
+            "parental" -> ParentalScreen(vm, parental)
+            "diagnostics" -> DiagnosticsScreen(app)
+            "backup" -> BackupScreen(app)
+        }
+    }
 }
 
 @Composable
