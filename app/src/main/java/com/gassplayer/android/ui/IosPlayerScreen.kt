@@ -733,31 +733,6 @@ private fun PlayerControlsOverlay(
 }
 
 @Composable
-private fun PlayerGlassButton(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    contentDescription: String,
-    size: Dp = 44.dp,
-    enabled: Boolean = true,
-    onClick: () -> Unit
-) {
-    Surface(
-        onClick = onClick,
-        enabled = enabled,
-        modifier = Modifier
-            .size(size)
-            .padding(horizontal = 2.dp),
-        shape = RoundedCornerShape(percent = 50),
-        color = Color.White.copy(.11f),
-        border = BorderStroke(1.dp, Color.White.copy(.14f)),
-        shadowElevation = 8.dp
-    ) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Icon(icon, contentDescription, tint = if (enabled) Color.White else Color.White.copy(.28f))
-        }
-    }
-}
-
-@Composable
 private fun BadgeChip(text: String) {
     Surface(
         color = Color.White.copy(.28f),
