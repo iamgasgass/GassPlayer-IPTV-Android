@@ -3,18 +3,24 @@ package com.gassplayer.android.data
 import android.content.Context
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import java.io.File
 
 class CatalogRepository(private val context: Context, private val prefs: AppPreferences, private val xtream: XtreamRepository, private val network: NetworkApi) {
-    suspend fun loadAll(force: Boolean = false): CatalogState = withContext(Dispatchers.IO) {
+    private val refreshMutex = Mutex()
+
+    suspend fun loadAll(force: Boolean = false): CatalogState = refreshMutex.withLock {
+        withContext(Dispatchers.IO) {
         val sources = prefs.sourcesFlow.first().filter { it.isEnabled }
+        val appSettings = prefs.settingsFlow.first()
         val errors = java.util.concurrent.CopyOnWriteArrayList<String>()
         val all = sources.map { source ->
             async {
-                runCatching { loadSource(source, force) }.getOrElse { t ->
+                runCatching { loadSource(source, force, appSettings) }.getOrElse { t ->
                     if (t is kotlinx.coroutines.CancellationException) throw t
                     errors += (t.message ?: t.javaClass.simpleName)
                     restore(source.id) ?: emptySnapshot(source.id)
@@ -26,14 +32,15 @@ class CatalogRepository(private val context: Context, private val prefs: AppPref
         val series = all.flatMap { it.series }.dedupeMedia()
         val episodes = all.flatMap { it.episodes }.dedupeMedia()
         CatalogState(all.flatMap { it.liveCategories }.distinctBy { it.id to it.sourceId }, all.flatMap { it.vodCategories }.distinctBy { it.id to it.sourceId }, all.flatMap { it.seriesCategories }.distinctBy { it.id to it.sourceId }, live, movies, series, episodes, System.currentTimeMillis(), errors.toList())
+        }
     }
 
-    private suspend fun loadSource(source: MediaSourceConfig, force: Boolean): SourceSnapshot {
+    private suspend fun loadSource(source: MediaSourceConfig, force: Boolean, appSettings: AppSettings): SourceSnapshot {
         if (!force) restore(source.id)?.takeIf { System.currentTimeMillis() - it.updatedAt < 6 * 60 * 60_000L && (it.live.isNotEmpty() || it.movies.isNotEmpty() || it.series.isNotEmpty()) }?.let { return it }
         val snapshot = when (source.type) {
             SourceType.XTREAM -> {
                 val b = xtream.loadCatalog(source)
-                val preload = prefs.settingsFlow.first().preloadSeries
+                val preload = appSettings.preloadSeries
                 val episodes = if (preload) b.episodes + b.series.take(12).flatMap { runCatching { xtream.seriesEpisodes(source, it.id.substringAfterLast(':'), it.title) }.getOrDefault(emptyList()) } else b.episodes
                 SourceSnapshot(source.id, b.liveCategories, b.vodCategories, b.seriesCategories, b.live, b.movies, b.series, episodes, System.currentTimeMillis())
             }

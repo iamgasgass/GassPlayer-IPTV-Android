@@ -113,7 +113,7 @@ internal fun SettingsHub(app: GassPlayerApplication, settings: AppSettings, vm: 
                     } }
                     item { HubSection("User Agent", "Identificativo delle richieste di rete", Icons.Default.Public) {
                         OutlinedTextField(local.customUserAgent, { save(local.copy(customUserAgent = it)) }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("User Agent") }, placeholder = { Text(NetworkApi.DEFAULT_USER_AGENT) })
-                        Text("Vuoto = ${NetworkApi.DEFAULT_USER_AGENT}. Dovrai riavviare l'app per rendere effettive le modifiche all'User-Agent.", color = Color.White.copy(.5f), fontSize = 12.sp)
+                        Text("Vuoto = ${NetworkApi.DEFAULT_USER_AGENT}. La modifica viene applicata alle nuove richieste di rete.", color = Color.White.copy(.5f), fontSize = 12.sp)
                     } }
                 }
                 "ui" -> {
@@ -145,14 +145,14 @@ internal fun SettingsHub(app: GassPlayerApplication, settings: AppSettings, vm: 
                         HubChoice("Velocità predefinita", "${local.preferredPlaybackSpeed}×", listOf("1.0×", "1.25×", "1.5×", "2.0×")) { save(local.copy(preferredPlaybackSpeed = it.removeSuffix("×").toFloat())) }
                         HubToggle("Decodifica hardware", null, local.hardwareDecode) { save(local.copy(hardwareDecode = it, softwareDecode = !it)) }
                         HubToggle("Decompressione asincrona", null, local.asyncDecode) { save(local.copy(asyncDecode = it)) }
-                        HubChoice("Buffer di partenza", "${local.minBufferSec} secondi", listOf("1 secondo", "3 secondi", "5 secondi", "8 secondi", "15 secondi")) { save(local.copy(minBufferSec = it.substringBefore(' ').toInt().coerceAtMost(local.maxBufferSec))) }
+                        HubChoice("Buffer di partenza", "${local.playerStartBufferSec} secondi", listOf("1 secondo", "3 secondi", "5 secondi", "8 secondi", "15 secondi")) { save(local.copy(playerStartBufferSec = it.substringBefore(' ').toInt().coerceAtMost(local.maxBufferSec))) }
                         HubChoice("Buffer massimo", "${local.maxBufferSec} secondi", listOf("15 secondi", "30 secondi", "60 secondi", "90 secondi", "120 secondi")) { save(local.copy(maxBufferSec = it.substringBefore(' ').toInt().coerceAtLeast(local.minBufferSec))) }
                         HubToggle("Seek accurato", null, local.accurateSeek) { save(local.copy(accurateSeek = it)) }
                         HubToggle("Deinterlacciamento automatico", null, local.deinterlace) { save(local.copy(deinterlace = it)) }
-                        HubChoice("Adattamento video predefinito", aspectLabel(local.aspectRatio), listOf("Adatta", "Riempi", "16:9", "4:3", "Originale")) { save(local.copy(aspectRatio = when (it) { "Riempi" -> "fill"; "16:9" -> "16:9"; "4:3" -> "4:3"; "Originale" -> "original"; else -> "fit" })) }
+                        HubChoice("Adattamento video predefinito", aspectLabel(local.aspectRatio), listOf("Adatta", "Riempi", "Stira")) { save(local.copy(aspectRatio = when (it) { "Riempi" -> "fill"; "Stira" -> "stretch"; else -> "fit" })) }
                         HubRow("Ripristina impostazioni predefinite del player", "Buffer, decodifica, seek e adattamento video", Icons.Default.RestartAlt, destructive = true) {
                             confirm = "Buffer, decodifica hardware, seek accurato, deinterlacciamento e adattamento video torneranno ai valori di fabbrica. Autoplay, ripresa e velocità non vengono toccati." to {
-                                val d = AppSettings(); save(local.copy(minBufferSec = d.minBufferSec, maxBufferSec = d.maxBufferSec, hardwareDecode = d.hardwareDecode, softwareDecode = d.softwareDecode, asyncDecode = d.asyncDecode, accurateSeek = d.accurateSeek, deinterlace = d.deinterlace, aspectRatio = d.aspectRatio)); toast = "Player ripristinato"
+                                val d = AppSettings(); save(local.copy(minBufferSec = d.minBufferSec, maxBufferSec = d.maxBufferSec, playerStartBufferSec = d.playerStartBufferSec, hardwareDecode = d.hardwareDecode, softwareDecode = d.softwareDecode, asyncDecode = d.asyncDecode, accurateSeek = d.accurateSeek, deinterlace = d.deinterlace, aspectRatio = d.aspectRatio)); toast = "Player ripristinato"
                             }
                         }
                     } }
@@ -206,7 +206,7 @@ internal fun SettingsHub(app: GassPlayerApplication, settings: AppSettings, vm: 
 
 private fun themeLabel(v: String) = when (v) { "light" -> "Chiaro"; "dark" -> "Scuro"; else -> "Sistema" }
 private fun dnsLabel(v: String) = when (v) { "1.1.1.1" -> "1.1.1.1 · Cloudflare"; "8.8.8.8" -> "8.8.8.8 · Google"; "system" -> "Automatico di sistema"; else -> v }
-private fun aspectLabel(v: String) = when (v) { "fill" -> "Riempi"; "original" -> "Originale"; "fit" -> "Adatta"; else -> v }
+private fun aspectLabel(v: String) = when (v) { "fill" -> "Riempi"; "stretch" -> "Stira"; "fit" -> "Adatta"; "original" -> "Adatta"; else -> v }
 private fun intervalLabel(id: String) = when (id) {
     "manual" -> "Manuale"; "fifteenMinutes" -> "Ogni 15 minuti"; "thirtyMinutes" -> "Ogni 30 minuti"; "oneHour" -> "Ogni ora"
     "threeHours" -> "Ogni 3 ore"; "sixHours" -> "Ogni 6 ore"; "twelveHours" -> "Ogni 12 ore"; "daily" -> "Ogni giorno"; else -> id

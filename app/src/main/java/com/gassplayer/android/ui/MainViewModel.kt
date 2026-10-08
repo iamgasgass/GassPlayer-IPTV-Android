@@ -28,20 +28,51 @@ class MainViewModel(val app: GassPlayerApplication) : ViewModel() {
     private val _message = MutableStateFlow<String?>(null)
     val message = _message.asStateFlow()
 
-    init { refresh(false) }
+    init {
+        viewModelScope.launch {
+            val initialSettings = settings.first()
+            val last = app.prefs.lastRefreshFlow().first()
+            val interval = RefreshInterval.from(initialSettings.catalogRefreshInterval).millis
+            val intervalDue = interval != null && (last == null || System.currentTimeMillis() - last >= interval)
+            refresh(force = initialSettings.catalogRefreshOnLaunch || intervalDue)
+        }
+    }
+
     fun refresh(force: Boolean = true) = viewModelScope.launch {
         _loading.value = true
-        _catalog.value = runCatching { app.catalog.loadAll(force) }.onFailure { _message.value = it.message }.getOrNull()
-            ?.also { c -> _message.value = c.errors.firstOrNull() }
+        val result = runCatching { app.catalog.loadAll(force) }
+        _catalog.value = result.getOrNull()
+        _message.value = result.exceptionOrNull()?.message ?: result.getOrNull()?.errors?.firstOrNull()
         _loading.value = false
-        app.prefs.saveLastRefresh(System.currentTimeMillis())
+        // Il timestamp rappresenta un aggiornamento realmente riuscito, non
+        // un semplice tentativo fallito/parziale.
+        if (force && result.isSuccess && result.getOrNull()?.errors.orEmpty().isEmpty()) {
+            app.prefs.saveLastRefresh(System.currentTimeMillis())
+        }
     }
-    fun addSource(source: MediaSourceConfig) = viewModelScope.launch { app.sources.addOrUpdate(source); if (activeSource.value == null) app.sources.setActive(source.id); refresh(true) }
-    fun deleteSource(id: String) = viewModelScope.launch { app.sources.delete(id); if (activeSource.value == id) app.sources.setActive(sources.value.firstOrNull()?.id); refresh(true) }
+
+    fun addSource(source: MediaSourceConfig) = viewModelScope.launch {
+        app.sources.addOrUpdate(source)
+        if (activeSource.value == null) app.sources.setActive(source.id)
+        refresh(true)
+    }
+
+    fun deleteSource(id: String) = viewModelScope.launch {
+        app.sources.delete(id)
+        if (activeSource.value == id) app.sources.setActive(sources.value.firstOrNull()?.id)
+        refresh(true)
+    }
+
     fun toggleFavorite(item: MediaItem) = viewModelScope.launch { app.favorites.toggle(item) }
     fun toggleLock(id: String) = viewModelScope.launch { app.parental.toggleLock(id) }
     fun setActive(id: String?) = viewModelScope.launch { app.sources.setActive(id) }
-    fun updateSettings(s: AppSettings) = viewModelScope.launch { app.prefs.saveSettings(s); app.playback.setSettings(s) }
 
-    class Factory(private val app: GassPlayerApplication) : ViewModelProvider.Factory { override fun <T : ViewModel> create(modelClass: Class<T>): T = MainViewModel(app) as T }
+    fun updateSettings(s: AppSettings) = viewModelScope.launch {
+        app.prefs.saveSettings(s)
+        app.playback.setSettings(s)
+    }
+
+    class Factory(private val app: GassPlayerApplication) : ViewModelProvider.Factory {
+        override fun <T : ViewModel> create(modelClass: Class<T>): T = MainViewModel(app) as T
+    }
 }

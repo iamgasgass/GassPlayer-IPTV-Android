@@ -144,7 +144,18 @@ fun EpgGridScreen(
     val tileGap = 4.dp
     val cornerRadius = if (compact) 12.dp else 18.dp
 
-    LaunchedEffect(Unit) { while (true) { delay(30_000); now = System.currentTimeMillis() } }
+    LaunchedEffect(settings.epgAutoUpdateEnabled) {
+        while (true) {
+            delay(30_000)
+            now = System.currentTimeMillis()
+            if (settings.epgAutoUpdateEnabled) {
+                // Refresh the fetched EPG data periodically only when the
+                // automatic-update preference is enabled.
+                delay(4 * 60_000L)
+                refreshTick++
+            }
+        }
+    }
 
     val isToday = dayOffset == 0
     val windowCenter = remember(now, dayOffset) {

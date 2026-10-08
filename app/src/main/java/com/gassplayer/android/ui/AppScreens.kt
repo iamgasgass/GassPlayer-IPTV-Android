@@ -43,7 +43,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.media3.ui.PlayerView
 import coil3.compose.AsyncImage
 import com.gassplayer.android.GassPlayerApplication
 import com.gassplayer.android.data.*
@@ -67,7 +66,7 @@ fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
     val tv = (context.resources.configuration.uiMode and Configuration.UI_MODE_TYPE_MASK) == Configuration.UI_MODE_TYPE_TELEVISION
 
     if (playerItem != null) {
-        PlayerScreen(app, playerItem!!, settings, onBack = { playerItem = null }, onPip = { (context as? MainActivity)?.enterPlayerPip() })
+        IosPlayerScreen(app, playerItem!!, settings, catalog, onBack = { playerItem = null }, onPip = { (context as? MainActivity)?.enterPlayerPip() }, onNavigateToItem = { playerItem = it }, onOpenSearch = { playerItem = null; route = "search" })
         return
     }
 
@@ -499,17 +498,6 @@ private fun MergedPlaylistScreen(app: GassPlayerApplication) {
 }
 
 @Composable private fun DiagnosticsScreen(app:GassPlayerApplication){ var log by remember{mutableStateOf(app.diagnostics.read())};Column{Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){Button({log=app.diagnostics.read()}){Text("Aggiorna")};OutlinedButton({app.diagnostics.clear();log=""}){Text("Svuota")}};Spacer(Modifier.height(10.dp));LazyColumn{item{Text(log, color=Color.White.copy(.75f), fontSize=12.sp)}}}}
-
-@Composable private fun PlayerScreen(app:GassPlayerApplication,item:MediaItem,settings:AppSettings,onBack:()->Unit,onPip:()->Unit){
-    val scope=rememberCoroutineScope(); LaunchedEffect(item.id){app.playback.setSettings(settings);val start=item.metadataTag?.removePrefix("resume:")?.toLongOrNull()?:0L;app.playback.play(item,start)}
-    DisposableEffect(item.id){ onDispose { val position=app.playback.player.currentPosition; val duration=app.playback.player.duration.coerceAtLeast(0L); scope.launch{app.watch.upsert(WatchEntry(item.id,item.title,item.kind,item.streamUrl,position,duration))} } }
-    var speed by remember{mutableStateOf(settings.preferredPlaybackSpeed)};var locked by remember{mutableStateOf(false)}
-    val context = LocalContext.current
-    val playerView = remember(context) { PlayerView(context).apply { player=app.playback.player; useController=true; keepScreenOn=true; isFocusable=true; isFocusableInTouchMode=true } }
-    Box(Modifier.fillMaxSize().background(Color.Black)){
-        AndroidView(factory={ playerView }, update={ it.player=app.playback.player }, modifier=Modifier.fillMaxSize().focusable().onKeyEvent { event -> playerView.dispatchKeyEvent(event.nativeKeyEvent) })
-        if(locked){Button({locked=false},Modifier.align(Alignment.Center)){Text("Sblocca player")}} else {Row(Modifier.align(Alignment.BottomCenter).padding(20.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)){FilledTonalButton({app.playback.skipBack()}){Text("−10")};FilledTonalButton({app.playback.togglePlayPause()}){Text("Play/Pausa")};FilledTonalButton({app.playback.skipForward()}){Text("+10")};Button({speed=if(speed>=2f)1f else speed+0.5f;app.playback.setSpeed(speed)}){Text("${speed}x")};OutlinedButton({locked=true}){Text("Blocca")};OutlinedButton({onPip()}){Text("PiP")};OutlinedButton({onBack()}){Text("Chiudi")}}};app.playback.error.collectAsStateWithLifecycle().value?.let{err->Text(err,color=Color.White,modifier=Modifier.align(Alignment.TopCenter).padding(20.dp))} }
-}
 
 private val CatalogState.allItems get() = live + movies + series + episodes
 private fun MainViewModel.appFavorite(state: FavoriteState,item:MediaItem)=when(item.kind){MediaKind.LIVE->item.id in state.live;MediaKind.MOVIE,MediaKind.EPISODE->item.id in state.movies;MediaKind.SERIES->item.id in state.series}
