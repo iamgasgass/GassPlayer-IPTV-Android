@@ -3,6 +3,8 @@ package com.gassplayer.android.ui.ios
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.material.icons.filled.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -31,6 +33,6 @@ fun IosATSDiagnosticView(app: GassPlayerApplication) {
         IosSectionHeader("ATS / rete", "Stato dei servizi e delle connessioni")
         IosGlassRow(Icons.Default.Wifi, "Rete", "Gestita da NetworkApi", IosGreen, showChevron = false)
         IosGlassRow(Icons.Default.Storage, "Cache", "${app.diagnostics.cacheCount()} file", IosBlue, showChevron = false)
-        IosGlassRow(Icons.Default.BugReport, "Log", "${app.diagnostics.read().lineSequence().count()} righe", IosOrange, showChevron = false)
+        IosGlassRow(Icons.Default.BugReport, "Log", "${app.diagnostics.read().lines().size} righe", IosOrange, showChevron = false)
     }
 }

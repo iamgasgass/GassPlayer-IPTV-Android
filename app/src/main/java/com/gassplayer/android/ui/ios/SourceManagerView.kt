@@ -22,12 +22,13 @@ fun IosSourceManagerView(app: GassPlayerApplication, vm: MainViewModel) {
     var status by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val source = selected
+    if (source == null) {
+        IosEmptyState("Nessuna sorgente", "Aggiungi una playlist dalle sorgenti.", Icons.Default.SettingsInputAntenna)
+        return
+    }
+    val currentSource = source
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         IosSectionHeader("Gestisci sorgente", "Dettagli server, contenuti e stato della playlist")
-        val currentSource = source ?: run {
-            IosEmptyState("Nessuna sorgente", "Aggiungi una playlist dalle sorgenti.", Icons.Default.SettingsInputAntenna)
-            return@Column
-        }
         LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(9.dp), contentPadding = PaddingValues(bottom = 30.dp)) {
             item {
                 IosGlassCard {
