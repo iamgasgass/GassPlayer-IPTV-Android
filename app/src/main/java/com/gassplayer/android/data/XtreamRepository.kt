@@ -60,8 +60,13 @@ class XtreamRepository(private val api: NetworkApi) {
         var fallbackError: Throwable? = null
         if (series.isEmpty() || live.isEmpty() || movies.isEmpty()) {
             runCatching {
-                val fetched = api.getTextResult(xtreamPlaylist(creds), mapOf("Accept" to "application/vnd.apple.mpegurl, application/x-mpegURL, text/plain, */*"))
-                M3UParser.parse(source.id, fetched.text, NetworkApi.stripInlineHeaders(fetched.finalUrl))
+                api.getStream(
+                    xtreamPlaylist(creds),
+                    mapOf("Accept" to "application/vnd.apple.mpegurl, application/x-mpegURL, text/plain, */*"),
+                    defaultAccept = "application/vnd.apple.mpegurl, application/x-mpegURL, text/plain, */*"
+                ) { input, finalUrl ->
+                    M3UParser.parse(source.id, input, NetworkApi.stripInlineHeaders(finalUrl))
+                }
             }.onFailure { fallbackError = it }.onSuccess { parsed ->
                 if (series.isEmpty()) series = parsed.filter { it.kind == MediaKind.SERIES }.distinctBy { it.id }
                 if (live.isEmpty()) {
@@ -179,9 +184,14 @@ class XtreamRepository(private val api: NetworkApi) {
         if (seriesName.isNullOrBlank()) return emptyList()
         return runCatching {
             val playlistUrl = xtreamPlaylist(creds)
-            val fetched = api.getTextResult(playlistUrl, mapOf("Accept" to "application/vnd.apple.mpegurl, application/x-mpegURL, text/plain, */*"))
             val target = normalizeSeriesMatch(seriesName)
-            M3UParser.parse(source.id, fetched.text, NetworkApi.stripInlineHeaders(fetched.finalUrl))
+            api.getStream(
+                playlistUrl,
+                mapOf("Accept" to "application/vnd.apple.mpegurl, application/x-mpegURL, text/plain, */*"),
+                defaultAccept = "application/vnd.apple.mpegurl, application/x-mpegURL, text/plain, */*"
+            ) { input, finalUrl ->
+                M3UParser.parse(source.id, input, NetworkApi.stripInlineHeaders(finalUrl))
+            }
                 .filter {
                     it.kind == MediaKind.EPISODE &&
                         (normalizeSeriesMatch(it.title) == target || normalizeSeriesMatch(it.group.orEmpty()) == target)

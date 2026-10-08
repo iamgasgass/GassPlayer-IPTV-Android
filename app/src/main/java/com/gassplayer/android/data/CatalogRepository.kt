@@ -47,13 +47,18 @@ class CatalogRepository(private val context: Context, private val prefs: AppPref
             SourceType.M3U8 -> {
                 val playlistUrl = source.playlistUrl ?: source.host
                 val sourceHeaders = NetworkApi.extractInlineHeaders(playlistUrl)
-                val fetched = network.getTextResult(playlistUrl, mapOf("Accept" to "application/vnd.apple.mpegurl, application/x-mpegURL, audio/mpegurl, text/plain, */*"))
-                val parsed = M3UParser.parse(
-                    source.id,
-                    fetched.text,
-                    NetworkApi.stripInlineHeaders(fetched.finalUrl),
-                    defaultHeaders = sourceHeaders
-                )
+                val parsed = network.getStream(
+                    playlistUrl,
+                    mapOf("Accept" to "application/vnd.apple.mpegurl, application/x-mpegURL, audio/mpegurl, text/plain, */*"),
+                    defaultAccept = "application/vnd.apple.mpegurl, application/x-mpegURL, audio/mpegurl, text/plain, */*"
+                ) { input, finalUrl ->
+                    M3UParser.parse(
+                        source.id,
+                        input,
+                        NetworkApi.stripInlineHeaders(finalUrl),
+                        defaultHeaders = sourceHeaders
+                    )
+                }
                 if (parsed.isEmpty()) error("Playlist '${source.name}' vuota o in un formato non riconosciuto")
                 SourceSnapshot(source.id, emptyList(), emptyList(), emptyList(), parsed.filter { it.kind == MediaKind.LIVE }, parsed.filter { it.kind == MediaKind.MOVIE }, parsed.filter { it.kind == MediaKind.SERIES }, parsed.filter { it.kind == MediaKind.EPISODE }, System.currentTimeMillis())
             }

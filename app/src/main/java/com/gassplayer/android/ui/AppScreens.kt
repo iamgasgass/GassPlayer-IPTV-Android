@@ -445,16 +445,18 @@ private fun AddSourceDialog(app: GassPlayerApplication, vm: MainViewModel, onDis
                                 SourceType.M3U8 -> {
                                     val playlistUrl = candidate.playlistUrl ?: candidate.host
                                     val sourceHeaders = NetworkApi.extractInlineHeaders(playlistUrl)
-                                    val fetched = app.network.getTextResult(
+                                    app.network.getStream(
                                         playlistUrl,
-                                        mapOf("Accept" to "application/vnd.apple.mpegurl, application/x-mpegURL, audio/mpegurl, text/plain, */*")
-                                    )
-                                    M3UParser.parse(
-                                        candidate.id,
-                                        fetched.text,
-                                        NetworkApi.stripInlineHeaders(fetched.finalUrl),
-                                        defaultHeaders = sourceHeaders
-                                    ).takeIf { it.isNotEmpty() }
+                                        mapOf("Accept" to "application/vnd.apple.mpegurl, application/x-mpegURL, audio/mpegurl, text/plain, */*"),
+                                        defaultAccept = "application/vnd.apple.mpegurl, application/x-mpegURL, audio/mpegurl, text/plain, */*"
+                                    ) { input, finalUrl ->
+                                        M3UParser.parse(
+                                            candidate.id,
+                                            input,
+                                            NetworkApi.stripInlineHeaders(finalUrl),
+                                            defaultHeaders = sourceHeaders
+                                        )
+                                    }.takeIf { it.isNotEmpty() }
                                         ?: error("Playlist M3U/M3U8 vuota o non riconosciuta")
                                 }
                                 else -> Unit

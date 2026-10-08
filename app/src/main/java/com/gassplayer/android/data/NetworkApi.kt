@@ -54,6 +54,24 @@ class NetworkApi {
             TextResponse(decodeText(gunzipIfNeeded(bytes)), response.request.url.toString())
         }
 
+    /**
+     * Streams a response body to [block] without first materialising the whole playlist.
+     * Gzip is detected from the payload magic bytes because OkHttp may transparently remove
+     * the Content-Encoding header on some providers. The returned URL is the final redirected URL.
+     */
+    suspend fun <T> getStream(
+        url: String,
+        headers: Map<String, String> = emptyMap(),
+        defaultAccept: String = "*/*",
+        block: (java.io.InputStream, String) -> T
+    ): T = execute(url, headers, defaultAccept) { response, finalUrl ->
+        response.body.byteStream().use { raw ->
+            gzipAwareStream(raw).use { stream ->
+                block(stream, finalUrl)
+            }
+        }
+    }
+
     suspend fun getJson(url: String, headers: Map<String, String> = emptyMap()): JsonElement =
         JsonStore.json.parseToJsonElement(
             execute(url, headers, "application/json, text/plain, */*") { response, _ ->
@@ -217,6 +235,18 @@ class NetworkApi {
             }
         }
         throw lastError ?: IllegalStateException("Network request failed")
+    }
+
+    private fun gzipAwareStream(input: java.io.InputStream): java.io.InputStream {
+        val buffered = java.io.PushbackInputStream(java.io.BufferedInputStream(input, 64 * 1024), 2)
+        val magic = ByteArray(2)
+        val read = buffered.read(magic)
+        if (read > 0) buffered.unread(magic, 0, read)
+        return if (read == 2 && magic[0] == 0x1f.toByte() && magic[1] == 0x8b.toByte()) {
+            java.io.BufferedInputStream(java.util.zip.GZIPInputStream(buffered, 64 * 1024), 64 * 1024)
+        } else {
+            buffered
+        }
     }
 
     companion object {
