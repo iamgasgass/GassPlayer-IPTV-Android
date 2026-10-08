@@ -577,13 +577,13 @@ private fun PlayerControlsOverlay(
                 .padding(start = 20.dp, end = 16.dp, top = 16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            PlayerGlassButton(Icons.Default.Close, "Chiudi", onBack)
+            PlayerGlassButton(Icons.Default.Close, "Chiudi", onClick = onBack)
             Spacer(Modifier.weight(1f))
             if (supportsPip) {
-                PlayerGlassButton(Icons.Default.PictureInPictureAlt, "PiP", onPip)
+                PlayerGlassButton(Icons.Default.PictureInPictureAlt, "PiP", onClick = onPip)
             }
             PlayerGlassButton(Icons.Default.OpenInNew, "Esterno", onClick = onExternal)
-            PlayerGlassButton(Icons.Default.Lock, "Blocca", onLock)
+            PlayerGlassButton(Icons.Default.Lock, "Blocca", onClick = onLock)
             PlayerGlassButton(Icons.Default.MoreVert, "Opzioni") {
                 onRequestDialog(IosPlayerDialog.OPTIONS)
             }

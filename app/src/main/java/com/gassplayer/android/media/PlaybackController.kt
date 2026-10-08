@@ -106,11 +106,9 @@ class PlaybackController(
 
         playerInstance?.let { player ->
             player.repeatMode = if (value.loopPlayback) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
-            player.seekParameters = if (value.accurateSeek) {
-                SeekParameters.EXACT
-            } else {
-                SeekParameters.CLOSEST_SYNC
-            }
+            player.setSeekParameters(
+                if (value.accurateSeek) SeekParameters.EXACT else SeekParameters.CLOSEST_SYNC
+            )
             if (player.playbackState != Player.STATE_IDLE) {
                 player.setPlaybackSpeed(value.preferredPlaybackSpeed.coerceIn(0.25f, 3f))
             }
@@ -229,7 +227,7 @@ class PlaybackController(
     }
 
     fun setAccurateSeek(enabled: Boolean) {
-        player.seekParameters = if (enabled) SeekParameters.EXACT else SeekParameters.CLOSEST_SYNC
+        player.setSeekParameters(if (enabled) SeekParameters.EXACT else SeekParameters.CLOSEST_SYNC)
     }
 
     fun startSleepTimer(minutes: Int) {
@@ -306,11 +304,9 @@ class PlaybackController(
                 } else {
                     Player.REPEAT_MODE_OFF
                 }
-                seekParameters = if (settings.value.accurateSeek) {
-                    SeekParameters.EXACT
-                } else {
-                    SeekParameters.CLOSEST_SYNC
-                }
+                setSeekParameters(
+                    if (settings.value.accurateSeek) SeekParameters.EXACT else SeekParameters.CLOSEST_SYNC
+                )
                 setPlaybackSpeed(settings.value.preferredPlaybackSpeed.coerceIn(0.25f, 3f))
                 addListener(object : Player.Listener {
                     override fun onPlayerError(error: PlaybackException) {
