@@ -342,19 +342,26 @@ fun EpgGridScreen(
 
     selectedProgram?.let { (ch, p) ->
         val tf = remember { SimpleDateFormat("EEE d MMM HH:mm", Locale.getDefault()) }
-        AlertDialog(
+        GassDialog(
+            title = p.title.ifBlank { ch.title },
             onDismissRequest = { selectedProgram = null },
-            title = { Text(p.title.ifBlank { ch.title }) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("${ch.title} • ${tf.format(Date(p.startMs))} – ${SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(p.endMs))}", fontSize = 13.sp)
-                    p.description?.takeIf { it.isNotBlank() }?.let { Text(it, maxLines = 8, overflow = TextOverflow.Ellipsis) }
+            content = {
+                Text(
+                    "${ch.title} • ${tf.format(Date(p.startMs))} – ${SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(p.endMs))}",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                p.description?.takeIf { it.isNotBlank() }?.let {
+                    Text(it, maxLines = 8, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurface)
                 }
             },
-            confirmButton = {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (p.startMs > now) TextButton({ app.reminders.schedule(p); toast = "Promemoria impostato"; selectedProgram = null }) { Text("Ricordami") }
-                    if (p.hasArchive && p.endMs < now) TextButton({
+            actions = {
+                if (p.startMs > now) {
+                    GassDialogAction("Ricordami", { app.reminders.schedule(p); toast = "Promemoria impostato"; selectedProgram = null })
+                    Spacer(Modifier.width(8.dp))
+                }
+                if (p.hasArchive && p.endMs < now) {
+                    GassDialogAction("Catch-up", {
                         scope.launch {
                             val src = sources.firstOrNull { it.id == ch.sourceId }
                             if (src != null) {
@@ -363,11 +370,13 @@ fun EpgGridScreen(
                             }
                             selectedProgram = null
                         }
-                    }) { Text("Catch-up") }
-                    Button({ onPlay(ch); selectedProgram = null }) { Text("Guarda") }
+                    })
+                    Spacer(Modifier.width(8.dp))
                 }
-            },
-            dismissButton = { TextButton({ selectedProgram = null }) { Text("Chiudi") } }
+                GassDialogAction("Guarda", { onPlay(ch); selectedProgram = null })
+                Spacer(Modifier.width(8.dp))
+                GassDialogAction("Chiudi", { selectedProgram = null })
+            }
         )
     }
 }
@@ -410,11 +419,11 @@ private fun EpgTopBar(
     var page by remember { mutableStateOf<String?>(null) }
     Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         Box {
-            Row(Modifier.clip(RoundedCornerShape(50)).background(Color.White.copy(.10f)).combinedClickableSafe { groupOpen = true }.padding(horizontal = 16.dp, vertical = 9.dp),
+            Row(Modifier.clip(RoundedCornerShape(50)).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)).combinedClickableSafe { groupOpen = true }.padding(horizontal = 16.dp, vertical = 9.dp),
                 verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.GridView, null, tint = Color.White, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(8.dp))
-                Text(groupName, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 280.dp))
-                Spacer(Modifier.width(6.dp)); Icon(Icons.Default.ArrowDropDown, null, tint = Color.White)
+                Icon(Icons.Default.GridView, null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(8.dp))
+                Text(groupName, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 280.dp))
+                Spacer(Modifier.width(6.dp)); Icon(Icons.Default.ArrowDropDown, null, tint = MaterialTheme.colorScheme.onSurface)
             }
             DropdownMenu(groupOpen, { groupOpen = false }, modifier = Modifier.heightIn(max = 420.dp)) {
                 DropdownMenuItem({ Text("Tutti i canali") }, { onGroup(null); groupOpen = false }, leadingIcon = { Icon(Icons.Default.GridView, null) })
@@ -424,9 +433,9 @@ private fun EpgTopBar(
             }
         }
         Spacer(Modifier.weight(1f))
-        Text(dayTitle, color = Color.White.copy(.7f), fontSize = 14.sp)
+        Text(dayTitle, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp)
         Box {
-            IconButton({ page = null; menuOpen = true }) { Icon(Icons.Default.MoreHoriz, "Altre opzioni", tint = Color.White) }
+            IconButton({ page = null; menuOpen = true }) { Icon(Icons.Default.MoreHoriz, "Altre opzioni", tint = MaterialTheme.colorScheme.onSurface) }
             DropdownMenu(menuOpen, { menuOpen = false; page = null }) {
                 when (page) {
                     null -> {

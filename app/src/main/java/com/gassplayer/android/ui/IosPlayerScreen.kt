@@ -333,7 +333,7 @@ fun IosPlayerScreen(
                     .padding(24.dp),
                 shape = RoundedCornerShape(18.dp),
                 color = Color.Black.copy(.58f),
-                border = BorderStroke(1.dp, Color.White.copy(.14f))
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
             ) {
                 Row(
                     Modifier.padding(horizontal = 16.dp, vertical = 11.dp),
@@ -425,7 +425,7 @@ fun IosPlayerScreen(
                     .padding(end = 24.dp, bottom = 104.dp),
                 color = Color.Black.copy(.75f),
                 shape = RoundedCornerShape(18.dp),
-                border = BorderStroke(1.dp, Color.White.copy(.14f))
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
             ) {
                 Text(
                     "Prossimo episodio  ›",
@@ -759,21 +759,21 @@ private fun ResumeOverlay(position: Long, title: String, onResume: () -> Unit, o
     ) {
         Surface(
             modifier = Modifier.widthIn(min = 300.dp, max = 520.dp),
-            color = Color(0xFF17191F).copy(.96f),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(.96f),
             shape = RoundedCornerShape(28.dp),
-            border = BorderStroke(1.dp, Color.White.copy(.14f))
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
         ) {
             Column(
                 Modifier.padding(26.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                Text("Riprendi la visione?", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                Text("Riprendi la visione?", color = MaterialTheme.colorScheme.onSurface, fontSize = 24.sp, fontWeight = FontWeight.Bold)
                 Text(
                     "Ti eri fermato a ${formatTime(position)}",
-                    color = Color.White.copy(.74f),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 14.sp
                 )
-                Text(title, color = Color.White.copy(.92f), fontSize = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(title, color = MaterialTheme.colorScheme.onSurface, fontSize = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(onClick = onResume) { Text("Riprendi da…") }
                     OutlinedButton(onClick = onRestart) { Text("Ricomincia da capo") }
@@ -1066,19 +1066,19 @@ private fun AdvancedDialog(
 @Composable
 private fun SettingStepper(title: String, value: Int, options: List<Int>, onChange: (Int) -> Unit) {
     Surface(
-        color = Color.White.copy(.06f),
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
         shape = RoundedCornerShape(16.dp),
-        border = BorderStroke(1.dp, Color.White.copy(.1f))
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f))
     ) {
         Column(Modifier.fillMaxWidth().padding(12.dp)) {
-            Text(title, color = Color.White, fontWeight = FontWeight.SemiBold)
+            Text(title, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
             Row(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 TextButton({ onChange(options.filter { it < value }.lastOrNull() ?: value) }) { Text("−") }
-                Text("$value s", color = Color.White, modifier = Modifier.weight(1f))
+                Text("$value s", color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
                 TextButton({ onChange(options.firstOrNull { it > value } ?: value) }) { Text("+") }
             }
         }
@@ -1091,7 +1091,7 @@ private fun SettingSwitch(title: String, checked: Boolean, onChange: (Boolean) -
         Modifier.fillMaxWidth().padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(title, color = Color.White, modifier = Modifier.weight(1f))
+        Text(title, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
         Switch(checked = checked, onCheckedChange = onChange)
     }
 }
@@ -1107,22 +1107,22 @@ private fun DialogRow(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(14.dp),
-        color = Color.White.copy(.055f),
-        border = BorderStroke(1.dp, Color.White.copy(.075f))
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.055f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f))
     ) {
         Row(
             Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(icon, null, tint = Color.White.copy(.88f))
+            Icon(icon, null, tint = MaterialTheme.colorScheme.onSurface.copy(.88f))
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
-                Text(title, color = Color.White, fontWeight = FontWeight.Medium)
+                Text(title, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Medium)
                 subtitle?.let {
-                    Text(it, color = Color.White.copy(.55f), fontSize = 12.sp)
+                    Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
                 }
             }
-            Icon(Icons.Default.ChevronRight, null, tint = Color.White.copy(.42f))
+            Icon(Icons.Default.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(.7f))
         }
     }
 }
@@ -1136,15 +1136,16 @@ private fun PlayerDialogFrame(title: String, onDismiss: () -> Unit, content: @Co
                 .widthIn(max = 620.dp)
                 .heightIn(max = 720.dp),
             shape = RoundedCornerShape(28.dp),
-            color = Color(0xFF15171D),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            contentColor = MaterialTheme.colorScheme.onSurface,
             tonalElevation = 12.dp,
-            border = BorderStroke(1.dp, Color.White.copy(.12f))
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
         ) {
             Column(Modifier.padding(18.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(title, color = Color.White, fontSize = 21.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    Text(title, color = MaterialTheme.colorScheme.onSurface, fontSize = 21.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                     IconButton(onClick = onDismiss) {
-                        Icon(Icons.Default.Close, null, tint = Color.White)
+                        Icon(Icons.Default.Close, null, tint = MaterialTheme.colorScheme.onSurface)
                     }
                 }
                 Spacer(Modifier.height(8.dp))

@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -26,8 +27,6 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
-private val GlassFill = Color.White.copy(alpha = 0.11f)
-private val GlassBorder = Color.White.copy(alpha = 0.14f)
 
 /**
  * The shared glass action used by the player and the rest of the app.
@@ -49,15 +48,15 @@ fun PlayerGlassButton(
             .padding(horizontal = 2.dp)
             .semantics { role = Role.Button },
         shape = RoundedCornerShape(percent = 50),
-        color = GlassFill,
-        border = BorderStroke(1.dp, GlassBorder),
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.09f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.14f)),
         shadowElevation = 8.dp
     ) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Icon(
                 icon,
                 contentDescription,
-                tint = if (enabled) Color.White else Color.White.copy(alpha = 0.28f)
+                tint = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.28f)
             )
         }
     }
@@ -79,10 +78,10 @@ fun PlayerGlassButton(
             .widthIn(min = 44.dp)
             .semantics { role = Role.Button },
         shape = RoundedCornerShape(percent = 50),
-        color = GlassFill,
-        border = BorderStroke(1.dp, GlassBorder),
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.09f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.14f)),
         shadowElevation = 8.dp,
-        contentColor = if (enabled) Color.White else Color.White.copy(alpha = 0.28f)
+        contentColor = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.28f)
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
@@ -157,13 +156,13 @@ fun IconButton(
             .size(44.dp)
             .semantics { role = Role.Button },
         shape = RoundedCornerShape(percent = 50),
-        color = GlassFill,
-        border = BorderStroke(1.dp, GlassBorder),
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.09f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.14f)),
         shadowElevation = 8.dp,
-        contentColor = if (enabled) Color.White else Color.White.copy(alpha = 0.28f)
+        contentColor = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.28f)
     ) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            CompositionLocalProvider(LocalContentColor provides if (enabled) Color.White else Color.White.copy(alpha = 0.28f)) {
+            CompositionLocalProvider(LocalContentColor provides if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.28f)) {
                 content()
             }
         }
