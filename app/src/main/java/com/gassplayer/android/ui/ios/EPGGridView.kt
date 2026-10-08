@@ -1,6 +1,7 @@
 package com.gassplayer.android.ui.ios
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gassplayer.android.GassPlayerApplication
 import com.gassplayer.android.data.*

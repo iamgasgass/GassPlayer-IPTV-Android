@@ -5,6 +5,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -65,7 +67,7 @@ fun IosChannelGridView(
             IosTextField(search, { search = it }, "Cerca", modifier = Modifier.fillMaxWidth())
             Spacer(Modifier.height(8.dp))
             if (settings.groupUIStyle == "espansibile") IosGroupSelector(categories.map { it.name }, selectedGroup, { selectedGroup = it }, expandable = true, counts = counts)
-            else androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            else LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(listOf("Tutti") + categories.map { it.name }.distinct()) { group -> IosChip(group, selectedGroup == group, onClick = { selectedGroup = group }) }
             }
             Spacer(Modifier.height(10.dp))

@@ -1,6 +1,7 @@
 package com.gassplayer.android.ui.ios
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -77,7 +78,7 @@ fun IosHomeView(
                 "continueWatching" -> {
                     val entries = watch.take(settings.historyLimit.coerceIn(1, 100))
                     if (entries.isNotEmpty()) {
-                        HomeSectionHeader("Continua a guardare", "Riprendi esattamente da dove eri rimasto")
+                        IosSectionHeader("Continua a guardare", "Riprendi esattamente da dove eri rimasto")
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                             items(entries, key = { it.contentId }) { entry ->
                                 val media = catalog?.allItems.orEmpty().firstOrNull { it.id == entry.contentId }
@@ -123,7 +124,7 @@ fun IosHomeView(
 private val CatalogState.allItems: List<MediaItem> get() = live + movies + series + episodes
 
 @Composable
-private fun HomeAction(title: String, icon: ImageVector, tint: androidx.compose.ui.graphics.Color, onClick: () -> Unit) {
+private fun RowScope.HomeAction(title: String, icon: ImageVector, tint: androidx.compose.ui.graphics.Color, onClick: () -> Unit) {
     PlayerGlassButton(modifier = Modifier.weight(1f).height(48.dp), onClick = onClick) {
         Icon(icon, null, tint = tint, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(7.dp)); Text(title, fontSize = 12.sp)
     }

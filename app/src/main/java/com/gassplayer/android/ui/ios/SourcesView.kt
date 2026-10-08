@@ -42,7 +42,12 @@ fun IosSourcesDialog(app: GassPlayerApplication, vm: MainViewModel, onDismiss: (
     IosDialogFrame("Sorgenti", onDismiss) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             IosGlassPrimaryButton("Aggiungi playlist", Icons.Default.Add, modifier = Modifier.weight(1f), onClick = { showAdd = true })
-            IosGlassIconButton(Icons.Default.Refresh, "Verifica tutte", onClick = { scope.launch { sources.filter { it.type == SourceType.XTREAM }.forEach { src -> runCatching { app.sources.verify(src) }.onSuccess { count -> app.sources.addOrUpdate(src.copy(lastVerifiedAt = System.currentTimeMillis(), lastVerificationSucceeded = true, lastKnownChannelCount = count)) }.onFailure { app.sources.addOrUpdate(src.copy(lastVerifiedAt = System.currentTimeMillis(), lastVerificationSucceeded = false)) } }; message = "Verifica completata" } }, size = 44)
+            IosGlassIconButton(Icons.Default.Refresh, "Verifica tutte", onClick = { scope.launch {
+                sources.filter { it.type == SourceType.XTREAM }.forEach { src ->
+                    app.sources.verify(src)
+                }
+                message = "Verifica completata"
+            } }, size = 44)
             IosGlassIconButton(Icons.Default.Merge, "Unifica playlist", onClick = { showMerge = true }, size = 44)
         }
         IosTextField(search, { search = it }, "Cerca sorgenti")

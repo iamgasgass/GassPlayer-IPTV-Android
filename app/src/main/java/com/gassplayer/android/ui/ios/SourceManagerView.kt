@@ -24,31 +24,31 @@ fun IosSourceManagerView(app: GassPlayerApplication, vm: MainViewModel) {
     val source = selected
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         IosSectionHeader("Gestisci sorgente", "Dettagli server, contenuti e stato della playlist")
-        if (source == null) {
+        val currentSource = source ?: run {
             IosEmptyState("Nessuna sorgente", "Aggiungi una playlist dalle sorgenti.", Icons.Default.SettingsInputAntenna)
             return@Column
         }
         LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(9.dp), contentPadding = PaddingValues(bottom = 30.dp)) {
             item {
                 IosGlassCard {
-                    IosSectionHeader(source.name, source.host)
+                    IosSectionHeader(currentSource.name, currentSource.host)
                     Spacer(Modifier.height(8.dp))
-                    IosGlassRow(Icons.Default.Wifi, "Stato", if (source.lastVerificationSucceeded) "Verificata" else "Non verificata", if (source.lastVerificationSucceeded) IosGreen else IosOrange, showChevron = false)
-                    IosGlassRow(Icons.Default.Category, "Tipo", source.type.name, sourceTint(source.type), showChevron = false)
-                    IosGlassRow(Icons.Default.LiveTv, "Elementi", "${source.lastKnownChannelCount}", IosBlue, showChevron = false)
-                    IosGlassRow(Icons.Default.PushPin, "Fissata", if (source.isPinned) "Sì" else "No", IosOrange, showChevron = false)
+                    IosGlassRow(Icons.Default.Wifi, "Stato", if (currentSource.lastVerificationSucceeded) "Verificata" else "Non verificata", if (currentSource.lastVerificationSucceeded) IosGreen else IosOrange, showChevron = false)
+                    IosGlassRow(Icons.Default.Category, "Tipo", currentSource.type.name, sourceTint(currentSource.type), showChevron = false)
+                    IosGlassRow(Icons.Default.LiveTv, "Elementi", "${currentSource.lastKnownChannelCount}", IosBlue, showChevron = false)
+                    IosGlassRow(Icons.Default.PushPin, "Fissata", if (currentSource.isPinned) "Sì" else "No", IosOrange, showChevron = false)
                 }
             }
-            item { IosGlassRow(Icons.Default.Refresh, "Ricarica / verifica", "Controlla credenziali e playlist", onClick = { scope.launch { val r = app.sources.verify(source); r.onSuccess { count -> app.sources.addOrUpdate(source.copy(lastVerifiedAt = System.currentTimeMillis(), lastVerificationSucceeded = true, lastKnownChannelCount = count)); status = "Playlist verificata: $count elementi" }.onFailure { status = it.message ?: "Verifica non riuscita" } } }) }
+            item { IosGlassRow(Icons.Default.Refresh, "Ricarica / verifica", "Controlla credenziali e playlist", onClick = { scope.launch { val r = app.sources.verify(currentSource); r.onSuccess { count -> app.sources.addOrUpdate(currentSource.copy(lastVerifiedAt = System.currentTimeMillis(), lastVerificationSucceeded = true, lastKnownChannelCount = count)); status = "Playlist verificata: $count elementi" }.onFailure { status = it.message ?: "Verifica non riuscita" } } }) }
             item { IosGlassRow(Icons.Default.Edit, "Modifica dettagli", "Nome, URL e credenziali", onClick = { showEdit = true }) }
             item { IosGlassRow(Icons.Default.FolderSpecial, "Gestisci contenuto", "Attiva/disattiva contenuti importati", onClick = { status = "La gestione del contenuto è integrata nel catalogo Android." }) }
             item { IosGlassRow(Icons.Default.CalendarMonth, "Gestisci EPG", "Fonti EPG e aggiornamento guida", onClick = { status = "Apri Fonti EPG dalla barra superiore." }) }
-            item { IosGlassRow(Icons.Default.ContentCopy, "Duplica", "Crea una copia della sorgente", onClick = { scope.launch { app.sources.duplicate(source.id) } }) }
-            item { IosGlassRow(Icons.Default.Delete, "Cancella", "Rimuove sorgente e credenziali", IosRed, onClick = { scope.launch { app.sources.delete(source.id); selected = null } }) }
+            item { IosGlassRow(Icons.Default.ContentCopy, "Duplica", "Crea una copia della sorgente", onClick = { scope.launch { app.sources.duplicate(currentSource.id) } }) }
+            item { IosGlassRow(Icons.Default.Delete, "Cancella", "Rimuove sorgente e credenziali", IosRed, onClick = { scope.launch { app.sources.delete(currentSource.id); selected = null } }) }
         }
         status?.let { Text(it, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.62f)) }
     }
-    if (showEdit) IosEditSourceDialogPublic(app, source) { showEdit = false }
+    if (showEdit) IosEditSourceDialogPublic(app, currentSource) { showEdit = false }
 }
 
 @Composable

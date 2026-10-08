@@ -14,6 +14,7 @@ import androidx.compose.ui.unit.sp
 import com.gassplayer.android.GassPlayerApplication
 import com.gassplayer.android.data.AppSettings
 import com.gassplayer.android.ui.MainViewModel
+import kotlinx.coroutines.launch
 
 @Composable
 fun IosSettingsDialog(app: GassPlayerApplication, vm: MainViewModel, settings: AppSettings, onDismiss: () -> Unit, onNavigate: (String) -> Unit) {
@@ -64,7 +65,7 @@ private fun GeneralSettings(settings: AppSettings, save: (AppSettings) -> Unit) 
         item { IosChoiceCard("Lingua", settings.language, listOf("system" to "Sistema", "it" to "Italiano", "en" to "English", "es" to "Español")) { save(settings.copy(language = it)) } }
         item { IosChoiceCard("Cronologia", "${settings.historyLimit} elementi", listOf("10" to "10 elementi", "20" to "20 elementi", "50" to "50 elementi", "100" to "100 elementi")) { save(settings.copy(historyLimit = it.toInt())) } }
         item { IosTextField(settings.customUserAgent, { save(settings.copy(customUserAgent = it)) }, "User-Agent personalizzato", supportingText = "Lascia vuoto per usare il valore predefinito VLC/LibVLC.") }
-        item { IosSettingsToggleRow(Icons.Default.Eye, "Mostra numeri canale", checked = settings.showChannelNumbers, onCheckedChange = { save(settings.copy(showChannelNumbers = it)) }) }
+        item { IosSettingsToggleRow(Icons.Default.Visibility, "Mostra numeri canale", checked = settings.showChannelNumbers, onCheckedChange = { save(settings.copy(showChannelNumbers = it)) }) }
         item { IosSettingsToggleRow(Icons.Default.Subtitles, "Precarica serie", checked = settings.preloadSeries, onCheckedChange = { save(settings.copy(preloadSeries = it)) }) }
     }
 }

@@ -17,8 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.res.imageResource
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.gassplayer.android.R
@@ -30,7 +29,7 @@ fun SplashScreenView(onFinished: () -> Unit) {
     IosBackground(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
             Box(Modifier.size(150.dp * pulse.value).clip(CircleShape).background(MaterialTheme.colorScheme.surface.copy(alpha = 0.70f)), contentAlignment = Alignment.Center) {
-                Image(imageResource(R.drawable.gassplayer_icon), "GassPlayer", Modifier.size(120.dp).clip(RoundedCornerShape(27.dp)))
+                Image(painterResource(R.drawable.gassplayer_icon), "GassPlayer", Modifier.size(120.dp).clip(RoundedCornerShape(27.dp)))
             }
             Spacer(Modifier.height(18.dp))
             Text("GassPlayer", color = Color.White, fontSize = 32.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
