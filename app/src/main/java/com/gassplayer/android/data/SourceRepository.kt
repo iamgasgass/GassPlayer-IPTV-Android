@@ -25,21 +25,15 @@ class SourceRepository(private val context: Context, private val prefs: AppPrefe
 
     suspend fun verify(source: MediaSourceConfig): Result<Int> = runCatching {
         val count = when (source.type) {
-            SourceType.XTREAM -> { val catalog = xtream.loadCatalog(source); catalog.live.size + catalog.movies.size }
+            SourceType.XTREAM -> xtream.countContent(source).takeIf { it > 0 } ?: xtream.loadCatalog(source).let { it.live.size + it.movies.size }
             SourceType.M3U8 -> {
                 val playlistUrl = source.playlistUrl ?: source.host
                 val sourceHeaders = NetworkApi.extractInlineHeaders(playlistUrl)
-                network.getStream(
-                    playlistUrl,
-                    mapOf("Accept" to "application/vnd.apple.mpegurl, application/x-mpegURL, audio/mpegurl, text/plain, */*"),
-                    defaultAccept = "application/vnd.apple.mpegurl, application/x-mpegURL, audio/mpegurl, text/plain, */*"
-                ) { input, finalUrl ->
-                    M3UParser.parse(
-                        source.id,
-                        input,
-                        NetworkApi.stripInlineHeaders(finalUrl),
-                        defaultHeaders = sourceHeaders
-                    ).size
+                network.readTextStream(playlistUrl, mapOf("Accept" to "application/vnd.apple.mpegurl, application/x-mpegURL, audio/mpegurl, text/plain, */*")) { reader, finalUrl ->
+                    // Only counts: nothing is retained, so verifying a huge list costs almost no memory.
+                    var n = 0
+                    M3UParser.parse(source.id, reader, NetworkApi.stripInlineHeaders(finalUrl), defaultHeaders = sourceHeaders, keep = { n++; false })
+                    n
                 }
             }
             else -> 0

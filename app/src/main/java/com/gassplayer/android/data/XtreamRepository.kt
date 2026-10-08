@@ -60,12 +60,8 @@ class XtreamRepository(private val api: NetworkApi) {
         var fallbackError: Throwable? = null
         if (series.isEmpty() || live.isEmpty() || movies.isEmpty()) {
             runCatching {
-                api.getStream(
-                    xtreamPlaylist(creds),
-                    mapOf("Accept" to "application/vnd.apple.mpegurl, application/x-mpegURL, text/plain, */*"),
-                    defaultAccept = "application/vnd.apple.mpegurl, application/x-mpegURL, text/plain, */*"
-                ) { input, finalUrl ->
-                    M3UParser.parse(source.id, input, NetworkApi.stripInlineHeaders(finalUrl))
+                api.readTextStream(xtreamPlaylist(creds), mapOf("Accept" to "application/vnd.apple.mpegurl, application/x-mpegURL, text/plain, */*")) { reader, finalUrl ->
+                    M3UParser.parse(source.id, reader, NetworkApi.stripInlineHeaders(finalUrl))
                 }
             }.onFailure { fallbackError = it }.onSuccess { parsed ->
                 if (series.isEmpty()) series = parsed.filter { it.kind == MediaKind.SERIES }.distinctBy { it.id }
@@ -84,6 +80,19 @@ class XtreamRepository(private val api: NetworkApi) {
             )
         }
         CatalogBundle(liveCategories, vodCategories, seriesCategories, live, movies, series, fallbackEpisodes)
+    }
+
+    /**
+     * Counts live + VOD entries without keeping them: used to verify a source. Loading the whole
+     * catalog just to read two sizes doubled memory use while the real catalog was already loaded.
+     * Returns 0 when the lightweight calls find nothing, so callers can fall back to [loadCatalog].
+     */
+    suspend fun countContent(source: MediaSourceConfig): Int = coroutineScope {
+        val creds = XtreamCredentials(serverBase(source.host), source.username.orEmpty(), source.password.orEmpty())
+        authenticate(creds)
+        val live = async { runCatching { api.getJsonObjects(playerApi(creds, mapOf("action" to "get_live_streams"))) { 1 }.size }.getOrDefault(0) }
+        val vod = async { runCatching { api.getJsonObjects(playerApi(creds, mapOf("action" to "get_vod_streams"))) { 1 }.size }.getOrDefault(0) }
+        live.await() + vod.await()
     }
 
     /**
@@ -185,17 +194,14 @@ class XtreamRepository(private val api: NetworkApi) {
         return runCatching {
             val playlistUrl = xtreamPlaylist(creds)
             val target = normalizeSeriesMatch(seriesName)
-            api.getStream(
-                playlistUrl,
-                mapOf("Accept" to "application/vnd.apple.mpegurl, application/x-mpegURL, text/plain, */*"),
-                defaultAccept = "application/vnd.apple.mpegurl, application/x-mpegURL, text/plain, */*"
-            ) { input, finalUrl ->
-                M3UParser.parse(source.id, input, NetworkApi.stripInlineHeaders(finalUrl))
-            }
-                .filter {
+            // Streamed + filtered while parsing: only this series' episodes are ever kept in memory.
+            api.readTextStream(playlistUrl, mapOf("Accept" to "application/vnd.apple.mpegurl, application/x-mpegURL, text/plain, */*")) { reader, finalUrl ->
+                M3UParser.parse(source.id, reader, NetworkApi.stripInlineHeaders(finalUrl), keep = {
                     it.kind == MediaKind.EPISODE &&
                         (normalizeSeriesMatch(it.title) == target || normalizeSeriesMatch(it.group.orEmpty()) == target)
-                }
+                })
+            }
+                .filter { it.kind == MediaKind.EPISODE }
                 .map { it.copy(seriesId = seriesId) }
                 .sortedWith(compareBy({ it.seasonNumber ?: 0 }, { it.episodeNumber ?: 0 }, { it.title.lowercase(Locale.ROOT) }))
                 .distinctBy { it.id }

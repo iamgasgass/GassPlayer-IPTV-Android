@@ -55,22 +55,33 @@ class NetworkApi {
         }
 
     /**
-     * Streams a response body to [block] without first materialising the whole playlist.
-     * Gzip is detected from the payload magic bytes because OkHttp may transparently remove
-     * the Content-Encoding header on some providers. The returned URL is the final redirected URL.
+     * Streams a (possibly huge, 100+ MB) text body straight into [block] as a [java.io.BufferedReader]
+     * without ever materialising the whole payload (byte array + String) in memory.
+     * Handles gzip (magic-number sniffing, with or without Content-Encoding) and picks UTF-8 or
+     * ISO-8859-1 by sniffing the first chunk, like [decodeText] does for small bodies.
+     * [block] receives the reader and the final (redirected) URL, and runs on the IO dispatcher.
      */
-    suspend fun <T> getStream(
-        url: String,
-        headers: Map<String, String> = emptyMap(),
-        defaultAccept: String = "*/*",
-        block: (java.io.InputStream, String) -> T
-    ): T = execute(url, headers, defaultAccept) { response, finalUrl ->
-        response.body.byteStream().use { raw ->
-            gzipAwareStream(raw).use { stream ->
-                block(stream, finalUrl)
+    suspend fun <T> readTextStream(url: String, headers: Map<String, String> = emptyMap(), block: (java.io.BufferedReader, String) -> T): T =
+        execute(url, headers, "*/*") { response, _ ->
+            val finalUrl = response.request.url.toString()
+            var stream: java.io.InputStream = java.io.BufferedInputStream(response.body.source().inputStream(), 64 * 1024)
+            stream.mark(2)
+            val b0 = stream.read(); val b1 = stream.read()
+            stream.reset()
+            if (b0 == 0x1f && b1 == 0x8b) stream = java.util.zip.GZIPInputStream(stream, 64 * 1024)
+            val sniffable = java.io.BufferedInputStream(stream, 64 * 1024)
+            sniffable.mark(SNIFF_BYTES + 8)
+            val head = ByteArray(SNIFF_BYTES)
+            var filled = 0
+            while (filled < head.size) {
+                val n = sniffable.read(head, filled, head.size - filled)
+                if (n <= 0) break
+                filled += n
             }
+            sniffable.reset()
+            val charset = sniffCharset(head, filled)
+            java.io.BufferedReader(java.io.InputStreamReader(sniffable, charset), 64 * 1024).use { reader -> block(reader, finalUrl) }
         }
-    }
 
     suspend fun getJson(url: String, headers: Map<String, String> = emptyMap()): JsonElement =
         JsonStore.json.parseToJsonElement(
@@ -237,19 +248,19 @@ class NetworkApi {
         throw lastError ?: IllegalStateException("Network request failed")
     }
 
-    private fun gzipAwareStream(input: java.io.InputStream): java.io.InputStream {
-        val buffered = java.io.PushbackInputStream(java.io.BufferedInputStream(input, 64 * 1024), 2)
-        val magic = ByteArray(2)
-        val read = buffered.read(magic)
-        if (read > 0) buffered.unread(magic, 0, read)
-        return if (read == 2 && magic[0] == 0x1f.toByte() && magic[1] == 0x8b.toByte()) {
-            java.io.BufferedInputStream(java.util.zip.GZIPInputStream(buffered, 64 * 1024), 64 * 1024)
-        } else {
-            buffered
-        }
-    }
-
     companion object {
+        private const val SNIFF_BYTES = 256 * 1024
+
+        private fun sniffCharset(buf: ByteArray, len: Int): java.nio.charset.Charset {
+            if (len <= 0) return Charsets.UTF_8
+            val decoder = Charsets.UTF_8.newDecoder()
+                .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+                .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+            // endOfInput = false: a multibyte char cut at the end of the sample is not an error.
+            val result = decoder.decode(java.nio.ByteBuffer.wrap(buf, 0, len), java.nio.CharBuffer.allocate(len + 1), false)
+            return if (result.isError) Charsets.ISO_8859_1 else Charsets.UTF_8
+        }
+
         /** Same default as the iOS app (`StreamUserAgents.defaultVLC`): many panels reject unknown agents. */
         const val DEFAULT_USER_AGENT = "VLC/3.0.20 LibVLC/3.0.20"
 

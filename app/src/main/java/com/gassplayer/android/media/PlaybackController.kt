@@ -28,7 +28,6 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.exoplayer.upstream.DefaultAllocator
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
-import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import com.gassplayer.android.data.AppSettings
 import com.gassplayer.android.data.DiagnosticsService
@@ -77,9 +76,6 @@ class PlaybackController(
     private var userAgents: List<String> = emptyList()
     private var userAgentIndex = 0
     private var streamHeaders: Map<String, String> = emptyMap()
-    /** Factories stay attached to the single ExoPlayer instance; request headers are refreshed
-     * before every prepare so per-M3U entry Referer/Cookie/User-Agent changes are actually used. */
-    private var streamingFactories: List<OkHttpDataSource.Factory> = emptyList()
     private var requestedAutoplay = true
     private var lastLoadControlSignature: String = ""
 
@@ -97,29 +93,6 @@ class PlaybackController(
 
     init {
         trackSelector.parameters = buildTrackParameters(settings.value)
-    }
-
-    /** IPTV-specific retry policy: transient provider throttling and network blips are retried,
-     * while definitive 401/404/410 failures are allowed to surface so URL/credential fallbacks
-     * can run without waiting through the entire retry budget. */
-    private val loadErrorPolicy = object : DefaultLoadErrorHandlingPolicy() {
-        override fun getRetryDelayMsFor(info: LoadErrorHandlingPolicy.LoadErrorInfo): Long {
-            val code = (info.exception as? androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException)
-                ?.responseCode
-            return when (code) {
-                401, 404, 410 -> androidx.media3.common.C.TIME_UNSET
-                403, 405, 408, 425, 429, 500, 502, 503, 504 -> backoff(info.errorCount)
-                null -> backoff(info.errorCount)
-                else -> super.getRetryDelayMsFor(info)
-            }
-        }
-
-        override fun getMinimumLoadableRetryCount(dataType: Int): Int = 6
-
-        private fun backoff(errorCount: Int): Long {
-            if (errorCount <= 0 || errorCount > 6) return androidx.media3.common.C.TIME_UNSET
-            return minOf(1_000L * (1L shl (errorCount - 1)), 8_000L)
-        }
     }
 
     /**
@@ -196,7 +169,6 @@ class PlaybackController(
         userAgentIndex = 0
 
         ensurePlayer()
-        configureFactories(streamingFactories)
         setCurrentUrlAndPrepare(positiveStart)
 
         runCatching {
@@ -384,7 +356,6 @@ class PlaybackController(
         playerInstance = null
         simpleCache?.let { runCatching { it.release() } }
         simpleCache = null
-        streamingFactories = emptyList()
     }
 
     private fun buildTrackParameters(value: AppSettings): DefaultTrackSelector.Parameters =
@@ -453,27 +424,15 @@ class PlaybackController(
             ?: StreamUrlCandidates.userAgentLadder.first()
 
     private fun configureFactories(factories: List<OkHttpDataSource.Factory>) {
-        val headers = linkedMapOf<String, String>()
-        streamHeaders.forEach { (name, value) ->
-            val normalized = when (name.trim().lowercase()) {
-                "user-agent" -> "User-Agent"
-                "referer", "referrer" -> "Referer"
-                "origin" -> "Origin"
-                "cookie" -> "Cookie"
-                "authorization" -> "Authorization"
-                "accept" -> "Accept"
-                "accept-language" -> "Accept-Language"
-                else -> name.trim()
-            }
-            if (normalized.isNotBlank() && value.isNotBlank()) headers[normalized] = value
+        val headers = linkedMapOf<String, String>().apply {
+            putAll(streamHeaders)
+            this["User-Agent"] = effectiveUserAgent()
+            this["Accept-Encoding"] = "identity"
         }
-        headers["User-Agent"] = effectiveUserAgent()
-        headers["Accept-Encoding"] = "identity"
         factories.forEach { it.setDefaultRequestProperties(headers) }
     }
 
     private fun setCurrentUrlAndPrepare(position: Long) {
-        configureFactories(streamingFactories)
         val source = urlCandidates.getOrElse(urlIndex) {
             currentItem?.streamUrl.orEmpty()
         }
@@ -482,15 +441,6 @@ class PlaybackController(
             .setUri(source)
             .setMediaId(currentItem?.id.orEmpty())
             .setTag(currentItem)
-            .apply {
-                if (currentItem?.kind == com.gassplayer.android.data.MediaKind.LIVE) {
-                    setLiveConfiguration(
-                        androidx.media3.common.MediaItem.LiveConfiguration.Builder()
-                            .setTargetOffsetMs(1_500L)
-                            .build()
-                    )
-                }
-            }
 
         val explicitMime = currentItem?.streamMimeType
             ?.takeIf { source == currentItem?.streamUrl }
@@ -585,6 +535,12 @@ class PlaybackController(
         val minMs = (effectiveMinSec * 1000L).toInt()
         val startMs = (requestedStartSec.coerceAtMost(effectiveMinSec) * 1000L).toInt()
 
+        // Byte ceiling derived from the device heap. With "time over size" priority and up to 600 s of
+        // buffer, a high-bitrate stream (4K / remux) could otherwise grow without bound and OOM.
+        val am = context.getSystemService(android.content.Context.ACTIVITY_SERVICE) as? android.app.ActivityManager
+        val heapMb = (am?.let { if ((context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_LARGE_HEAP) != 0) it.largeMemoryClass else it.memoryClass } ?: 128)
+        val bufferBytes = (heapMb / 4).coerceIn(16, 96) * 1024 * 1024
+
         return DefaultLoadControl.Builder()
             .setAllocator(DefaultAllocator(true, 128 * 1024))
             .setBufferDurationsMsForStreaming(
@@ -593,14 +549,14 @@ class PlaybackController(
                 startMs,
                 startMs
             )
-            .setBackBuffer(30_000, true)
-            .setPrioritizeTimeOverSizeThresholdsForStreaming(true)
+            .setTargetBufferBytes(bufferBytes)
+            .setBackBuffer(15_000, false)
+            .setPrioritizeTimeOverSizeThresholdsForStreaming(false)
             .build()
     }
 
     private fun createMediaSourceFactory(): DefaultMediaSourceFactory {
         val factories = makeHttpFactories()
-        streamingFactories = factories
         configureFactories(factories)
         val upstream = factories.map { DefaultDataSource.Factory(context, it) }
         val failoverFactory = DataSource.Factory {
@@ -627,7 +583,9 @@ class PlaybackController(
             )
         }
 
-        return mediaFactory.setLoadErrorHandlingPolicy(loadErrorPolicy)
+        return mediaFactory.setLoadErrorHandlingPolicy(
+            DefaultLoadErrorHandlingPolicy(6)
+        )
     }
 }
 

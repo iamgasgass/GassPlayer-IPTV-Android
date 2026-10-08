@@ -30,26 +30,6 @@ class M3UParserTest {
     }
 
     @Test
-    fun parsesDirectlyFromInputStreamWithoutChangingResults() {
-        val text = """
-            #EXTM3U
-            #EXTINF:-1 tvg-id="demo" group-title="News",Demo
-            https://cdn.example/live/demo.m3u8|User-Agent=StreamUA/1.0&Referer=https%3A%2F%2Fref.example%2F
-        """.trimIndent()
-
-        val parsed = M3UParser.parse(
-            "source",
-            text.byteInputStream(),
-            "https://playlist.example/list.m3u"
-        )
-
-        assertEquals(1, parsed.size)
-        assertEquals("https://cdn.example/live/demo.m3u8", parsed.single().streamUrl)
-        assertEquals("StreamUA/1.0", parsed.single().streamHeaders["User-Agent"])
-        assertEquals("https://ref.example/", parsed.single().streamHeaders["Referer"])
-    }
-
-    @Test
     fun treatsHlsManifestAsOnePlayableItem() {
         val hls = """
             #EXTM3U

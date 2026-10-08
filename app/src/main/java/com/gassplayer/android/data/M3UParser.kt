@@ -27,55 +27,73 @@ object M3UParser {
 
     private data class EpisodeMarker(val season: Int?, val episode: Int?)
 
+    // Pre-compiled: these used to be rebuilt for every single playlist line.
+    private val attributeRegex = Regex("([\\w:-]+)\\s*=\\s*\\\"([^\\\"]*)\\\"|([\\w:-]+)\\s*=\\s*'([^']*)'|([\\w:-]+)\\s*=\\s*([^\\s,]+)")
+    private const val HEADER_NAMES = "user-agent|referer|referrer|origin|cookie|authorization|accept|accept-language|http-user-agent|http-referrer|http-referer|http-origin|http-cookie"
+    private val headerAssignmentRegex = Regex("(?i)(?:^|[&|])\\s*($HEADER_NAMES)\\s*=\\s*(\"[^\"]*\"|'[^']*'|.*?)(?=(?:&(?:$HEADER_NAMES)\\s*=)|$)")
+    private val trailingSeparators = Regex("[\\s._:-]+$")
+
+    /** Convenience wrapper for small in-memory playlists (tests, short lists). */
     fun parse(
         sourceId: String,
         text: String,
         baseUrl: String? = null,
         defaultHeaders: Map<String, String> = emptyMap()
-    ): List<MediaItem> = text.reader().buffered().use { reader ->
-        parse(sourceId, reader, baseUrl, defaultHeaders)
-    }
+    ): List<MediaItem> = parse(sourceId, java.io.StringReader(text).buffered(), baseUrl, defaultHeaders)
 
     /**
-     * Streaming parser used for provider playlists that can be tens of megabytes large.
-     * The reader is consumed line-by-line so importing a large M3U does not require keeping a
-     * second full copy of the playlist in memory.
+     * Streaming parser: reads the playlist line by line, so a 100 MB list never exists as one
+     * String/byte array. Repeated strings (group, mime type, header maps) are shared between items.
+     * [keep] lets callers drop entries early (e.g. only episodes of one series) to save memory.
      */
-    fun parse(
-        sourceId: String,
-        input: java.io.InputStream,
-        baseUrl: String? = null,
-        defaultHeaders: Map<String, String> = emptyMap()
-    ): List<MediaItem> = input.bufferedReader(Charsets.UTF_8).use { reader ->
-        parse(sourceId, reader, baseUrl, defaultHeaders)
-    }
-
     fun parse(
         sourceId: String,
         reader: java.io.BufferedReader,
         baseUrl: String? = null,
-        defaultHeaders: Map<String, String> = emptyMap()
+        defaultHeaders: Map<String, String> = emptyMap(),
+        keep: ((MediaItem) -> Boolean)? = null
     ): List<MediaItem> {
+        val interned = HashMap<String, String>()
+        fun intern(v: String?): String? = if (v == null) null else interned.getOrPut(v) { v }
+        val headerPool = HashMap<Map<String, String>, Map<String, String>>()
+        val sharedSourceId = sourceId
+
         val result = ArrayList<MediaItem>()
         var pendingAttrs: Map<String, String> = emptyMap()
-        var pendingHeaders = linkedMapOf<String, String>().apply { putAll(defaultHeaders) }
+        var pendingHeaders: LinkedHashMap<String, String>? = null
+        fun headersForWrite(): LinkedHashMap<String, String> =
+            pendingHeaders ?: LinkedHashMap(defaultHeaders).also { pendingHeaders = it }
         var pendingTitle = ""
         var pendingGroup: String? = null
         var pendingMime: String? = null
         var index = 0
-        var hlsManifestDetected = false
+        var firstLine = true
 
-        reader.forEachLine { rawLine ->
-            val line = rawLine.trim().trimStart('\uFEFF')
-            if (line.isBlank()) return@forEachLine
+        while (true) {
+            val lineRaw = reader.readLine() ?: break
+            val line = (if (firstLine) lineRaw.removePrefix("\uFEFF") else lineRaw).trim()
+            firstLine = false
+            if (line.isEmpty()) continue
 
-            // A standalone HLS media/master manifest must be passed to Media3 unchanged; parsing
-            // its EXTINF segment durations as IPTV channels would destroy adaptive/live playback.
+            // An HLS .m3u8 is itself a media/multivariant manifest. Its segment URIs must not be
+            // mistaken for IPTV channels. Feed the manifest URL unchanged to Media3 so HLS can
+            // resolve variants, segments, keys and live refreshes according to the HLS rules.
             if (baseUrl != null && line.startsWith("#EXT-X-", true)) {
-                hlsManifestDetected = true
-                return@forEachLine
+                val manifestUrl = resolveUrl(baseUrl, null)
+                val title = displayNameFromUrl(manifestUrl)
+                return listOf(
+                    MediaItem(
+                        id = stableId("$sourceId|$manifestUrl|hls-manifest"),
+                        sourceId = sourceId,
+                        kind = MediaKind.LIVE,
+                        title = title,
+                        streamUrl = manifestUrl,
+                        number = 1,
+                        streamHeaders = defaultHeaders,
+                        streamMimeType = "application/vnd.apple.mpegurl"
+                    )
+                )
             }
-            if (hlsManifestDetected && baseUrl != null) return@forEachLine
 
             when {
                 line.startsWith("#EXTINF", true) -> {
@@ -84,43 +102,55 @@ object M3UParser {
                     pendingAttrs = parseAttributes(attributePart)
                     pendingTitle = cleanText(titlePart).ifBlank { pendingAttrs["tvg-name"].orEmpty() }
                     pendingGroup = pendingAttrs["group-title"]?.trim()?.ifBlank { null }
-                    pendingHeaders.putAll(headersFromAttributes(pendingAttrs))
+                    val fromAttrs = headersFromAttributes(pendingAttrs)
+                    if (fromAttrs.isNotEmpty()) headersForWrite().putAll(fromAttrs)
                     pendingMime = pendingAttrs["mimetype"]?.trim()?.takeIf { it.isNotBlank() }
                         ?: pendingAttrs["mime-type"]?.trim()?.takeIf { it.isNotBlank() }
+                    continue
                 }
 
                 line.startsWith("#EXTGRP:", true) -> {
                     pendingGroup = line.substringAfter(':', "").trim().ifBlank { pendingGroup }
+                    continue
                 }
 
                 line.startsWith("#EXTVLCOPT:", true) -> {
                     val payload = line.substringAfter(':', "")
-                    parseDirective(payload, pendingHeaders)?.let { directive ->
+                    parseDirective(payload, headersForWrite())?.let { directive ->
                         if (directive.mimeType != null) pendingMime = directive.mimeType
                     }
+                    continue
                 }
 
                 line.startsWith("#EXTHTTP:", true) -> {
-                    pendingHeaders.putAll(parseExtHttpHeaders(line.substringAfter(':', "").trim()))
+                    val payload = line.substringAfter(':', "").trim()
+                    headersForWrite().putAll(parseExtHttpHeaders(payload))
+                    continue
                 }
 
                 line.startsWith("#KODIPROP:", true) -> {
-                    parseKodiProp(line.substringAfter(':', ""), pendingHeaders)?.let { directive ->
+                    val payload = line.substringAfter(':', "")
+                    parseKodiProp(payload, headersForWrite())?.let { directive ->
                         if (directive.mimeType != null) pendingMime = directive.mimeType
                     }
+                    continue
                 }
 
-                line.startsWith("#", true) -> Unit
+                line.startsWith("#") -> continue
 
                 else -> {
                     val parsedUrl = parseInlineHeaders(line)
                     val rawUrl = parsedUrl.first
-                    if (rawUrl.isBlank()) return@forEachLine
+                    if (rawUrl.isBlank()) continue
 
                     val url = resolveUrl(rawUrl, baseUrl)
-                    val headers = linkedMapOf<String, String>().apply {
-                        putAll(pendingHeaders)
-                        putAll(parsedUrl.second)
+                    val headers: Map<String, String> = when {
+                        pendingHeaders == null && parsedUrl.second.isEmpty() -> defaultHeaders
+                        else -> {
+                            val merged = LinkedHashMap<String, String>(pendingHeaders ?: defaultHeaders)
+                            merged.putAll(parsedUrl.second)
+                            headerPool.getOrPut(merged) { merged }
+                        }
                     }
                     val title = pendingTitle.ifBlank { displayNameFromUrl(url) }
                     val rawGroup = pendingGroup ?: pendingAttrs["group-title"]?.trim()?.ifBlank { null }
@@ -128,16 +158,17 @@ object M3UParser {
                         pendingAttrs["series-title"], pendingAttrs["series_name"], pendingAttrs["series"],
                         pendingAttrs["show"], pendingAttrs["show-title"], pendingAttrs["parent-title"]
                     ).firstOrNull { !it.isNullOrBlank() }?.trim()
-                    val group = seriesHint ?: rawGroup
+                    val group = intern(seriesHint ?: rawGroup)
                     val logo = pendingAttrs["tvg-logo"]?.trim()?.ifBlank { null }
                     val tvgId = pendingAttrs["tvg-id"]?.trim()?.ifBlank { null }
                     val explicitType = pendingAttrs["tvg-type"]?.lowercase(Locale.ROOT)
                     val marker = episodeMarker(title, pendingAttrs, url)
-                    val pathLower = runCatching { URI(url).path.orEmpty().lowercase(Locale.ROOT) }.getOrDefault("")
+                    val pathLower = pathOf(url)
                     val seriesPath = "/series/" in pathLower
                     val explicitEpisode = explicitType?.contains("episode") == true || explicitType?.contains("series_episode") == true
                     val isEpisode = explicitEpisode || marker != null || (seriesPath && episodeOnly.containsMatchIn(title))
                     val kind = when {
+                        // Episode semantics must win over broad group names such as "Movies & Series".
                         isEpisode -> MediaKind.EPISODE
                         explicitType?.contains("movie") == true || group.containsAny("movie", "film") -> MediaKind.MOVIE
                         explicitType?.contains("series") == true || seriesPath -> MediaKind.SERIES
@@ -151,10 +182,10 @@ object M3UParser {
                         explicitSeriesId?.let { stableId("$sourceId|series-id|$it") }
                             ?: stableId("$sourceId|series|${normalizeSeriesTitle(seriesBase)}|${group.orEmpty().lowercase(Locale.ROOT)}")
                     } else null
-                    val inferredMime = pendingMime ?: mimeTypeHintFrom(url, pendingAttrs)
-                    result += MediaItem(
+                    val inferredMime = intern(pendingMime ?: mimeTypeHintFrom(url, pendingAttrs))
+                    val item = MediaItem(
                         id = id,
-                        sourceId = sourceId,
+                        sourceId = sharedSourceId,
                         kind = kind,
                         title = title,
                         streamUrl = url,
@@ -170,8 +201,9 @@ object M3UParser {
                         streamMimeType = inferredMime
                     )
                     index++
+                    if (keep == null || keep(item)) result += item
                     pendingAttrs = emptyMap()
-                    pendingHeaders = linkedMapOf<String, String>().apply { putAll(defaultHeaders) }
+                    pendingHeaders = null
                     pendingTitle = ""
                     pendingGroup = null
                     pendingMime = null
@@ -179,38 +211,18 @@ object M3UParser {
             }
         }
 
-        if (hlsManifestDetected && baseUrl != null) {
-            val manifestUrl = resolveUrl(baseUrl, null)
-            val manifest = MediaItem(
-                id = stableId("$sourceId|$manifestUrl|hls-manifest"),
-                sourceId = sourceId,
-                kind = MediaKind.LIVE,
-                title = displayNameFromUrl(manifestUrl),
-                streamUrl = manifestUrl,
-                number = 1,
-                streamHeaders = defaultHeaders,
-                streamMimeType = "application/vnd.apple.mpegurl"
-            )
-            return finalizeResult(sourceId, listOf(manifest))
-        }
-
-        return finalizeResult(sourceId, result)
-    }
-
-    private fun finalizeResult(sourceId: String, input: List<MediaItem>): List<MediaItem> {
-        val result = input.toMutableList()
-        val existingSeries = result.filter { it.kind == MediaKind.SERIES }
-        val normalizedSeriesKeys = existingSeries.associateBy { normalizeSeriesTitle(it.title) }
-        val remapped = result.map { item ->
-            if (item.kind != MediaKind.EPISODE) item else {
-                val derivedTitle = normalizeSeriesTitle(item.title)
-                val groupTitle = normalizeSeriesTitle(item.group.orEmpty())
-                val explicit = normalizedSeriesKeys[derivedTitle] ?: normalizedSeriesKeys[groupTitle]
-                if (explicit != null) item.copy(seriesId = explicit.id.substringAfterLast(':')) else item
+        // Remap episodes onto explicit SERIES entries (in place: no second copy of the list).
+        val normalizedSeriesKeys = HashMap<String, MediaItem>()
+        for (it in result) if (it.kind == MediaKind.SERIES) normalizedSeriesKeys[normalizeSeriesTitle(it.title)] = it
+        if (normalizedSeriesKeys.isNotEmpty()) {
+            for (i in result.indices) {
+                val item = result[i]
+                if (item.kind != MediaKind.EPISODE) continue
+                val explicit = normalizedSeriesKeys[normalizeSeriesTitle(item.title)]
+                    ?: normalizedSeriesKeys[normalizeSeriesTitle(item.group.orEmpty())]
+                if (explicit != null) result[i] = item.copy(seriesId = explicit.id.substringAfterLast(':'))
             }
         }
-        result.clear()
-        result.addAll(remapped)
 
         val episodes = result.filter { it.kind == MediaKind.EPISODE && !it.seriesId.isNullOrBlank() }
         if (episodes.isNotEmpty()) {
@@ -227,7 +239,37 @@ object M3UParser {
             }
             result.addAll(synthetic)
         }
-        return result.distinctBy { it.id }
+        // In-place de-duplication by id (no second full-size list).
+        val seen = HashSet<String>(result.size * 2)
+        var write = 0
+        for (read in result.indices) {
+            val item = result[read]
+            if (seen.add(item.id)) { result[write++] = item }
+        }
+        while (result.size > write) result.removeAt(result.size - 1)
+        result.trimToSize()
+        return result
+    }
+
+    /** Cheap path extraction (lower-cased) — avoids building a java.net.URI for every entry. */
+    private fun pathOf(url: String): String {
+        val schemeEnd = url.indexOf("://")
+        val start = if (schemeEnd >= 0) {
+            val slash = url.indexOf('/', schemeEnd + 3)
+            if (slash < 0) return ""
+            slash
+        } else 0
+        var end = url.length
+        val q = url.indexOf('?', start); if (q in 0 until end) end = q
+        val h = url.indexOf('#', start); if (h in 0 until end) end = h
+        return url.substring(start, end).lowercase(Locale.ROOT)
+    }
+
+    private fun queryOf(url: String): String {
+        val q = url.indexOf('?')
+        if (q < 0) return ""
+        val h = url.indexOf('#', q)
+        return url.substring(q + 1, if (h < 0) url.length else h).lowercase(Locale.ROOT)
     }
 
     private data class DirectiveResult(val mimeType: String? = null)
@@ -253,8 +295,8 @@ object M3UParser {
 
     private fun parseAttributes(value: String): Map<String, String> {
         val out = LinkedHashMap<String, String>()
-        val r = Regex("([\\w:-]+)\\s*=\\s*\\\"([^\\\"]*)\\\"|([\\w:-]+)\\s*=\\s*'([^']*)'|([\\w:-]+)\\s*=\\s*([^\\s,]+)")
-        for (m in r.findAll(value)) {
+        if (value.isEmpty()) return emptyMap()
+        for (m in attributeRegex.findAll(value)) {
             val key = m.groupValues[1].ifBlank { m.groupValues[3].ifBlank { m.groupValues[5] } }
             val raw = m.groupValues[2].ifBlank { m.groupValues[4].ifBlank { m.groupValues[6] } }
             out[key.lowercase(Locale.ROOT)] = decodeHeaderValue(raw)
@@ -272,8 +314,6 @@ object M3UParser {
                 key == "http-origin" || key == "origin" -> "Origin"
                 key == "http-cookie" || key == "cookie" -> "Cookie"
                 key == "authorization" -> "Authorization"
-                key == "accept" -> "Accept"
-                key == "accept-language" -> "Accept-Language"
                 else -> null
             }
             if (header != null && value.isNotBlank()) out[header] = value
@@ -339,9 +379,7 @@ object M3UParser {
 
     private fun parseHeaderAssignments(value: String): Map<String, String> {
         val out = linkedMapOf<String, String>()
-        val names = "user-agent|referer|referrer|origin|cookie|authorization|accept|accept-language|http-user-agent|http-referrer|http-referer|http-origin|http-cookie"
-        val pattern = Regex("(?i)(?:^|[&|])\\s*($names)\\s*=\\s*(\"[^\"]*\"|'[^']*'|.*?)(?=(?:&(?:$names)\\s*=)|$)")
-        for (match in pattern.findAll(value)) {
+        for (match in headerAssignmentRegex.findAll(value)) {
             val normalized = normalizeHeaderName(match.groupValues[1]) ?: continue
             val rawValue = match.groupValues[2].trim().trim('"', '\'')
             if (rawValue.isNotBlank()) out[normalized] = decodeHeaderValue(rawValue)
@@ -401,8 +439,8 @@ object M3UParser {
 
     private fun mimeTypeHintFrom(url: String, attrs: Map<String, String>): String? {
         val explicit = attrs.entries.firstOrNull { it.key.lowercase(Locale.ROOT) in setOf("mimetype", "mime-type", "stream-type", "format", "output", "manifest_type") }?.value?.lowercase(Locale.ROOT)
-        val path = runCatching { URI(url).path.orEmpty().lowercase(Locale.ROOT) }.getOrDefault(url.lowercase(Locale.ROOT))
-        val query = runCatching { URI(url).rawQuery.orEmpty().lowercase(Locale.ROOT) }.getOrDefault("")
+        val path = pathOf(url)
+        val query = queryOf(url)
         val hint = listOf(explicit.orEmpty(), path, query).joinToString(" ")
         return when {
             "m3u8" in hint || "hls" in hint || "manifest" in hint && ("hls" in hint || "m3u" in hint) -> "application/vnd.apple.mpegurl"
@@ -449,11 +487,11 @@ object M3UParser {
     }
 
     private fun displaySeriesTitle(title: String, fallback: String): String {
-        return stripEpisodeMarker(title).replace(Regex("[\\s._:-]+$"), "").trim().ifBlank { fallback }
+        return stripEpisodeMarker(title).replace(trailingSeparators, "").trim().ifBlank { fallback }
     }
 
     private fun normalizeSeriesTitle(title: String): String {
-        return stripEpisodeMarker(title).replace(Regex("[\\s._:-]+$"), "").trim().lowercase(Locale.ROOT)
+        return stripEpisodeMarker(title).replace(trailingSeparators, "").trim().lowercase(Locale.ROOT)
     }
 
     private fun String?.containsAny(vararg terms: String): Boolean = this?.let { s -> terms.any { s.contains(it, true) } } == true

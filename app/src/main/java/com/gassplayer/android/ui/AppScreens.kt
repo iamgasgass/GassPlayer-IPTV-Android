@@ -445,18 +445,16 @@ private fun AddSourceDialog(app: GassPlayerApplication, vm: MainViewModel, onDis
                                 SourceType.M3U8 -> {
                                     val playlistUrl = candidate.playlistUrl ?: candidate.host
                                     val sourceHeaders = NetworkApi.extractInlineHeaders(playlistUrl)
-                                    app.network.getStream(
+                                    // Streamed validation: counts entries without keeping the playlist in memory.
+                                    val count = app.network.readTextStream(
                                         playlistUrl,
-                                        mapOf("Accept" to "application/vnd.apple.mpegurl, application/x-mpegURL, audio/mpegurl, text/plain, */*"),
-                                        defaultAccept = "application/vnd.apple.mpegurl, application/x-mpegURL, audio/mpegurl, text/plain, */*"
-                                    ) { input, finalUrl ->
-                                        M3UParser.parse(
-                                            candidate.id,
-                                            input,
-                                            NetworkApi.stripInlineHeaders(finalUrl),
-                                            defaultHeaders = sourceHeaders
-                                        )
-                                    }.takeIf { it.isNotEmpty() }
+                                        mapOf("Accept" to "application/vnd.apple.mpegurl, application/x-mpegURL, audio/mpegurl, text/plain, */*")
+                                    ) { reader, finalUrl ->
+                                        var n = 0
+                                        M3UParser.parse(candidate.id, reader, NetworkApi.stripInlineHeaders(finalUrl), defaultHeaders = sourceHeaders, keep = { n++; false })
+                                        n
+                                    }
+                                    count.takeIf { it > 0 }
                                         ?: error("Playlist M3U/M3U8 vuota o non riconosciuta")
                                 }
                                 else -> Unit
@@ -623,5 +621,4 @@ private fun MergedPlaylistScreen(app: GassPlayerApplication) {
 
 @Composable private fun DiagnosticsScreen(app:GassPlayerApplication){ var log by remember{mutableStateOf(app.diagnostics.read())};Column{Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){Button({log=app.diagnostics.read()}){Text("Aggiorna")};OutlinedButton({app.diagnostics.clear();log=""}){Text("Svuota")}};Spacer(Modifier.height(10.dp));LazyColumn{item{Text(log, color=Color.White.copy(.75f), fontSize=12.sp)}}}}
 
-private val CatalogState.allItems get() = live + movies + series + episodes
 private fun MainViewModel.appFavorite(state: FavoriteState,item:MediaItem)=when(item.kind){MediaKind.LIVE->item.id in state.live;MediaKind.MOVIE,MediaKind.EPISODE->item.id in state.movies;MediaKind.SERIES->item.id in state.series}
