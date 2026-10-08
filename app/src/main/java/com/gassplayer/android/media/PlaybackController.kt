@@ -101,22 +101,43 @@ class PlaybackController(
      * before the next playback.
      */
     fun setSettings(value: AppSettings) {
+        val previous = settings.value
         settings.value = value
-        trackSelector.parameters = buildTrackParameters(value)
 
-        playerInstance?.let { player ->
-            player.repeatMode = if (value.loopPlayback) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
-            player.setSeekParameters(
-                if (value.accurateSeek) SeekParameters.EXACT else SeekParameters.CLOSEST_SYNC
-            )
-            if (player.playbackState != Player.STATE_IDLE) {
-                player.setPlaybackSpeed(value.preferredPlaybackSpeed.coerceIn(0.25f, 3f))
+        scope.launch {
+            trackSelector.parameters = buildTrackParameters(value)
+
+            val rebuildRequired = previous.minBufferSec != value.minBufferSec ||
+                previous.maxBufferSec != value.maxBufferSec ||
+                previous.playerStartBufferSec != value.playerStartBufferSec ||
+                previous.httpCache != value.httpCache ||
+                previous.customUserAgent != value.customUserAgent
+
+            val existing = playerInstance
+            val activeItem = currentItem
+            if (existing != null && activeItem != null && rebuildRequired) {
+                val position = existing.currentPosition.coerceAtLeast(0L)
+                requestedAutoplay = existing.playWhenReady
+                releasePlayerOnly()
+                ensurePlayer()
+                setCurrentUrlAndPrepare(position)
+                return@launch
             }
-        }
 
-        val signature = loadControlSignature(value)
-        if (playerInstance != null && currentItem == null && signature != lastLoadControlSignature) {
-            releasePlayerOnly()
+            existing?.let { player ->
+                player.repeatMode = if (value.loopPlayback) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+                player.setSeekParameters(
+                    if (value.accurateSeek) SeekParameters.EXACT else SeekParameters.CLOSEST_SYNC
+                )
+                if (player.playbackState != Player.STATE_IDLE) {
+                    player.setPlaybackSpeed(value.preferredPlaybackSpeed.coerceIn(0.25f, 3f))
+                }
+            }
+
+            val signature = loadControlSignature(value)
+            if (playerInstance != null && currentItem == null && signature != lastLoadControlSignature) {
+                releasePlayerOnly()
+            }
         }
     }
 
@@ -548,7 +569,10 @@ class PlaybackController(
                 CacheDataSource.Factory()
                     .setCache(cache)
                     .setUpstreamDataSourceFactory(failoverFactory)
-                    .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+                    .setFlags(
+                        CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR or
+                            CacheDataSource.FLAG_IGNORE_CACHE_FOR_UNSET_LENGTH_REQUESTS
+                    )
             )
         }
 

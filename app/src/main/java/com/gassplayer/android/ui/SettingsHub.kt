@@ -41,16 +41,9 @@ internal fun SettingsHub(app: GassPlayerApplication, settings: AppSettings, vm: 
     var confirm by remember { mutableStateOf<Pair<String, () -> Unit>?>(null) }
 
     confirm?.let { (text, action) ->
-        GassDialog(
-            title = "Conferma",
-            onDismissRequest = { confirm = null },
-            content = { Text(text, color = MaterialTheme.colorScheme.onSurface) },
-            actions = {
-                GassDialogAction("Annulla", { confirm = null })
-                Spacer(Modifier.width(8.dp))
-                GassDialogAction("Conferma", { action(); confirm = null })
-            }
-        )
+        AlertDialog({ confirm = null }, title = { Text("Conferma") }, text = { Text(text, color = MaterialTheme.colorScheme.onSurface) },
+            confirmButton = { TextButton({ action(); confirm = null }) { Text("Conferma", color = MaterialTheme.colorScheme.error) } },
+            dismissButton = { TextButton({ confirm = null }) { Text("Annulla") } })
     }
 
     if (page == null) {
@@ -61,7 +54,7 @@ internal fun SettingsHub(app: GassPlayerApplication, settings: AppSettings, vm: 
                     sources.firstOrNull { it.name == name }?.let { vm.setActive(it.id) }
                 } else HubRow("Sorgente attiva", sources.firstOrNull { it.id == active }?.name ?: "Nessuna", Icons.Default.CheckCircle) { onOpen("sources") }
                 HubRow("Playlist unificate", "Unisci più sorgenti", Icons.Default.Merge) { onOpen("merged") }
-                Text("Per configurare Live TV, VOD e Serie TV, apri Sorgenti e tocca “Aggiungi playlist”.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 4.dp))
+                Text("Per configurare Live TV, VOD e Serie TV, apri Sorgenti e tocca “Aggiungi playlist”.", color = Color.White.copy(.5f), fontSize = 12.sp, modifier = Modifier.padding(horizontal = 4.dp))
             } }
             item { HubSection("Avanzate", "Generale, interfaccia, lettore e backup", Icons.Default.Tune) {
                 HubRow("Generale", "Catalogo e cronologia", Icons.Default.Settings) { page = "general" }
@@ -120,7 +113,7 @@ internal fun SettingsHub(app: GassPlayerApplication, settings: AppSettings, vm: 
                     } }
                     item { HubSection("User Agent", "Identificativo delle richieste di rete", Icons.Default.Public) {
                         OutlinedTextField(local.customUserAgent, { save(local.copy(customUserAgent = it)) }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("User Agent") }, placeholder = { Text(NetworkApi.DEFAULT_USER_AGENT) })
-                        Text("Vuoto = ${NetworkApi.DEFAULT_USER_AGENT}. La modifica viene applicata alle nuove richieste di rete.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                        Text("Vuoto = ${NetworkApi.DEFAULT_USER_AGENT}. La modifica viene applicata alle nuove richieste di rete.", color = Color.White.copy(.5f), fontSize = 12.sp)
                     } }
                 }
                 "ui" -> {
@@ -219,15 +212,15 @@ private fun intervalLabel(id: String) = when (id) {
     "threeHours" -> "Ogni 3 ore"; "sixHours" -> "Ogni 6 ore"; "twelveHours" -> "Ogni 12 ore"; "daily" -> "Ogni giorno"; else -> id
 }
 
-@Composable private fun PageTitle(text: String) { Text(text, color = MaterialTheme.colorScheme.onSurface, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 4.dp)) }
+@Composable private fun PageTitle(text: String) { Text(text, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 4.dp)) }
 
 @Composable
 private fun HubSection(title: String, subtitle: String, icon: ImageVector, content: @Composable ColumnScope.() -> Unit) {
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
+    Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF141720)), border = BorderStroke(1.dp, Color.White.copy(.08f)), shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(icon, null, tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.width(10.dp))
-                Column { Text(title, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 17.sp); Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp) }
+                Icon(icon, null, tint = Color(0xFF3478F6)); Spacer(Modifier.width(10.dp))
+                Column { Text(title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp); Text(subtitle, color = Color.White.copy(.55f), fontSize = 12.sp) }
             }
             content()
         }
@@ -236,22 +229,22 @@ private fun HubSection(title: String, subtitle: String, icon: ImageVector, conte
 
 @Composable
 private fun HubRow(title: String, detail: String, icon: ImageVector, destructive: Boolean = false, onClick: () -> Unit) {
-    Surface(onClick = onClick, shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f), modifier = Modifier.fillMaxWidth()) {
+    Surface(onClick = onClick, shape = RoundedCornerShape(12.dp), color = Color.White.copy(.05f), modifier = Modifier.fillMaxWidth()) {
         Row(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(icon, null, tint = if (destructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface.copy(.8f)); Spacer(Modifier.width(12.dp))
+            Icon(icon, null, tint = if (destructive) MaterialTheme.colorScheme.error else Color.White.copy(.8f)); Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
-                Text(title, color = if (destructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Medium)
-                if (detail.isNotBlank()) Text(detail, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, maxLines = 2)
+                Text(title, color = if (destructive) MaterialTheme.colorScheme.error else Color.White, fontWeight = FontWeight.Medium)
+                if (detail.isNotBlank()) Text(detail, color = Color.White.copy(.55f), fontSize = 12.sp, maxLines = 2)
             }
-            Icon(Icons.Default.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(.55f))
+            Icon(Icons.Default.ChevronRight, null, tint = Color.White.copy(.35f))
         }
     }
 }
 
 @Composable
 private fun HubToggle(title: String, detail: String?, value: Boolean, onChange: (Boolean) -> Unit) {
-    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surface.copy(alpha = 0.72f)).padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) { Text(title, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Medium); if (detail != null) Text(detail, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp) }
+    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color.White.copy(.05f)).padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) { Text(title, color = Color.White, fontWeight = FontWeight.Medium); if (detail != null) Text(detail, color = Color.White.copy(.55f), fontSize = 12.sp) }
         Switch(value, onChange)
     }
 }
@@ -260,10 +253,10 @@ private fun HubToggle(title: String, detail: String?, value: Boolean, onChange: 
 private fun HubChoice(title: String, current: String, choices: List<String>, onPick: (String) -> Unit) {
     var open by remember { mutableStateOf(false) }
     Box {
-        Surface(onClick = { open = true }, shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f), modifier = Modifier.fillMaxWidth()) {
+        Surface(onClick = { open = true }, shape = RoundedCornerShape(12.dp), color = Color.White.copy(.05f), modifier = Modifier.fillMaxWidth()) {
             Row(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(title, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
-                Text(current, color = MaterialTheme.colorScheme.onSurfaceVariant); Icon(Icons.Default.UnfoldMore, null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(.7f))
+                Text(title, color = Color.White, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                Text(current, color = Color.White.copy(.6f)); Icon(Icons.Default.UnfoldMore, null, tint = Color.White.copy(.4f))
             }
         }
         DropdownMenu(open, { open = false }) { choices.forEach { c -> CheckItem(c, c == current) { onPick(c); open = false } } }

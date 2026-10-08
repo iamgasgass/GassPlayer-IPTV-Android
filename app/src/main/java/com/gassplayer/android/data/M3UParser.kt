@@ -27,7 +27,12 @@ object M3UParser {
 
     private data class EpisodeMarker(val season: Int?, val episode: Int?)
 
-    fun parse(sourceId: String, text: String, baseUrl: String? = null): List<MediaItem> {
+    fun parse(
+        sourceId: String,
+        text: String,
+        baseUrl: String? = null,
+        defaultHeaders: Map<String, String> = emptyMap()
+    ): List<MediaItem> {
         val cleaned = text.removePrefix("\uFEFF")
             .replace("\r\n", "\n")
             .replace('\r', '\n')
@@ -48,13 +53,14 @@ object M3UParser {
                     title = title,
                     streamUrl = manifestUrl,
                     number = 1,
+                    streamHeaders = defaultHeaders,
                     streamMimeType = "application/vnd.apple.mpegurl"
                 )
             )
         }
         val result = ArrayList<MediaItem>()
         var pendingAttrs: Map<String, String> = emptyMap()
-        var pendingHeaders = linkedMapOf<String, String>()
+        var pendingHeaders = linkedMapOf<String, String>().apply { putAll(defaultHeaders) }
         var pendingTitle = ""
         var pendingGroup: String? = null
         var pendingMime: String? = null
@@ -165,7 +171,7 @@ object M3UParser {
                     )
                     index++
                     pendingAttrs = emptyMap()
-                    pendingHeaders = linkedMapOf()
+                    pendingHeaders = linkedMapOf<String, String>().apply { putAll(defaultHeaders) }
                     pendingTitle = ""
                     pendingGroup = null
                     pendingMime = null

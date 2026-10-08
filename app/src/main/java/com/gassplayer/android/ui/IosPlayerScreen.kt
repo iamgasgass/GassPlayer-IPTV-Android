@@ -90,6 +90,7 @@ fun IosPlayerScreen(
         context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE)
     val watch by app.watch.flow.collectAsStateWithLifecycle(emptyList())
     val sources by app.sources.sources.collectAsStateWithLifecycle(emptyList())
+    val playbackError by app.playback.error.collectAsStateWithLifecycle()
 
     var showControls by remember(item.id) { mutableStateOf(true) }
     var locked by remember(item.id) { mutableStateOf(false) }
@@ -271,7 +272,7 @@ fun IosPlayerScreen(
         )
 
         AnimatedVisibility(
-            visible = snapshot.isBuffering,
+            visible = snapshot.isBuffering && playbackError == null,
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier.align(Alignment.Center)
@@ -285,6 +286,53 @@ fun IosPlayerScreen(
                     text = "Caricamento…",
                     color = Color.White.copy(.85f),
                     fontSize = 13.sp
+                )
+            }
+        }
+
+        AnimatedVisibility(
+            visible = playbackError != null,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.align(Alignment.Center)
+        ) {
+            Surface(
+                color = Color.Black.copy(.80f),
+                shape = RoundedCornerShape(20.dp),
+                border = BorderStroke(1.dp, Color.White.copy(.14f))
+            ) {
+                Column(
+                    Modifier.padding(20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Icon(Icons.Default.ErrorOutline, null, tint = Color(0xFFFFB4AB), modifier = Modifier.size(28.dp))
+                    Text("Impossibile riprodurre il flusso", color = Color.White, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        playbackError.orEmpty(),
+                        color = Color.White.copy(.72f),
+                        fontSize = 12.sp,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    PlayerGlassButton(
+                        icon = Icons.Default.Refresh,
+                        contentDescription = "Riprova",
+                        onClick = { app.playback.retry(); showControls = true },
+                        darkSurface = true
+                    )
+                }
+            }
+        }
+
+        if (locked) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                PlayerGlassButton(
+                    icon = Icons.Default.LockOpen,
+                    contentDescription = "Sblocca controlli",
+                    size = 58.dp,
+                    onClick = { locked = false; showControls = true },
+                    darkSurface = true
                 )
             }
         }
@@ -333,7 +381,7 @@ fun IosPlayerScreen(
                     .padding(24.dp),
                 shape = RoundedCornerShape(18.dp),
                 color = Color.Black.copy(.58f),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                border = BorderStroke(1.dp, Color.White.copy(.14f))
             ) {
                 Row(
                     Modifier.padding(horizontal = 16.dp, vertical = 11.dp),
@@ -425,7 +473,7 @@ fun IosPlayerScreen(
                     .padding(end = 24.dp, bottom = 104.dp),
                 color = Color.Black.copy(.75f),
                 shape = RoundedCornerShape(18.dp),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                border = BorderStroke(1.dp, Color.White.copy(.14f))
             ) {
                 Text(
                     "Prossimo episodio  ›",
@@ -469,7 +517,7 @@ fun IosPlayerScreen(
             onDismiss = { dialog = null },
             onSelected = {
                 currentSpeed = it
-                app.playback.setSpeed(it)
+                applySettings(localSettings.copy(preferredPlaybackSpeed = it))
                 dialog = null
             }
         )
@@ -500,6 +548,9 @@ fun IosPlayerScreen(
             },
             onSubtitle = { lang ->
                 app.playback.selectSubtitle(lang)
+                if (!lang.isNullOrBlank()) {
+                    applySettings(localSettings.copy(subtitleLanguage = lang))
+                }
             },
             onSubtitleEnabled = { enabled ->
                 app.playback.setSubtitleEnabled(enabled)
@@ -759,24 +810,24 @@ private fun ResumeOverlay(position: Long, title: String, onResume: () -> Unit, o
     ) {
         Surface(
             modifier = Modifier.widthIn(min = 300.dp, max = 520.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(.96f),
+            color = Color(0xFF17191F).copy(.96f),
             shape = RoundedCornerShape(28.dp),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+            border = BorderStroke(1.dp, Color.White.copy(.14f))
         ) {
             Column(
                 Modifier.padding(26.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                Text("Riprendi la visione?", color = MaterialTheme.colorScheme.onSurface, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                Text("Riprendi la visione?", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
                 Text(
                     "Ti eri fermato a ${formatTime(position)}",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = Color.White.copy(.74f),
                     fontSize = 14.sp
                 )
-                Text(title, color = MaterialTheme.colorScheme.onSurface, fontSize = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(title, color = Color.White.copy(.92f), fontSize = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Button(onClick = onResume) { Text("Riprendi da…") }
-                    OutlinedButton(onClick = onRestart) { Text("Ricomincia da capo") }
+                    PlayerGlassButton(onClick = onResume, darkSurface = true) { Text("Riprendi da…") }
+                    PlayerGlassButton(onClick = onRestart, darkSurface = true) { Text("Ricomincia da capo") }
                 }
             }
         }
@@ -877,7 +928,7 @@ private fun QualityDialog(
 
     PlayerDialogFrame("Qualità", onDismiss) {
         if (choices.isEmpty()) {
-            Text("Il flusso non espone tracce video selezionabili.", color = Color.White.copy(.72f))
+            Text("Il flusso non espone tracce video selezionabili.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         } else {
             choices.forEach { choice ->
                 DialogRow(
@@ -921,9 +972,9 @@ private fun TrackDialog(
     }
 
     PlayerDialogFrame("Audio e sottotitoli", onDismiss) {
-        Text("Audio", color = Color.White, fontWeight = FontWeight.Bold)
+        Text("Audio", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold)
         if (audioChoices.isEmpty()) {
-            Text("Nessuna traccia audio alternativa.", color = Color.White.copy(.62f), fontSize = 13.sp)
+            Text("Nessuna traccia audio alternativa.", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(.80f), fontSize = 13.sp)
         } else {
             audioChoices.forEach { (format, selected) ->
                 DialogRow(
@@ -937,7 +988,7 @@ private fun TrackDialog(
         }
 
         Spacer(Modifier.height(8.dp))
-        Text("Sottotitoli", color = Color.White, fontWeight = FontWeight.Bold)
+        Text("Sottotitoli", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold)
         DialogRow(
             "Disattivati",
             if (subtitleChoices.none { it.second }) "✓" else null,
@@ -988,7 +1039,7 @@ private fun ChannelHistoryDialog(
 ) {
     PlayerDialogFrame("Cronologia canali", onDismiss) {
         if (history.isEmpty()) {
-            Text("Nessun canale live recente.", color = Color.White.copy(.68f))
+            Text("Nessun canale live recente.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         } else {
             history.forEach { media ->
                 DialogRow(
@@ -1040,15 +1091,8 @@ private fun AdvancedDialog(
             SettingSwitch("Cache HTTP", settings.httpCache) {
                 onChange(settings.copy(httpCache = it))
             }
-            SettingSwitch("Decompressione asincrona", settings.asyncDecode) {
-                // Preserviamo la preferenza iOS anche se Media3 gestisce internamente
-                // il pipeline decoding: non esiste un toggle FFmpeg equivalente 1:1.
-                onChange(settings.copy(asyncDecode = it))
-            }
-            SettingSwitch("Decodifica hardware preferita", settings.hardwareDecode) {
-                // Media3 seleziona il decoder disponibile; questa preferenza viene
-                // persistita senza fingere un forcing software non supportato dall'API.
-                onChange(settings.copy(hardwareDecode = it, softwareDecode = !it))
+            SettingSwitch("Solo audio", settings.audioOnly) {
+                onChange(settings.copy(audioOnly = it))
             }
             SettingSwitch("Prossimo episodio automatico", settings.autoplayNextEpisode) {
                 onChange(settings.copy(autoplayNextEpisode = it))
@@ -1066,9 +1110,9 @@ private fun AdvancedDialog(
 @Composable
 private fun SettingStepper(title: String, value: Int, options: List<Int>, onChange: (Int) -> Unit) {
     Surface(
-        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(.60f),
         shape = RoundedCornerShape(16.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f))
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(.20f))
     ) {
         Column(Modifier.fillMaxWidth().padding(12.dp)) {
             Text(title, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
@@ -1107,22 +1151,22 @@ private fun DialogRow(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.055f),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f))
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(.60f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(.20f))
     ) {
         Row(
             Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(icon, null, tint = MaterialTheme.colorScheme.onSurface.copy(.88f))
+            Icon(icon, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(title, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Medium)
                 subtitle?.let {
-                    Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                    Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(.72f), fontSize = 12.sp)
                 }
             }
-            Icon(Icons.Default.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(.7f))
+            Icon(Icons.Default.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(.65f))
         }
     }
 }
@@ -1136,15 +1180,15 @@ private fun PlayerDialogFrame(title: String, onDismiss: () -> Unit, content: @Co
                 .widthIn(max = 620.dp)
                 .heightIn(max = 720.dp),
             shape = RoundedCornerShape(28.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            color = MaterialTheme.colorScheme.surface,
             contentColor = MaterialTheme.colorScheme.onSurface,
             tonalElevation = 12.dp,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(.28f))
         ) {
             Column(Modifier.padding(18.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(title, color = MaterialTheme.colorScheme.onSurface, fontSize = 21.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                    IconButton(onClick = onDismiss) {
+                    IconButton(onClick = onDismiss, darkSurface = false) {
                         Icon(Icons.Default.Close, null, tint = MaterialTheme.colorScheme.onSurface)
                     }
                 }

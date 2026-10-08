@@ -27,10 +27,35 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
+private data class GlassPalette(
+    val fill: Color,
+    val border: Color,
+    val content: Color
+)
+
+@Composable
+private fun glassPalette(darkSurface: Boolean, enabled: Boolean): GlassPalette {
+    val scheme = MaterialTheme.colorScheme
+    if (darkSurface) {
+        val content = Color.White.copy(alpha = if (enabled) 1f else 0.28f)
+        return GlassPalette(
+            fill = Color.White.copy(alpha = 0.11f),
+            border = Color.White.copy(alpha = 0.14f),
+            content = content
+        )
+    }
+    val content = scheme.onSurface.copy(alpha = if (enabled) 1f else 0.38f)
+    return GlassPalette(
+        fill = scheme.surfaceVariant.copy(alpha = if (enabled) 0.72f else 0.42f),
+        border = scheme.outline.copy(alpha = if (enabled) 0.34f else 0.18f),
+        content = content
+    )
+}
 
 /**
- * The shared glass action used by the player and the rest of the app.
- * The icon-only overload intentionally matches the original player control exactly.
+ * Shared glass action used by the player and the rest of the app.
+ * [darkSurface] keeps the original player control appearance over video;
+ * dialogs and normal app surfaces use the selected Material theme by default.
  */
 @Composable
 fun PlayerGlassButton(
@@ -38,8 +63,10 @@ fun PlayerGlassButton(
     contentDescription: String,
     size: Dp = 44.dp,
     enabled: Boolean = true,
+    darkSurface: Boolean = true,
     onClick: () -> Unit
 ) {
+    val palette = glassPalette(darkSurface, enabled)
     Surface(
         onClick = onClick,
         enabled = enabled,
@@ -48,28 +75,27 @@ fun PlayerGlassButton(
             .padding(horizontal = 2.dp)
             .semantics { role = Role.Button },
         shape = RoundedCornerShape(percent = 50),
-        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.09f),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.14f)),
-        shadowElevation = 8.dp
+        color = palette.fill,
+        border = BorderStroke(1.dp, palette.border),
+        shadowElevation = 8.dp,
+        contentColor = palette.content
     ) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Icon(
-                icon,
-                contentDescription,
-                tint = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.28f)
-            )
+            Icon(icon, contentDescription, tint = palette.content)
         }
     }
 }
 
-/** Glass pill variant for actions that need a label and/or multiple icons. */
+/** Glass pill variant for labelled actions. */
 @Composable
 fun PlayerGlassButton(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    darkSurface: Boolean = true,
     onClick: () -> Unit,
     content: @Composable RowScope.() -> Unit
 ) {
+    val palette = glassPalette(darkSurface, enabled)
     Surface(
         onClick = onClick,
         enabled = enabled,
@@ -78,10 +104,10 @@ fun PlayerGlassButton(
             .widthIn(min = 44.dp)
             .semantics { role = Role.Button },
         shape = RoundedCornerShape(percent = 50),
-        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.09f),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.14f)),
+        color = palette.fill,
+        border = BorderStroke(1.dp, palette.border),
         shadowElevation = 8.dp,
-        contentColor = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.28f)
+        contentColor = palette.content
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
@@ -92,7 +118,6 @@ fun PlayerGlassButton(
     }
 }
 
-/** Shared implementation used by the compatibility shims below. */
 @Composable
 private fun PlayerGlassButtonContent(
     modifier: Modifier,
@@ -103,13 +128,11 @@ private fun PlayerGlassButtonContent(
     modifier = modifier,
     enabled = enabled,
     onClick = onClick,
-    content = content
+    content = content,
+    darkSurface = false
 )
 
-/**
- * Compatibility shims: every classic Material button used by the app now renders
- * through PlayerGlassButton, so existing screens keep their APIs and behavior.
- */
+/** Compatibility shims: classic Material buttons now render through PlayerGlassButton. */
 @Composable
 fun Button(
     onClick: () -> Unit,
@@ -147,8 +170,10 @@ fun IconButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    darkSurface: Boolean = false,
     content: @Composable () -> Unit
 ) {
+    val palette = glassPalette(darkSurface, enabled)
     Surface(
         onClick = onClick,
         enabled = enabled,
@@ -156,13 +181,13 @@ fun IconButton(
             .size(44.dp)
             .semantics { role = Role.Button },
         shape = RoundedCornerShape(percent = 50),
-        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.09f),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.14f)),
+        color = palette.fill,
+        border = BorderStroke(1.dp, palette.border),
         shadowElevation = 8.dp,
-        contentColor = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.28f)
+        contentColor = palette.content
     ) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            CompositionLocalProvider(LocalContentColor provides if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.28f)) {
+            CompositionLocalProvider(LocalContentColor provides palette.content) {
                 content()
             }
         }

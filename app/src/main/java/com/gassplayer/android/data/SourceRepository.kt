@@ -28,8 +28,14 @@ class SourceRepository(private val context: Context, private val prefs: AppPrefe
             SourceType.XTREAM -> { val catalog = xtream.loadCatalog(source); catalog.live.size + catalog.movies.size }
             SourceType.M3U8 -> {
                 val playlistUrl = source.playlistUrl ?: source.host
+                val sourceHeaders = NetworkApi.extractInlineHeaders(playlistUrl)
                 val fetched = network.getTextResult(playlistUrl, mapOf("Accept" to "application/vnd.apple.mpegurl, application/x-mpegURL, audio/mpegurl, text/plain, */*"))
-                M3UParser.parse(source.id, fetched.text, NetworkApi.stripInlineHeaders(fetched.finalUrl)).size
+                M3UParser.parse(
+                    source.id,
+                    fetched.text,
+                    NetworkApi.stripInlineHeaders(fetched.finalUrl),
+                    defaultHeaders = sourceHeaders
+                ).size
             }
             else -> 0
         }

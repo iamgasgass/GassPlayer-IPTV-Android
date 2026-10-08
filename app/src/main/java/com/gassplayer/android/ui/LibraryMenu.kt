@@ -70,10 +70,10 @@ internal fun LibraryHeader(
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         if (expandable) {
             Box {
-                Row(Modifier.clip(RoundedCornerShape(50)).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)).combinedClickable(onClick = { groupOpen = true }).padding(horizontal = 16.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.GridView, null, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(8.dp))
-                    Text(nameOf(filter), color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 320.dp))
-                    Icon(Icons.Default.ArrowDropDown, null, tint = MaterialTheme.colorScheme.onSurface)
+                Row(Modifier.clip(RoundedCornerShape(50)).background(MaterialTheme.colorScheme.surfaceVariant.copy(.65f)).combinedClickable(onClick = { groupOpen = true }).padding(horizontal = 16.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.GridView, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(8.dp))
+                    Text(nameOf(filter), color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 320.dp))
+                    Icon(Icons.Default.ArrowDropDown, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 DropdownMenu(groupOpen, { groupOpen = false }, modifier = Modifier.heightIn(max = 440.dp)) {
                     DropdownMenuItem({ Text("Tutti (${items.size})") }, { onFilter(null); groupOpen = false }, leadingIcon = { Icon(Icons.Default.GridView, null) })
@@ -91,11 +91,11 @@ internal fun LibraryHeader(
             }
         }
         Box {
-            IconButton({ sub = null; menuOpen = true }) { Icon(Icons.Default.MoreHoriz, "Altre opzioni", tint = MaterialTheme.colorScheme.onSurface) }
+            IconButton({ sub = null; menuOpen = true }) { Icon(Icons.Default.MoreHoriz, "Altre opzioni") }
             DropdownMenu(menuOpen, { menuOpen = false; sub = null }) {
                 when (sub) {
                     null -> {
-                        Text("Libreria", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                        Text("Libreria", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(.65f), fontSize = 12.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
                         DropdownMenuItem({ Text("Densità griglia") }, { sub = "density" }, leadingIcon = { Icon(Icons.Default.GridOn, null) }, trailingIcon = { Icon(Icons.Default.ChevronRight, null) })
                         DropdownMenuItem({ Text("UI Gruppi") }, { sub = "groups" }, leadingIcon = { Icon(Icons.Default.ViewAgenda, null) }, trailingIcon = { Icon(Icons.Default.ChevronRight, null) })
                         DropdownMenuItem({ Text("Ricarica $kindLabel") }, { vm.refresh(true); menuOpen = false }, leadingIcon = { Icon(Icons.Default.Refresh, null) })

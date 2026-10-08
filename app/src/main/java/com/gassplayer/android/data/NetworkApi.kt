@@ -250,6 +250,8 @@ class NetworkApi {
 
         fun stripInlineHeaders(raw: String): String = splitInlineHeaders(raw).first
 
+        fun extractInlineHeaders(raw: String): Map<String, String> = splitInlineHeaders(raw).second
+
         fun candidateUrls(raw: String): List<String> {
             val normalized = normalizeUrl(raw)
             val uri = runCatching { URI(normalized) }.getOrNull() ?: return listOf(normalized)

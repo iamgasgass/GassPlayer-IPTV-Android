@@ -48,6 +48,29 @@ class M3UParserTest {
         assertTrue(parsed[0].kind == MediaKind.LIVE)
     }
 
+
+    @Test
+    fun appliesSourceHeadersToHlsManifestAndEntries() {
+        val hls = """
+            #EXTM3U
+            #EXT-X-VERSION:3
+            #EXT-X-TARGETDURATION:6
+            #EXTINF:6,
+            seg001.ts
+            #EXT-X-ENDLIST
+        """.trimIndent()
+
+        val parsed = M3UParser.parse(
+            "hls",
+            hls,
+            "https://cdn.example/live/index.m3u8",
+            defaultHeaders = mapOf("User-Agent" to "TestPlayer/1.0", "Referer" to "https://origin.example/")
+        )
+
+        assertEquals("TestPlayer/1.0", parsed.single().streamHeaders["User-Agent"])
+        assertEquals("https://origin.example/", parsed.single().streamHeaders["Referer"])
+    }
+
     @Test
     fun supportsKodiHeaderDirectives() {
         val text = """

@@ -100,15 +100,15 @@ fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
 @Composable
 private fun AdaptiveShell(route: String, tv: Boolean, loading: Boolean, message: String?, onRetry: () -> Unit, onRoute: (String) -> Unit, title: String, content: @Composable () -> Unit) {
     val destinations = listOf("home" to "Home", "live" to "Live TV", "movies" to "Film", "series" to "Serie", "epg" to "Guida", "search" to "Cerca", "sources" to "Sorgenti", "settings" to "Impostazioni")
-    Row(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-        NavigationRail(modifier = Modifier.fillMaxHeight().width(if (tv) 132.dp else 92.dp), containerColor = MaterialTheme.colorScheme.surfaceVariant) {
+    Row(Modifier.fillMaxSize().background(Dark)) {
+        NavigationRail(modifier = Modifier.fillMaxHeight().width(if (tv) 132.dp else 92.dp), containerColor = Color(0xFF0E1016)) {
             Spacer(Modifier.height(12.dp)); destinations.forEach { (id, label) ->
                 NavigationRailItem(selected = route == id, onClick = { onRoute(id) }, icon = { Icon(navIcon(id), null) }, label = { Text(label, maxLines = 1) }, modifier = Modifier)
             }
         }
         Column(Modifier.fillMaxSize().padding(horizontal = if (tv) 28.dp else 16.dp, vertical = 18.dp)) {
-            Text(title, color = MaterialTheme.colorScheme.onBackground, fontSize = if (tv) 32.sp else 26.sp, fontWeight = FontWeight.Bold)
-            if (loading) { Spacer(Modifier.height(8.dp)); LinearProgressIndicator(Modifier.fillMaxWidth()); Text("Caricamento playlist…", color = MaterialTheme.colorScheme.onSurface.copy(.6f), fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp)) }
+            Text(title, color = Color.White, fontSize = if (tv) 32.sp else 26.sp, fontWeight = FontWeight.Bold)
+            if (loading) { Spacer(Modifier.height(8.dp)); LinearProgressIndicator(Modifier.fillMaxWidth()); Text("Caricamento playlist…", color = Color.White.copy(.6f), fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp)) }
             else if (!message.isNullOrBlank() && route != "sources" && route != "settings") {
                 Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.Warning, null, tint = Color(0xFFFFB340)); Spacer(Modifier.width(8.dp))
@@ -137,11 +137,11 @@ private fun HomeScreen(vm: MainViewModel, catalog: CatalogState?, fav: FavoriteS
                     FilledTonalButton({ onRoute("epg") }) { Icon(Icons.Default.CalendarMonth, null); Spacer(Modifier.width(8.dp)); Text("Guida TV") }
                     OutlinedButton({ onRoute("home-customize") }) { Icon(Icons.Default.Tune, null); Spacer(Modifier.width(8.dp)); Text("Personalizza") }
                 }
-                "continueWatching" -> if (watch.isNotEmpty()) Section("Continua a guardare", null) { LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) { items(watch.take(settings.historyLimit.coerceIn(1, 100))) { entry -> val media = catalog?.allItems?.firstOrNull { it.id == entry.contentId }; if (media != null) MediaCard(media, false, onClick = { onPlay(media) }) else Text(entry.title, color = MaterialTheme.colorScheme.onSurface) } } }
-                "sourceCard" -> Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), modifier = Modifier.fillMaxWidth()) { Row(Modifier.padding(18.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { Column { Text("Sorgenti", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold); Text("${sources.size} configurate • ${catalog?.allItems?.size ?: 0} elementi", color = MaterialTheme.colorScheme.onSurfaceVariant) }; OutlinedButton({ onRoute("sources") }) { Text("Gestisci") } } }
+                "continueWatching" -> if (watch.isNotEmpty()) Section("Continua a guardare", null) { LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) { items(watch.take(settings.historyLimit.coerceIn(1, 100))) { entry -> val media = catalog?.allItems?.firstOrNull { it.id == entry.contentId }; if (media != null) MediaCard(media, false, onClick = { onPlay(media) }) else Text(entry.title, color = Color.White) } } }
+                "sourceCard" -> Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF141720)), border = BorderStroke(1.dp, Color.White.copy(.08f)), modifier = Modifier.fillMaxWidth()) { Row(Modifier.padding(18.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { Column { Text("Sorgenti", color = Color.White, fontWeight = FontWeight.Bold); Text("${sources.size} configurate • ${catalog?.allItems?.size ?: 0} elementi", color = Color.White.copy(.65f)) }; OutlinedButton({ onRoute("sources") }) { Text("Gestisci") } } }
                 "sources" -> Section("Sorgenti", null) { LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { items(sources.take(12)) { s -> AssistChip({ onRoute("sources") }, label = { Text(s.name) }) } } }
                 "liveTV" -> Section("Live preferiti", null) { val list = catalog?.live?.filter { it.id in fav.live }.orEmpty(); if (list.isEmpty()) EmptyHint("Nessun canale preferito") else LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) { items(list.take(12)) { MediaCard(it, true, onClick = { onPlay(it) }) } } }
-                "guidaTV" -> Section("Guida TV", null) { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { Text("EPG e reminder locali", color = MaterialTheme.colorScheme.onSurface.copy(.7f)); OutlinedButton({ onRoute("epg") }) { Text("Apri guida") } } }
+                "guidaTV" -> Section("Guida TV", null) { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { Text("EPG e reminder locali", color = Color.White.copy(.7f)); OutlinedButton({ onRoute("epg") }) { Text("Apri guida") } } }
                 "favoriteChannels" -> Section("Canali preferiti", null) { val list = catalog?.live?.filter { it.id in fav.live }.orEmpty(); if (list.isEmpty()) EmptyHint("Nessun canale preferito") else LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) { items(list.take(12)) { MediaCard(it, true, onClick = { onPlay(it) }) } } }
                 "favoriteSeries" -> Section("Serie TV preferite", null) { val list = catalog?.series?.filter { it.id in fav.series }.orEmpty(); if (list.isEmpty()) EmptyHint("Nessuna serie preferita") else LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) { items(list.take(12)) { MediaCard(it, true, onClick = { onPlay(it) }) } } }
                 "favoriteMovies" -> Section("Film preferiti", null) { val list = catalog?.movies?.filter { it.id in fav.movies }.orEmpty(); if (list.isEmpty()) EmptyHint("Nessun film preferito") else LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) { items(list.take(12)) { MediaCard(it, true, onClick = { onPlay(it) }) } } }
@@ -151,16 +151,16 @@ private fun HomeScreen(vm: MainViewModel, catalog: CatalogState?, fav: FavoriteS
     }
 }
 
-@Composable private fun Section(title: String, onSeeAll: (() -> Unit)?, content: @Composable () -> Unit) { Column { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { Text(title, color = MaterialTheme.colorScheme.onBackground, fontSize = 20.sp, fontWeight = FontWeight.SemiBold); if (onSeeAll != null) TextButton(onSeeAll) { Text("Vedi tutto") } }; Spacer(Modifier.height(8.dp)); content() } }
-@Composable private fun EmptyHint(text: String) { Text(text, color = MaterialTheme.colorScheme.onSurface.copy(.5f), modifier = Modifier.padding(vertical = 12.dp)) }
+@Composable private fun Section(title: String, onSeeAll: (() -> Unit)?, content: @Composable () -> Unit) { Column { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { Text(title, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.SemiBold); if (onSeeAll != null) TextButton(onSeeAll) { Text("Vedi tutto") } }; Spacer(Modifier.height(8.dp)); content() } }
+@Composable private fun EmptyHint(text: String) { Text(text, color = Color.White.copy(.5f), modifier = Modifier.padding(vertical = 12.dp)) }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun MediaCard(item: MediaItem, favorite: Boolean, onClick: () -> Unit, onLongClick: (() -> Unit)? = null) {
     val w = if (item.kind == MediaKind.LIVE) 190.dp else 160.dp; val h = if (item.kind == MediaKind.LIVE) 108.dp else 220.dp
-    Card(modifier = Modifier.width(w).combinedClickable(onClick = onClick, onLongClick = onLongClick), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant), shape = MaterialTheme.shapes.medium) {
+    Card(modifier = Modifier.width(w).combinedClickable(onClick = onClick, onLongClick = onLongClick), colors = CardDefaults.cardColors(containerColor = Color(0xFF141720)), shape = MaterialTheme.shapes.medium) {
         Box(Modifier.fillMaxWidth().height(h).background(Color(0xFF0C0E13))) { item.posterUrl?.let { AsyncImage(it, null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }; if (favorite) Icon(Icons.Default.Favorite, null, tint = Blue, modifier = Modifier.padding(8.dp).align(Alignment.TopEnd)); if (item.kind == MediaKind.LIVE && item.logoUrl != null) AsyncImage(item.logoUrl, null, modifier = Modifier.size(64.dp).align(Alignment.Center), contentScale = ContentScale.Fit) }
-        Column(Modifier.padding(10.dp)) { Text(item.title, color = MaterialTheme.colorScheme.onSurface, maxLines = 2, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium); item.group?.takeIf { it.isNotBlank() }?.let { Text(it, color = MaterialTheme.colorScheme.onSurface.copy(.55f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) } }
+        Column(Modifier.padding(10.dp)) { Text(item.title, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium); item.group?.takeIf { it.isNotBlank() }?.let { Text(it, color = Color.White.copy(.55f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) } }
     }
 }
 
@@ -207,7 +207,7 @@ private fun SearchScreen(app: GassPlayerApplication, catalog: CatalogState?, onP
         OutlinedTextField(q, { q = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("Cerca live, film, serie") }, trailingIcon = { IconButton({ submitted = q; scope.launch { app.search.add(q) } }) { Icon(Icons.Default.Search, null) } })
         Spacer(Modifier.height(10.dp))
         if (submitted.isBlank() && history.terms.isNotEmpty()) {
-            Text("Ricerche recenti", color = MaterialTheme.colorScheme.onSurface.copy(.6f))
+            Text("Ricerche recenti", color = Color.White.copy(.6f))
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { items(history.terms) { AssistChip({ q = it; submitted = it }, label = { Text(it) }) } }
             Spacer(Modifier.height(12.dp))
         }
@@ -224,14 +224,14 @@ private fun ExternalEpgManageScreen(app: GassPlayerApplication) {
     var name by remember { mutableStateOf("") }
     var url by remember { mutableStateOf("") }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("Fonti XMLTV esterne", color = MaterialTheme.colorScheme.onSurface, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        Text("Fonti XMLTV esterne", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
         OutlinedTextField(name, { name = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Nome fonte") })
         OutlinedTextField(url, { url = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("URL XMLTV") })
         Button({ scope.launch { if (app.externalEpg.add(name, url)) { name = ""; url = "" } } }) { Text("Aggiungi fonte EPG") }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(sources, key = { it.id }) { source ->
                 Card { Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) { Text(source.name, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold); Text(source.urlString, color = MaterialTheme.colorScheme.onSurface.copy(.6f), maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                    Column(Modifier.weight(1f)) { Text(source.name, color = Color.White, fontWeight = FontWeight.Bold); Text(source.urlString, color = Color.White.copy(.6f), maxLines = 1, overflow = TextOverflow.Ellipsis) }
                     Switch(source.isEnabled, { enabled -> scope.launch { app.externalEpg.toggle(source.id, enabled) } })
                     IconButton({ scope.launch { app.externalEpg.remove(source.id) } }) { Icon(Icons.Default.Delete, null) }
                 } }
@@ -253,11 +253,11 @@ private fun ExternalEpgManageScreen(app: GassPlayerApplication) {
         LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             items(sources, key = { it.id }) { s ->
                 var renameOpen by remember(s.id) { mutableStateOf(false) }
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+                Card {
                     Row(Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
-                            Text(if(s.isPinned) "★ ${s.name}" else s.name, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold)
-                            Text("${s.type} • ${s.host}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(if(s.isPinned) "★ ${s.name}" else s.name, color = Color.White, fontWeight = FontWeight.Bold)
+                            Text("${s.type} • ${s.host}", color = Color.White.copy(.6f))
                             Text(if (s.lastVerificationSucceeded) "Verificata • ${s.lastKnownChannelCount}" else "Non verificata", color = if (s.lastVerificationSucceeded) Color(0xFF6EDC82) else Color(0xFFFFB55E))
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -279,26 +279,79 @@ private fun ExternalEpgManageScreen(app: GassPlayerApplication) {
 }
 
 @Composable
+private fun SourceDialogFrame(
+    title: String,
+    onDismiss: () -> Unit,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth(0.92f)
+                .widthIn(max = 620.dp)
+                .heightIn(max = 760.dp),
+            shape = RoundedCornerShape(28.dp),
+            color = MaterialTheme.colorScheme.surface,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            tonalElevation = 10.dp,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .28f))
+        ) {
+            Column(Modifier.padding(22.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        title,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(onClick = onDismiss, darkSurface = false) {
+                        Icon(Icons.Default.Close, "Chiudi")
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f, fill = false)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    content = content
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun RenameSourceDialog(current: String, onDismiss: () -> Unit, onSave: (String) -> Unit) {
     var name by remember(current) { mutableStateOf(current) }
-    GassDialog(
-        title = "Rinomina sorgente",
-        onDismissRequest = onDismiss,
-        content = {
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                label = { Text("Nome") }
-            )
-        },
-        actions = {
-            GassDialogAction("Annulla", onDismiss)
-            Spacer(Modifier.width(8.dp))
-            GassDialogAction("Salva", { onSave(name) }, enabled = name.isNotBlank())
+    SourceDialogFrame("Rinomina sorgente", onDismiss) {
+        OutlinedTextField(
+            value = name,
+            onValueChange = { name = it },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            label = { Text("Nome") }
+        )
+        Spacer(Modifier.height(4.dp))
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            PlayerGlassButton(
+                onClick = onDismiss,
+                darkSurface = false
+            ) { Text("Annulla") }
+            Spacer(Modifier.width(10.dp))
+            PlayerGlassButton(
+                enabled = name.isNotBlank(),
+                onClick = { onSave(name) },
+                darkSurface = false
+            ) { Text("Salva") }
         }
-    )
+    }
 }
 
 @Composable
@@ -312,43 +365,66 @@ private fun AddSourceDialog(app: GassPlayerApplication, vm: MainViewModel, onDis
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
-    val valid = if (type == SourceType.XTREAM) host.isNotBlank() && ((user.isNotBlank() && pass.isNotBlank()) || XtreamRepository.credentialsFromUrl(host) != null) else url.isNotBlank()
+    val valid = if (type == SourceType.XTREAM) {
+        host.isNotBlank() && ((user.isNotBlank() && pass.isNotBlank()) || XtreamRepository.credentialsFromUrl(host) != null)
+    } else {
+        url.isNotBlank()
+    }
 
-    GassDialog(
-        title = "Nuova sorgente",
-        onDismissRequest = { if (!busy) onDismiss() },
-        content = {
-            OutlinedTextField(name, { name = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("Nome") })
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                SourceType.entries.take(2).forEach { sourceType ->
-                    FilterChip(
-                        selected = sourceType == type,
-                        onClick = { if (!busy) type = sourceType },
-                        label = { Text(sourceType.name) }
-                    )
-                }
+    SourceDialogFrame("Nuova sorgente", { if (!busy) onDismiss() }) {
+        OutlinedTextField(
+            value = name,
+            onValueChange = { name = it },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            label = { Text("Nome") }
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            SourceType.entries.take(2).forEach { sourceType ->
+                FilterChip(
+                    selected = sourceType == type,
+                    onClick = { if (!busy) type = sourceType },
+                    label = { Text(sourceType.name) },
+                    modifier = Modifier.weight(1f)
+                )
             }
-            if (type == SourceType.XTREAM) {
-                OutlinedTextField(host, { host = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("Host Xtream") })
-                OutlinedTextField(user, { user = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("Username") })
-                OutlinedTextField(pass, { pass = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("Password") })
-            } else {
-                OutlinedTextField(url, { url = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("URL M3U/M3U8") })
-            }
-            error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp) }
-        },
-        actions = {
-            GassDialogAction("Annulla", onDismiss, enabled = !busy)
-            Spacer(Modifier.width(8.dp))
-            GassDialogAction(
-                text = if (busy) "Verifica…" else "Verifica e salva",
+        }
+        if (type == SourceType.XTREAM) {
+            OutlinedTextField(host, { host = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("Host Xtream") })
+            OutlinedTextField(user, { user = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("Username") })
+            OutlinedTextField(pass, { pass = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("Password") })
+        } else {
+            OutlinedTextField(url, { url = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("URL M3U/M3U8") })
+        }
+        error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp) }
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            PlayerGlassButton(
+                enabled = !busy,
+                onClick = onDismiss,
+                darkSurface = false
+            ) { Text("Annulla") }
+            Spacer(Modifier.width(10.dp))
+            PlayerGlassButton(
                 enabled = valid && !busy,
                 onClick = {
                     scope.launch {
                         busy = true
                         error = null
                         val pasted = if (type == SourceType.XTREAM) XtreamRepository.credentialsFromUrl(host) else null
-                        val actualHost = if (type == SourceType.XTREAM) runCatching { XtreamRepository.serverBase(host) }.getOrElse { error = it.message; busy = false; return@launch } else url.trim()
+                        val actualHost = if (type == SourceType.XTREAM) {
+                            runCatching { XtreamRepository.serverBase(host) }.getOrElse {
+                                error = it.message
+                                busy = false
+                                return@launch
+                            }
+                        } else url.trim()
                         user = user.ifBlank { pasted?.first.orEmpty() }
                         pass = pass.ifBlank { pasted?.second.orEmpty() }
                         val candidate = MediaSourceConfig(
@@ -365,11 +441,17 @@ private fun AddSourceDialog(app: GassPlayerApplication, vm: MainViewModel, onDis
                                 SourceType.XTREAM -> app.xtream.probe(candidate)
                                 SourceType.M3U8 -> {
                                     val playlistUrl = candidate.playlistUrl ?: candidate.host
+                                    val sourceHeaders = NetworkApi.extractInlineHeaders(playlistUrl)
                                     val fetched = app.network.getTextResult(
                                         playlistUrl,
                                         mapOf("Accept" to "application/vnd.apple.mpegurl, application/x-mpegURL, audio/mpegurl, text/plain, */*")
                                     )
-                                    M3UParser.parse(candidate.id, fetched.text, NetworkApi.stripInlineHeaders(fetched.finalUrl)).takeIf { it.isNotEmpty() }
+                                    M3UParser.parse(
+                                        candidate.id,
+                                        fetched.text,
+                                        NetworkApi.stripInlineHeaders(fetched.finalUrl),
+                                        defaultHeaders = sourceHeaders
+                                    ).takeIf { it.isNotEmpty() }
                                         ?: error("Playlist M3U/M3U8 vuota o non riconosciuta")
                                 }
                                 else -> Unit
@@ -383,31 +465,42 @@ private fun AddSourceDialog(app: GassPlayerApplication, vm: MainViewModel, onDis
                         }
                         busy = false
                     }
+                },
+                darkSurface = false
+            ) {
+                if (busy) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(Modifier.width(8.dp))
                 }
-            )
-        }
-    )
-}
-
-@Composable private fun DownloadsScreen(app: GassPlayerApplication) {
-    val infos by androidx.work.WorkManager.getInstance(app).getWorkInfosByTagFlow("gass_download").collectAsStateWithLifecycle(emptyList())
-    Column {
-        Text("Download in background", color=MaterialTheme.colorScheme.onSurface)
-        Spacer(Modifier.height(10.dp))
-        LazyColumn(verticalArrangement=Arrangement.spacedBy(8.dp)){
-            items(infos){info->
-                val p = info.progress.getInt("progress", if(info.state==androidx.work.WorkInfo.State.SUCCEEDED) 100 else 0)
-                Card(Modifier.fillMaxWidth()){Column(Modifier.padding(14.dp)){Text(info.outputData.getString("file") ?: info.id.toString(),color=MaterialTheme.colorScheme.onSurface);LinearProgressIndicator(progress={p/100f},Modifier.fillMaxWidth());Text(info.state.name,color=MaterialTheme.colorScheme.onSurface.copy(.6f))}}
+                Text(if (busy) "Verifica…" else "Verifica e salva")
             }
         }
     }
 }
 
-@Composable internal fun SettingInt(label:String, value:Int, range:IntRange, step:Int=1, onChange:(Int)->Unit){ Column(Modifier.fillMaxWidth()){ Text("$label: $value",color=MaterialTheme.colorScheme.onSurface); Slider(value=value.toFloat(),onValueChange={onChange(it.toInt())},valueRange=range.first.toFloat()..range.last.toFloat(),steps=((range.last-range.first)/step-1).coerceAtLeast(0)) } }
-@Composable private fun SettingToggle(label:String, value:Boolean, onChange:(Boolean)->Unit){ Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){ Text(label,color=MaterialTheme.colorScheme.onSurface); Switch(value,onChange) } }
+@Composable private fun DownloadsScreen(app: GassPlayerApplication) {
+    val infos by androidx.work.WorkManager.getInstance(app).getWorkInfosByTagFlow("gass_download").collectAsStateWithLifecycle(emptyList())
+    Column {
+        Text("Download in background", color=Color.White)
+        Spacer(Modifier.height(10.dp))
+        LazyColumn(verticalArrangement=Arrangement.spacedBy(8.dp)){
+            items(infos){info->
+                val p = info.progress.getInt("progress", if(info.state==androidx.work.WorkInfo.State.SUCCEEDED) 100 else 0)
+                Card(Modifier.fillMaxWidth()){Column(Modifier.padding(14.dp)){Text(info.outputData.getString("file") ?: info.id.toString(),color=Color.White);LinearProgressIndicator(progress={p/100f},Modifier.fillMaxWidth());Text(info.state.name,color=Color.White.copy(.6f))}}
+            }
+        }
+    }
+}
+
+@Composable internal fun SettingInt(label:String, value:Int, range:IntRange, step:Int=1, onChange:(Int)->Unit){ Column(Modifier.fillMaxWidth()){ Text("$label: $value",color=Color.White); Slider(value=value.toFloat(),onValueChange={onChange(it.toInt())},valueRange=range.first.toFloat()..range.last.toFloat(),steps=((range.last-range.first)/step-1).coerceAtLeast(0)) } }
+@Composable private fun SettingToggle(label:String, value:Boolean, onChange:(Boolean)->Unit){ Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){ Text(label,color=Color.White); Switch(value,onChange) } }
 @Composable private fun SettingRow(label:String, value:String, choices:List<String>, onChange:(String)->Unit){ var expanded by remember{mutableStateOf(false)}; Box{ OutlinedButton({expanded=true},Modifier.fillMaxWidth()){ Text("$label: $value") }; DropdownMenu(expanded,{expanded=false}){choices.forEach{DropdownMenuItem({Text(it)},onClick={onChange(it);expanded=false})}} } }
 
-@Composable private fun ParentalScreen(vm:MainViewModel,state:ParentalState){ var pin by remember{mutableStateOf("")}; var newPin by remember{mutableStateOf("")}; var msg by remember{mutableStateOf<String?>(null)}; val scope=rememberCoroutineScope(); Column(verticalArrangement=Arrangement.spacedBy(10.dp)){Text("PIN locale con SHA-256 e blocco per contenuto/categoria",color=MaterialTheme.colorScheme.onSurface.copy(.7f));OutlinedTextField(newPin,{newPin=it},label={Text("Nuovo PIN")});Button({scope.launch{vm.app.parental.setPin(newPin);msg="PIN impostato"}}){Text("Imposta PIN")};OutlinedTextField(pin,{pin=it},label={Text("Verifica PIN")});Button({scope.launch{msg=if(vm.app.parental.verify(pin))"PIN corretto" else "PIN non valido"}}){Text("Verifica")};msg?.let{Text(it,color=MaterialTheme.colorScheme.onSurface)} }
+@Composable private fun ParentalScreen(vm:MainViewModel,state:ParentalState){ var pin by remember{mutableStateOf("")}; var newPin by remember{mutableStateOf("")}; var msg by remember{mutableStateOf<String?>(null)}; val scope=rememberCoroutineScope(); Column(verticalArrangement=Arrangement.spacedBy(10.dp)){Text("PIN locale con SHA-256 e blocco per contenuto/categoria",color=Color.White.copy(.7f));OutlinedTextField(newPin,{newPin=it},label={Text("Nuovo PIN")});Button({scope.launch{vm.app.parental.setPin(newPin);msg="PIN impostato"}}){Text("Imposta PIN")};OutlinedTextField(pin,{pin=it},label={Text("Verifica PIN")});Button({scope.launch{msg=if(vm.app.parental.verify(pin))"PIN corretto" else "PIN non valido"}}){Text("Verifica")};msg?.let{Text(it,color=Color.White)} }
 }
 
 @Composable private fun VpnScreen(app:GassPlayerApplication){
@@ -415,7 +508,7 @@ private fun AddSourceDialog(app: GassPlayerApplication, vm: MainViewModel, onDis
     var server by remember(cfg){mutableStateOf(cfg.serverEndpoint)}; var user by remember(cfg){mutableStateOf(cfg.username)}; var pass by remember(cfg){mutableStateOf(cfg.password)}; var state by remember{mutableStateOf("Disconnessa")}; var discovery by remember{mutableStateOf<VPNConfig?>(null)}; val scope=rememberCoroutineScope()
     val launcher=rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()){ result -> if(result.resultCode==Activity.RESULT_OK) runCatching{app.vpn.startIkev2();state="Connessa"} }
     LazyColumn(verticalArrangement=Arrangement.spacedBy(8.dp)){
-        item{Text("IKEv2 usa lo stack VPN nativo Android; WireGuard usa il tunnel ufficiale del progetto WireGuard.",color=MaterialTheme.colorScheme.onSurface.copy(.7f))}
+        item{Text("IKEv2 usa lo stack VPN nativo Android; WireGuard usa il tunnel ufficiale del progetto WireGuard.",color=Color.White.copy(.7f))}
         item{OutlinedTextField(server,{server=it},Modifier.fillMaxWidth(),label={Text("Endpoint")})}
         item{OutlinedTextField(user,{user=it},Modifier.fillMaxWidth(),label={Text("Username")})}
         item{OutlinedTextField(pass,{pass=it},Modifier.fillMaxWidth(),label={Text("Password")})}
@@ -425,8 +518,8 @@ private fun AddSourceDialog(app: GassPlayerApplication, vm: MainViewModel, onDis
         }}
         item{Button({scope.launch{discovery=app.vpn.providerDiscovery(server,user,pass)}}){Text("Scopri VPN dal provider")}}
         discovery?.let{ d -> item{Card{Column(Modifier.padding(14.dp)){Text("Configurazione trovata: ${d.protocol}");Text(d.serverEndpoint);Text("DNS: ${d.dns.joinToString()}")}}} }
-        item{Text("Stato: $state",color=MaterialTheme.colorScheme.onSurface)}
-        item{Text("OpenVPN resta rappresentato a livello di configurazione, come nella sorgente iOS: non viene pubblicizzato come motore cifrato integrato.",color=MaterialTheme.colorScheme.onSurface.copy(.55f),fontSize=12.sp)}
+        item{Text("Stato: $state",color=Color.White)}
+        item{Text("OpenVPN resta rappresentato a livello di configurazione, come nella sorgente iOS: non viene pubblicizzato come motore cifrato integrato.",color=Color.White.copy(.55f),fontSize=12.sp)}
     }
 }
 
@@ -434,7 +527,7 @@ private fun AddSourceDialog(app: GassPlayerApplication, vm: MainViewModel, onDis
     val context=LocalContext.current; val scope=rememberCoroutineScope(); var status by remember{mutableStateOf("")}
     val create=rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")){uri-> if(uri!=null) scope.launch{val text=app.backup.fullExport(); context.contentResolver.openOutputStream(uri)?.use{it.write(text.toByteArray())};status="Backup esportato"}}
     val pick=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()){uri-> if(uri!=null) scope.launch{val text=context.contentResolver.openInputStream(uri)?.bufferedReader()?.readText().orEmpty();runCatching{app.backup.importAny(text)};status="Import completato o parziale"}}
-    Column(verticalArrangement=Arrangement.spacedBy(10.dp)){Button({create.launch("gassplayer-backup.json")}){Text("Esporta sorgenti + preferenze")};OutlinedButton({pick.launch(arrayOf("application/json","text/*"))}){Text("Importa JSON")};Button({scope.launch{app.cloud.requestBackup();status="Richiesta Auto Backup inviata"}}){Text("Sincronizza con backup Android")};Text(status,color=MaterialTheme.colorScheme.onSurface)}
+    Column(verticalArrangement=Arrangement.spacedBy(10.dp)){Button({create.launch("gassplayer-backup.json")}){Text("Esporta sorgenti + preferenze")};OutlinedButton({pick.launch(arrayOf("application/json","text/*"))}){Text("Importa JSON")};Button({scope.launch{app.cloud.requestBackup();status="Richiesta Auto Backup inviata"}}){Text("Sincronizza con backup Android")};Text(status,color=Color.White)}
 }
 
 @Composable
@@ -455,18 +548,18 @@ private fun TraktScreen(app: GassPlayerApplication, settings: AppSettings, vm: M
         }
     }
     LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 40.dp)) {
-        item { Text("Collega Trakt.tv", color = MaterialTheme.colorScheme.onSurface, fontSize = 20.sp, fontWeight = FontWeight.Bold) }
+        item { Text("Collega Trakt.tv", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold) }
         item { OutlinedTextField(local.traktClientId, { local = local.copy(traktClientId = it); vm.updateSettings(local) }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("Client ID") }) }
         item { OutlinedTextField(local.traktClientSecret, { local = local.copy(traktClientSecret = it); vm.updateSettings(local) }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("Client Secret") }) }
         if (account.accessToken.isNotBlank()) {
-            item { Card { Column(Modifier.padding(14.dp)) { Text("Connesso a Trakt.tv", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold); Text("Lo scrobbling di film/episodi usa il token salvato su questo dispositivo.", color = MaterialTheme.colorScheme.onSurface.copy(.65f)); OutlinedButton({ scope.launch { app.prefs.saveTrakt(TraktAccount()) } }) { Text("Disconnetti") } } } }
+            item { Card { Column(Modifier.padding(14.dp)) { Text("Connesso a Trakt.tv", color = Color.White, fontWeight = FontWeight.Bold); Text("Lo scrobbling di film/episodi usa il token salvato su questo dispositivo.", color = Color.White.copy(.65f)); OutlinedButton({ scope.launch { app.prefs.saveTrakt(TraktAccount()) } }) { Text("Disconnetti") } } } }
         } else if (device == null) {
             item { Button(enabled = local.traktClientId.isNotBlank() && local.traktClientSecret.isNotBlank(), onClick = { scope.launch { device = app.trakt.deviceCode(local.traktClientId.trim(), local.traktClientSecret.trim()); message = if (device != null) "Autorizza il dispositivo e attendi la conferma." else "Impossibile iniziare il flusso Trakt." } }) { Text("Connetti a Trakt.tv") } }
         } else {
             val code = device!!
-            item { Card { Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { Text("Codice dispositivo", color = MaterialTheme.colorScheme.onSurface.copy(.7f)); Text(code.userCode, color = MaterialTheme.colorScheme.onSurface, fontSize = 26.sp, fontWeight = FontWeight.Bold); Text(code.verificationUrl, color = MaterialTheme.colorScheme.onSurface.copy(.7f)); Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { Button({ context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(if (code.verificationUrl.startsWith("http")) code.verificationUrl else "https://${code.verificationUrl}"))) }) { Text("Apri Trakt") }; OutlinedButton({ device = null }) { Text("Annulla") } }; Text("In attesa dell'autorizzazione…", color = MaterialTheme.colorScheme.onSurface.copy(.65f)) } } }
+            item { Card { Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { Text("Codice dispositivo", color = Color.White.copy(.7f)); Text(code.userCode, color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold); Text(code.verificationUrl, color = Color.White.copy(.7f)); Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { Button({ context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(if (code.verificationUrl.startsWith("http")) code.verificationUrl else "https://${code.verificationUrl}"))) }) { Text("Apri Trakt") }; OutlinedButton({ device = null }) { Text("Annulla") } }; Text("In attesa dell'autorizzazione…", color = Color.White.copy(.65f)) } } }
         }
-        if (message.isNotBlank()) item { Text(message, color = MaterialTheme.colorScheme.onSurface) }
+        if (message.isNotBlank()) item { Text(message, color = Color.White) }
     }
 }
 
@@ -476,14 +569,14 @@ private fun HomeCustomizationScreen(vm: MainViewModel) {
     var local by remember(settings) { mutableStateOf(settings) }
     val labels = mapOf("heading" to "Intestazione", "continueWatching" to "Continua a guardare", "sourceCard" to "Scheda sorgente", "sources" to "Sorgenti", "liveTV" to "Live TV", "guidaTV" to "Guida TV", "favoriteChannels" to "Canali preferiti", "favoriteSeries" to "Serie TV preferite", "favoriteMovies" to "Film preferiti", "onDemand" to "On demand")
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Sezioni Home", color = MaterialTheme.colorScheme.onSurface, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-        Text("Nascondi o riordina le sezioni; le impostazioni vengono conservate tra i riavvii.", color = MaterialTheme.colorScheme.onSurface.copy(.65f))
+        Text("Sezioni Home", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        Text("Nascondi o riordina le sezioni; le impostazioni vengono conservate tra i riavvii.", color = Color.White.copy(.65f))
         LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             items(local.homeSectionOrder, key = { it }) { id ->
                 val index = local.homeSectionOrder.indexOf(id)
                 Card { Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
                     Switch(checked = id !in local.hiddenHomeSections, onCheckedChange = { visible -> local = local.copy(hiddenHomeSections = if (visible) local.hiddenHomeSections - id else local.hiddenHomeSections + id); vm.updateSettings(local) })
-                    Text(labels[id] ?: id, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
+                    Text(labels[id] ?: id, color = Color.White, modifier = Modifier.weight(1f))
                     IconButton(enabled = index > 0, onClick = { val list = local.homeSectionOrder.toMutableList(); list.add(index - 1, list.removeAt(index)); local = local.copy(homeSectionOrder = list); vm.updateSettings(local) }) { Icon(Icons.Default.KeyboardArrowUp, null) }
                     IconButton(enabled = index < local.homeSectionOrder.lastIndex, onClick = { val list = local.homeSectionOrder.toMutableList(); list.add(index + 1, list.removeAt(index)); local = local.copy(homeSectionOrder = list); vm.updateSettings(local) }) { Icon(Icons.Default.KeyboardArrowDown, null) }
                 } }
@@ -500,14 +593,14 @@ private fun MergedPlaylistScreen(app: GassPlayerApplication) {
     var name by remember { mutableStateOf("") }
     var selected by remember { mutableStateOf<Set<String>>(emptySet()) }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("Playlist unificate", color = MaterialTheme.colorScheme.onSurface, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-        Text("Raggruppa sorgenti in raccolte logiche, mantenendo l'origine di ogni contenuto.", color = MaterialTheme.colorScheme.onSurface.copy(.65f))
+        Text("Playlist unificate", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        Text("Raggruppa sorgenti in raccolte logiche, mantenendo l'origine di ogni contenuto.", color = Color.White.copy(.65f))
         OutlinedTextField(name, { name = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Nome playlist") })
         LazyColumn(Modifier.heightIn(max = 220.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             items(sources, key = { it.id }) { source ->
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(selected.contains(source.id), { selected = if (it) selected + source.id else selected - source.id })
-                    Column { Text(source.name, color = MaterialTheme.colorScheme.onSurface); Text(source.host, color = MaterialTheme.colorScheme.onSurface.copy(.5f), fontSize = 12.sp) }
+                    Column { Text(source.name, color = Color.White); Text(source.host, color = Color.White.copy(.5f), fontSize = 12.sp) }
                 }
             }
         }
@@ -515,7 +608,7 @@ private fun MergedPlaylistScreen(app: GassPlayerApplication) {
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(playlists, key = { it.id }) { playlist ->
                 Card { Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) { Text(playlist.name, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold); Text("${playlist.memberSourceIds.size} sorgenti", color = MaterialTheme.colorScheme.onSurface.copy(.55f)) }
+                    Column(Modifier.weight(1f)) { Text(playlist.name, color = Color.White, fontWeight = FontWeight.Bold); Text("${playlist.memberSourceIds.size} sorgenti", color = Color.White.copy(.55f)) }
                     IconButton({ scope.launch { app.mergedPlaylists.remove(playlist.id) } }) { Icon(Icons.Default.Delete, null) }
                 } }
             }
@@ -523,7 +616,7 @@ private fun MergedPlaylistScreen(app: GassPlayerApplication) {
     }
 }
 
-@Composable private fun DiagnosticsScreen(app:GassPlayerApplication){ var log by remember{mutableStateOf(app.diagnostics.read())};Column{Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){Button({log=app.diagnostics.read()}){Text("Aggiorna")};OutlinedButton({app.diagnostics.clear();log=""}){Text("Svuota")}};Spacer(Modifier.height(10.dp));LazyColumn{item{Text(log, color=MaterialTheme.colorScheme.onSurface.copy(.75f), fontSize=12.sp)}}}}
+@Composable private fun DiagnosticsScreen(app:GassPlayerApplication){ var log by remember{mutableStateOf(app.diagnostics.read())};Column{Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){Button({log=app.diagnostics.read()}){Text("Aggiorna")};OutlinedButton({app.diagnostics.clear();log=""}){Text("Svuota")}};Spacer(Modifier.height(10.dp));LazyColumn{item{Text(log, color=Color.White.copy(.75f), fontSize=12.sp)}}}}
 
 private val CatalogState.allItems get() = live + movies + series + episodes
 private fun MainViewModel.appFavorite(state: FavoriteState,item:MediaItem)=when(item.kind){MediaKind.LIVE->item.id in state.live;MediaKind.MOVIE,MediaKind.EPISODE->item.id in state.movies;MediaKind.SERIES->item.id in state.series}
