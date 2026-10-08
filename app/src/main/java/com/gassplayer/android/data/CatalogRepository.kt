@@ -11,43 +11,37 @@ import java.io.File
 class CatalogRepository(private val context: Context, private val prefs: AppPreferences, private val xtream: XtreamRepository, private val network: NetworkApi) {
     suspend fun loadAll(force: Boolean = false): CatalogState = withContext(Dispatchers.IO) {
         val sources = prefs.sourcesFlow.first().filter { it.isEnabled }
+        val errors = java.util.concurrent.CopyOnWriteArrayList<String>()
         val all = sources.map { source ->
             async {
-                runCatching { loadSource(source, force) }.getOrElse { restore(source.id) ?: emptySnapshot(source.id) }
+                runCatching { loadSource(source, force) }.getOrElse { t ->
+                    if (t is kotlinx.coroutines.CancellationException) throw t
+                    errors += (t.message ?: t.javaClass.simpleName)
+                    restore(source.id) ?: emptySnapshot(source.id)
+                }
             }
         }.awaitAll()
         val live = all.flatMap { it.live }.dedupeMedia()
         val movies = all.flatMap { it.movies }.dedupeMedia()
         val series = all.flatMap { it.series }.dedupeMedia()
         val episodes = all.flatMap { it.episodes }.dedupeMedia()
-        CatalogState(all.flatMap { it.liveCategories }.distinctBy { it.id to it.sourceId }, all.flatMap { it.vodCategories }.distinctBy { it.id to it.sourceId }, all.flatMap { it.seriesCategories }.distinctBy { it.id to it.sourceId }, live, movies, series, episodes, System.currentTimeMillis())
+        CatalogState(all.flatMap { it.liveCategories }.distinctBy { it.id to it.sourceId }, all.flatMap { it.vodCategories }.distinctBy { it.id to it.sourceId }, all.flatMap { it.seriesCategories }.distinctBy { it.id to it.sourceId }, live, movies, series, episodes, System.currentTimeMillis(), errors.toList())
     }
 
     private suspend fun loadSource(source: MediaSourceConfig, force: Boolean): SourceSnapshot {
-        if (!force) {
-            restore(source.id)?.let { cached ->
-                val fresh = System.currentTimeMillis() - cached.updatedAt < 6 * 60 * 60_000L
-                val hasContent = cached.live.isNotEmpty() || cached.movies.isNotEmpty() || cached.series.isNotEmpty() || cached.episodes.isNotEmpty()
-                // A previously cached Xtream snapshot containing only live/VOD is not considered
-                // complete: series/episodes are a first-class part of the provider playlist and
-                // must be refreshed until at least one series or episode is recovered.
-                val hasXtreamSeries = source.type != SourceType.XTREAM || cached.series.isNotEmpty() || cached.episodes.isNotEmpty()
-                if (fresh && hasContent && hasXtreamSeries) return cached
-            }
-        }
+        if (!force) restore(source.id)?.takeIf { System.currentTimeMillis() - it.updatedAt < 6 * 60 * 60_000L && (it.live.isNotEmpty() || it.movies.isNotEmpty() || it.series.isNotEmpty()) }?.let { return it }
         val snapshot = when (source.type) {
             SourceType.XTREAM -> {
                 val b = xtream.loadCatalog(source)
-                // loadXtreamPlaylist() already returns all episode entries. Avoid the old
-                // first-12-series cap and avoid blocking the entire catalogue on hundreds of
-                // per-series API calls; details are fetched lazily when the user opens a series.
-                val episodes = b.episodes
+                val preload = prefs.settingsFlow.first().preloadSeries
+                val episodes = if (preload) b.episodes + b.series.take(12).flatMap { runCatching { xtream.seriesEpisodes(source, it.id.substringAfterLast(':'), it.title) }.getOrDefault(emptyList()) } else b.episodes
                 SourceSnapshot(source.id, b.liveCategories, b.vodCategories, b.seriesCategories, b.live, b.movies, b.series, episodes, System.currentTimeMillis())
             }
             SourceType.M3U8 -> {
                 val playlistUrl = source.playlistUrl ?: source.host
                 val fetched = network.getTextResult(playlistUrl, mapOf("Accept" to "application/vnd.apple.mpegurl, application/x-mpegURL, audio/mpegurl, text/plain, */*"))
                 val parsed = M3UParser.parse(source.id, fetched.text, NetworkApi.stripInlineHeaders(fetched.finalUrl))
+                if (parsed.isEmpty()) error("Playlist '${source.name}' vuota o in un formato non riconosciuto")
                 SourceSnapshot(source.id, emptyList(), emptyList(), emptyList(), parsed.filter { it.kind == MediaKind.LIVE }, parsed.filter { it.kind == MediaKind.MOVIE }, parsed.filter { it.kind == MediaKind.SERIES }, parsed.filter { it.kind == MediaKind.EPISODE }, System.currentTimeMillis())
             }
             else -> SourceSnapshot(source.id, emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), System.currentTimeMillis())
@@ -81,6 +75,6 @@ class CatalogRepository(private val context: Context, private val prefs: AppPref
 @kotlinx.serialization.Serializable
 data class SourceSnapshot(val sourceId: String, val liveCategories: List<Category>, val vodCategories: List<Category>, val seriesCategories: List<Category>, val live: List<MediaItem>, val movies: List<MediaItem>, val series: List<MediaItem>, val episodes: List<MediaItem>, val updatedAt: Long)
 
-data class CatalogState(val liveCategories: List<Category>, val vodCategories: List<Category>, val seriesCategories: List<Category>, val live: List<MediaItem>, val movies: List<MediaItem>, val series: List<MediaItem>, val episodes: List<MediaItem>, val updatedAt: Long)
+data class CatalogState(val liveCategories: List<Category>, val vodCategories: List<Category>, val seriesCategories: List<Category>, val live: List<MediaItem>, val movies: List<MediaItem>, val series: List<MediaItem>, val episodes: List<MediaItem>, val updatedAt: Long, val errors: List<String> = emptyList())
 
 private fun List<MediaItem>.dedupeMedia(): List<MediaItem> = distinctBy { "${it.kind}:${it.title.trim().lowercase()}:${it.sourceId}:${it.streamUrl}" }

@@ -1,8 +1,6 @@
 package com.gassplayer.android.data
 
 import android.content.Context
-import android.util.Xml
-import java.io.StringReader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -10,85 +8,49 @@ import kotlinx.serialization.json.*
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.zip.GZIPInputStream
 
 class EpgRepository(private val context: Context, private val api: NetworkApi) {
+    private val shortCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, List<EpgProgram>>>()
+
     suspend fun shortEpg(source: MediaSourceConfig, streamId: String, limit: Int = 40): List<EpgProgram> = withContext(Dispatchers.IO) {
-        val c = normalizedCredentials(source)
-        val safeLimit = limit.coerceIn(1, 500)
-        val playerBase = "${c.host.trimEnd('/')}/player_api.php"
-        val attempts = listOf(
-            "action=get_short_epg&stream_id=${enc(streamId)}&limit=$safeLimit",
-            "action=get_simple_data_table&stream_id=${enc(streamId)}",
-        )
-        for (action in attempts) {
-            val result = runCatching {
-                val root = api.getJson("$playerBase?username=${enc(c.username)}&password=${enc(c.password)}&$action")
-                parse(root, streamId)
-            }.getOrDefault(emptyList())
-            if (result.isNotEmpty()) return@withContext result
+        val key = "${source.id}:$streamId"
+        shortCache[key]?.takeIf { System.currentTimeMillis() - it.first < 5 * 60_000L }?.let { return@withContext it.second }
+        val base = XtreamRepository.serverBase(source.host)
+        val auth = "username=${enc(source.username.orEmpty())}&password=${enc(source.password.orEmpty())}"
+        var programs = runCatching { parse(api.getJson("$base/player_api.php?$auth&action=get_short_epg&stream_id=${enc(streamId)}&limit=$limit"), streamId) }.getOrDefault(emptyList())
+        if (programs.isEmpty()) {
+            programs = runCatching { parse(api.getJson("$base/player_api.php?$auth&action=get_simple_data_table&stream_id=${enc(streamId)}"), streamId) }.getOrDefault(emptyList())
         }
-
-        // Compatible panels may expose EPG through panel_api.php instead of the Player API.
-        val panelResult = runCatching {
-            val root = api.getJson("${c.host.trimEnd('/')}/panel_api.php?username=${enc(c.username)}&password=${enc(c.password)}&action=get_epg&stream_id=${enc(streamId)}")
-            parse(root, streamId)
-        }.getOrDefault(emptyList())
-        if (panelResult.isNotEmpty()) return@withContext panelResult
-
-        // Last resort: full XMLTV from the same Xtream credentials, then filter this channel.
-        val full = xtreamXmltv(source, c)
-        if (full.isEmpty()) return@withContext emptyList()
-        full.filter { it.streamId.equals(streamId, true) }.sortedBy { it.startMs }.take(safeLimit)
+        if (programs.isNotEmpty()) shortCache[key] = System.currentTimeMillis() to programs
+        programs
     }
 
-    suspend fun xtreamXmltv(source: MediaSourceConfig): List<EpgProgram> = withContext(Dispatchers.IO) {
-        xtreamXmltv(source, normalizedCredentials(source))
+    /** Full-guide XMLTV for an Xtream source (`xmltv.php`), the same feed the iOS grid uses. */
+    suspend fun xtreamXmltv(source: MediaSourceConfig): List<EpgProgram> {
+        val base = XtreamRepository.serverBase(source.host)
+        return xmltv("$base/xmltv.php?username=${enc(source.username.orEmpty())}&password=${enc(source.password.orEmpty())}", "xt_${source.id}")
     }
 
-    private suspend fun xtreamXmltv(source: MediaSourceConfig, c: XtreamCredentials): List<EpgProgram> {
-        val file = FileCache(context, "xtream_epg_${source.id.hashCode()}.json")
-        file.readFresh(60 * 60_000L)?.let { return it.programs }
-        val variants = listOf(
-            "prev_days=1&next_days=3",
-            "prev_days=2&next_days=5",
-            "prev_days=0&next_days=7"
-        )
-        for (extra in variants) {
-            val url = "${c.host.trimEnd('/')}/xmltv.php?username=${enc(c.username)}&password=${enc(c.password)}&$extra"
-            val list = runCatching { XmlTvParser.parse(api.getText(url)) }.getOrDefault(emptyList())
-            if (list.isNotEmpty()) {
-                file.write(EpgSnapshot(System.currentTimeMillis(), list))
-                return list
-            }
-        }
-        return emptyList()
-    }
-
+    /**
+     * Streams an XMLTV document (plain or gzip) with a pull parser, keeping only programmes in a
+     * -3h..+72h window. The previous regex implementation loaded the whole file as one String and
+     * choked (or ran out of memory) on real guides of 20-100 MB.
+     */
     suspend fun xmltv(url: String, sourceId: String): List<EpgProgram> = withContext(Dispatchers.IO) {
         val file = FileCache(context, "epg_${sourceId.hashCode()}.json")
-        file.readFresh(6 * 60 * 60_000L)?.let { return@withContext it.programs }
-        val list = runCatching { XmlTvParser.parse(api.getText(url)) }.getOrDefault(emptyList())
-        if (list.isNotEmpty()) file.write(EpgSnapshot(System.currentTimeMillis(), list))
-        list
+        runCatching { file.read().takeIf { System.currentTimeMillis() - it.updatedAt < 3 * 60 * 60_000L && it.programs.isNotEmpty() }?.programs }.getOrNull()
+            ?: runCatching {
+                val list = api.getXmlTv(url) { XmlTvParser.parse(it) }
+                if (list.isNotEmpty()) file.write(EpgSnapshot(System.currentTimeMillis(), list))
+                list
+            }.getOrElse { runCatching { file.read().programs }.getOrDefault(emptyList()) }
     }
 
     suspend fun catchUpUrl(source: MediaSourceConfig, streamId: String, startMs: Long, endMs: Long, extension: String = "ts"): String {
-        val c = normalizedCredentials(source)
-        val durationMin = ((endMs - startMs) / 60_000L).coerceAtLeast(1)
-        return "${c.host.trimEnd('/')}/timeshift/${enc(c.username)}/${enc(c.password)}/$durationMin/${startMs / 1000}/$streamId.${extension.trimStart('.') }"
-    }
-
-    private fun normalizedCredentials(source: MediaSourceConfig): XtreamCredentials {
-        var raw = source.host.trim()
-        if (!raw.contains("://")) raw = "http://$raw"
-        val uri = runCatching { java.net.URI(raw) }.getOrNull() ?: error("Host Xtream non valido")
-        val scheme = uri.scheme?.lowercase()?.takeIf { it == "http" || it == "https" } ?: "http"
-        val authority = uri.rawAuthority ?: error("Host Xtream non valido")
-        var path = uri.rawPath.orEmpty().trimEnd('/')
-        if (path.lowercase().endsWith("/player_api.php")) path = path.dropLast("/player_api.php".length)
-        if (path.lowercase().endsWith("/get.php")) path = path.dropLast("/get.php".length)
-        val base = "$scheme://$authority${if (path.isBlank()) "" else "/${path.trim('/')}"}"
-        return XtreamCredentials(base, source.username.orEmpty(), source.password.orEmpty())
+        val c = XtreamCredentials(XtreamRepository.serverBase(source.host), source.username.orEmpty(), source.password.orEmpty()); val durationMin = ((endMs - startMs) / 60_000L).coerceAtLeast(1)
+        val fmt = java.text.SimpleDateFormat("yyyy-MM-dd:HH-mm", java.util.Locale.US)
+        return "${c.host.trimEnd('/')}/timeshift/${enc(c.username)}/${enc(c.password)}/$durationMin/${fmt.format(java.util.Date(startMs))}/$streamId.$extension"
     }
 
     private fun parse(root: JsonElement, streamId: String): List<EpgProgram> {
@@ -101,7 +63,7 @@ class EpgRepository(private val context: Context, private val api: NetworkApi) {
             val id = o.valueString("id") ?: o.valueString("epg_id") ?: stable("$streamId:${o.valueString("start")}:${o.valueString("title")}")
             val start = parseTime(o.valueString("start") ?: o.valueString("start_timestamp")) ?: return@let null
             val end = parseTime(o.valueString("end") ?: o.valueString("stop_timestamp")) ?: return@let null
-            EpgProgram(id, streamId, o.valueString("title").orEmpty(), o.valueString("description"), start, end, o.valueString("has_archive") == "1" || o.valueString("has_archive").equals("true", true))
+            EpgProgram(id, streamId, decodeMaybeBase64(o.valueString("title")).orEmpty(), decodeMaybeBase64(o.valueString("description")), start, end, o.valueString("has_archive") == "1" || o.valueString("has_archive").equals("true", true))
         } }.sortedBy { it.startMs }
     }
     private fun enc(v: String) = java.net.URLEncoder.encode(v, "UTF-8")
@@ -110,6 +72,14 @@ class EpgRepository(private val context: Context, private val api: NetworkApi) {
         v.toLongOrNull()?.let { return if (it < 100_000_000_000L) it * 1000 else it }
         return runCatching { DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneId.systemDefault()).parse(v, Instant::from).toEpochMilli() }.getOrNull()
             ?: runCatching { Instant.parse(v).toEpochMilli() }.getOrNull()
+    }
+    private fun decodeMaybeBase64(v: String?): String? {
+        if (v.isNullOrBlank()) return v
+        if (v.length < 4 || v.length % 4 != 0 || !v.all { it.isLetterOrDigit() || it == '+' || it == '/' || it == '=' }) return v
+        return runCatching {
+            val decoded = String(android.util.Base64.decode(v, android.util.Base64.DEFAULT), Charsets.UTF_8)
+            if (decoded.any { it == '\uFFFD' || (it.code < 32 && it != '\n' && it != '\t' && it != '\r') }) v else decoded
+        }.getOrDefault(v)
     }
     private fun stable(text: String) = text.hashCode().toString()
 }
@@ -120,104 +90,66 @@ data class EpgSnapshot(val updatedAt: Long, val programs: List<EpgProgram>)
 private class FileCache(private val context: Context, private val name: String) {
     private val file get() = context.filesDir.resolve(name)
     fun read(): EpgSnapshot = JsonStore.json.decodeFromString(file.readText())
-    fun readFresh(maxAgeMs: Long): EpgSnapshot? = runCatching {
-        val value = read()
-        value.takeIf { System.currentTimeMillis() - it.updatedAt < maxAgeMs }
-    }.getOrNull()
     fun write(v: EpgSnapshot) { file.writeText(JsonStore.json.encodeToString(v)) }
 }
 
-private object XmlTvParser {
-    fun parse(xml: String): List<EpgProgram> = runCatching { parsePull(xml) }.getOrElse { parseRegexFallback(xml) }
-
-    private fun parsePull(xml: String): List<EpgProgram> {
-        val parser = Xml.newPullParser()
-        parser.setInput(StringReader(xml))
-        val out = mutableListOf<EpgProgram>()
+object XmlTvParser {
+    /** Channel display names, filled while parsing, so the UI can match by name when ids differ. */
+    fun parse(input: java.io.InputStream): List<EpgProgram> {
+        val parser = android.util.Xml.newPullParser()
+        parser.setFeature(org.xmlpull.v1.XmlPullParser.FEATURE_PROCESS_NAMESPACES, false)
+        parser.setInput(input, null)
+        val now = System.currentTimeMillis()
+        val from = now - 3 * 3_600_000L
+        val to = now + 72 * 3_600_000L
+        val out = ArrayList<EpgProgram>(8192)
         var event = parser.eventType
-        var programmeChannel: String? = null
-        var programmeStart: String? = null
-        var programmeEnd: String? = null
-        var title: String? = null
-        var description: String? = null
-        var inProgramme = false
-        var inTitle = false
-        var inDesc = false
-        val titleBuffer = StringBuilder()
-        val descBuffer = StringBuilder()
+        var channel = ""; var start = 0L; var stop = 0L; var title = ""; var desc: String? = null; var inProg = false
+        var tag = ""
         while (event != org.xmlpull.v1.XmlPullParser.END_DOCUMENT) {
             when (event) {
-                org.xmlpull.v1.XmlPullParser.START_TAG -> when (parser.name.lowercase()) {
-                    "programme" -> {
-                        inProgramme = true
-                        programmeChannel = parser.getAttributeValue(null, "channel")?.trim()
-                        programmeStart = parser.getAttributeValue(null, "start")?.trim()
-                        programmeEnd = parser.getAttributeValue(null, "stop")?.trim()
-                        title = null
-                        description = null
-                        titleBuffer.setLength(0)
-                        descBuffer.setLength(0)
+                org.xmlpull.v1.XmlPullParser.START_TAG -> {
+                    tag = parser.name
+                    if (tag == "programme") {
+                        inProg = true; title = ""; desc = null
+                        channel = parser.getAttributeValue(null, "channel").orEmpty()
+                        start = xmlTvTime(parser.getAttributeValue(null, "start").orEmpty()) ?: 0L
+                        stop = xmlTvTime(parser.getAttributeValue(null, "stop").orEmpty()) ?: 0L
                     }
-                    "title" -> if (inProgramme) { inTitle = true; titleBuffer.setLength(0) }
-                    "desc", "description" -> if (inProgramme) { inDesc = true; descBuffer.setLength(0) }
                 }
-                org.xmlpull.v1.XmlPullParser.TEXT -> {
-                    if (inTitle) titleBuffer.append(parser.text)
-                    if (inDesc) descBuffer.append(parser.text)
+                org.xmlpull.v1.XmlPullParser.TEXT -> if (inProg) {
+                    val t = parser.text.trim()
+                    if (t.isNotEmpty()) {
+                        if (tag == "title" && title.isEmpty()) title = t
+                        else if (tag == "desc" && desc == null) desc = t
+                    }
                 }
-                org.xmlpull.v1.XmlPullParser.END_TAG -> when (parser.name.lowercase()) {
-                    "title" -> { if (inTitle) { title = titleBuffer.toString().trim(); inTitle = false } }
-                    "desc", "description" -> { if (inDesc) { description = descBuffer.toString().trim(); inDesc = false } }
-                    "programme" -> {
-                        if (inProgramme) {
-                            val channel = programmeChannel.orEmpty()
-                            val start = xmlTvTime(programmeStart.orEmpty())
-                            val end = xmlTvTime(programmeEnd.orEmpty())
-                            if (channel.isNotBlank() && start != null && end != null && end > start) {
-                                out += EpgProgram("$channel:$start", channel, title.orEmpty(), description?.takeIf { it.isNotBlank() }, start, end)
-                            }
+                org.xmlpull.v1.XmlPullParser.END_TAG -> {
+                    if (parser.name == "programme") {
+                        if (inProg && start > 0 && stop > start && stop > from && start < to && channel.isNotEmpty()) {
+                            out += EpgProgram("$channel:$start", channel, title, desc, start, stop)
                         }
-                        inProgramme = false
+                        inProg = false
                     }
+                    tag = ""
                 }
             }
-            event = parser.next()
+            event = try { parser.next() } catch (_: org.xmlpull.v1.XmlPullParserException) { break }
         }
-        return out.sortedBy { it.startMs }
+        return out
     }
 
-    private fun parseRegexFallback(xml: String): List<EpgProgram> {
-        val out = mutableListOf<EpgProgram>()
-        val programme = Regex("(?is)<programme\\b([^>]*)>(.*?)</programme>")
-        val attr = Regex("(?is)([A-Za-z_:][-A-Za-z0-9_:.]*)\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)')")
-        for (m in programme.findAll(xml)) {
-            val attrs = attr.findAll(m.groupValues[1]).associate { it.groupValues[1].lowercase() to it.groupValues[2].ifBlank { it.groupValues[3] } }
-            val channel = attrs["channel"].orEmpty()
-            val start = xmlTvTime(attrs["start"].orEmpty())
-            val end = xmlTvTime(attrs["stop"].orEmpty())
-            if (channel.isBlank() || start == null || end == null || end <= start) continue
-            val body = m.groupValues[2]
-            val title = Regex("(?is)<title[^>]*>(.*?)</title>").find(body)?.groupValues?.getOrNull(1)?.stripXml().orEmpty()
-            val desc = Regex("(?is)<(?:desc|description)[^>]*>(.*?)</(?:desc|description)>").find(body)?.groupValues?.getOrNull(1)?.stripXml()?.takeIf { it.isNotBlank() }
-            out += EpgProgram("$channel:$start", channel, title, desc, start, end)
-        }
-        return out.sortedBy { it.startMs }
-    }
-
-    private fun xmlTvTime(v: String): Long? {
+    fun xmlTvTime(v: String): Long? {
         val raw = v.trim()
-        if (raw.isBlank()) return null
-        val parts = raw.split(Regex("\\s+"), limit = 2)
-        val date = parts.firstOrNull() ?: return null
-        val zone = parts.getOrNull(1)?.trim().orEmpty()
+        if (raw.length < 12) return null
+        val date = raw.take(14).padEnd(14, '0')
+        val zone = raw.drop(14).trim()
         return runCatching {
-            val formatter = if (zone.isNotBlank()) DateTimeFormatter.ofPattern("yyyyMMddHHmmss Z") else DateTimeFormatter.ofPattern("yyyyMMddHHmmss")
-            if (zone.isNotBlank()) java.time.ZonedDateTime.parse("$date $zone", formatter).toInstant().toEpochMilli()
-            else java.time.LocalDateTime.parse(date, formatter).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+            val local = java.time.LocalDateTime.parse(date, DateTimeFormatter.ofPattern("yyyyMMddHHmmss"))
+            val zoneId = if (zone.isNotEmpty()) java.time.ZoneOffset.of(zone.let { if (it.length == 5 && (it[0] == '+' || it[0] == '-')) it.substring(0, 3) + ":" + it.substring(3) else it }) else ZoneId.systemDefault()
+            local.atZone(zoneId).toInstant().toEpochMilli()
         }.getOrNull()
     }
-
-    private fun String.stripXml() = replace(Regex("<[^>]+>"), "").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&apos;", "'")
 }
 
 private fun JsonElement?.jsonArrayOrEmpty(): JsonArray = this as? JsonArray ?: JsonArray(emptyList())

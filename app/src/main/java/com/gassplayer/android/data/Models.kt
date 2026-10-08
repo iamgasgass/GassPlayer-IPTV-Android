@@ -127,6 +127,12 @@ data class AppSettings(
     val traktClientSecret: String = "",
     val openSubtitlesApiKey: String = "",
     val customUserAgent: String = "",
+    val epgLayoutDensity: String = "comoda",
+    val epgChannelCardStyle: String = "griglia",
+    val epgTileColor: String = "dynamic",
+    val groupUIStyle: String = "scorrevole",
+    val playerStartBufferSec: Int = 3,
+    val historyLimit: Int = 20,
     val homeSectionOrder: List<String> = defaultHomeSections,
     val hiddenHomeSections: Set<String> = emptySet()
 )

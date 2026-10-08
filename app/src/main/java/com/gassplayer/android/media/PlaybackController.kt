@@ -174,10 +174,7 @@ class PlaybackController(private val context: Context, private val diagnostics: 
         val headers = linkedMapOf<String, String>().apply {
             putAll(streamHeaders)
             this["User-Agent"] = effectiveUserAgent()
-            this["Accept"] = "*/*"
             this["Accept-Encoding"] = "identity"
-            this["Cache-Control"] = "no-cache"
-            this["Pragma"] = "no-cache"
         }
         httpFactories.forEach { it.setDefaultRequestProperties(headers) }
     }
@@ -265,20 +262,16 @@ class PlaybackController(private val context: Context, private val diagnostics: 
     private fun createMediaSourceFactory(): DefaultMediaSourceFactory {
         val upstreamFactories = httpFactories.map { DefaultDataSource.Factory(context, it) }
         val failoverFactory = DataSource.Factory { FailoverDataSource(upstreamFactories, diagnostics) }
-        // DefaultDataSource adds the non-HTTP transports (file/content/asset and RTMP when
-        // media3-datasource-rtmp is present) while our custom base keeps the HTTP/HTTPS failover
-        // ladder for IPTV providers. This is the single transport gateway for all Media3 sources.
-        val routedFactory = DataSource.Factory { DefaultDataSource(context, failoverFactory.createDataSource()) }
         val factory = if (!settings.value.httpCache) {
-            DefaultMediaSourceFactory(routedFactory)
+            DefaultMediaSourceFactory(failoverFactory)
         } else {
             val cache = SimpleCache(File(context.cacheDir, "media3"), LeastRecentlyUsedCacheEvictor(256L * 1024 * 1024), StandaloneDatabaseProvider(context))
             simpleCache = cache
             DefaultMediaSourceFactory(
                 CacheDataSource.Factory()
                     .setCache(cache)
-                    .setUpstreamDataSourceFactory(routedFactory)
-                    .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR or CacheDataSource.FLAG_IGNORE_CACHE_FOR_UNSET_LENGTH_REQUESTS)
+                    .setUpstreamDataSourceFactory(failoverFactory)
+                    .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
             )
         }
         return factory.setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(6))

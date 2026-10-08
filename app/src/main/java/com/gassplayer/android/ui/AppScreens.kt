@@ -71,7 +71,9 @@ fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
         return
     }
 
-    AdaptiveShell(route, tv, onRoute = { route = it }, title = when(route) {
+    val loading by vm.loading.collectAsStateWithLifecycle()
+    val message by vm.message.collectAsStateWithLifecycle()
+    AdaptiveShell(route, tv, loading, message, onRetry = { vm.refresh(true) }, onRoute = { route = it }, title = when(route) {
         "home" -> "GassPlayer"; "live" -> "Live TV"; "movies" -> "Film"; "series" -> "Serie"; "epg" -> "Guida TV"; "search" -> "Cerca"; "sources" -> "Sorgenti"; "downloads" -> "Download"; "settings" -> "Impostazioni"; "home-customize" -> "Personalizza Home"; "vpn" -> "VPN"; "parental" -> "Controllo genitori"; "diagnostics" -> "Diagnostica"; "backup" -> "Backup e migrazione"; "epg-manage" -> "Fonti EPG"; "merged" -> "Playlist unificate"; else -> "GassPlayer"
     }) {
         when (route) {
@@ -79,7 +81,7 @@ fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
             "live" -> CatalogScreen("Live TV", catalog?.live.orEmpty(), catalog?.liveCategories.orEmpty(), favorite, parental, vm, onPlay = { playerItem = it }, showNumbers = settings.showChannelNumbers)
             "movies" -> CatalogScreen("Film", catalog?.movies.orEmpty(), catalog?.vodCategories.orEmpty(), favorite, parental, vm, onPlay = { playerItem = it }, detail = true)
             "series" -> SeriesScreen(catalog?.series.orEmpty(), catalog?.episodes.orEmpty(), catalog?.seriesCategories.orEmpty(), favorite, parental, vm, onPlay = { playerItem = it })
-            "epg" -> EpgScreen(app, catalog?.live.orEmpty(), onPlay = { playerItem = it })
+            "epg" -> EpgGridScreen(app, vm, catalog?.live.orEmpty(), catalog?.liveCategories.orEmpty(), favorite, settings, onPlay = { playerItem = it })
             "epg-manage" -> ExternalEpgManageScreen(app)
             "merged" -> MergedPlaylistScreen(app)
             "home-customize" -> HomeCustomizationScreen(vm)
@@ -87,7 +89,7 @@ fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
             "search" -> SearchScreen(app, catalog, onPlay = { playerItem = it }, onRoute = { route = it })
             "sources" -> SourcesScreen(app, vm)
             "downloads" -> DownloadsScreen(app)
-            "settings" -> SettingsScreen(app, settings, vm, onOpen = { route = it })
+            "settings" -> SettingsHub(app, settings, vm, onOpen = { route = it })
             "vpn" -> VpnScreen(app)
             "parental" -> ParentalScreen(vm, parental)
             "diagnostics" -> DiagnosticsScreen(app)
@@ -97,7 +99,7 @@ fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
 }
 
 @Composable
-private fun AdaptiveShell(route: String, tv: Boolean, onRoute: (String) -> Unit, title: String, content: @Composable () -> Unit) {
+private fun AdaptiveShell(route: String, tv: Boolean, loading: Boolean, message: String?, onRetry: () -> Unit, onRoute: (String) -> Unit, title: String, content: @Composable () -> Unit) {
     val destinations = listOf("home" to "Home", "live" to "Live TV", "movies" to "Film", "series" to "Serie", "epg" to "Guida", "search" to "Cerca", "sources" to "Sorgenti", "settings" to "Impostazioni")
     Row(Modifier.fillMaxSize().background(Dark)) {
         NavigationRail(modifier = Modifier.fillMaxHeight().width(if (tv) 132.dp else 92.dp), containerColor = Color(0xFF0E1016)) {
@@ -107,6 +109,14 @@ private fun AdaptiveShell(route: String, tv: Boolean, onRoute: (String) -> Unit,
         }
         Column(Modifier.fillMaxSize().padding(horizontal = if (tv) 28.dp else 16.dp, vertical = 18.dp)) {
             Text(title, color = Color.White, fontSize = if (tv) 32.sp else 26.sp, fontWeight = FontWeight.Bold)
+            if (loading) { Spacer(Modifier.height(8.dp)); LinearProgressIndicator(Modifier.fillMaxWidth()); Text("Caricamento playlist…", color = Color.White.copy(.6f), fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp)) }
+            else if (!message.isNullOrBlank() && route != "sources" && route != "settings") {
+                Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Warning, null, tint = Color(0xFFFFB340)); Spacer(Modifier.width(8.dp))
+                    Text(message, color = Color(0xFFFFB340), fontSize = 13.sp, modifier = Modifier.weight(1f), maxLines = 3, overflow = TextOverflow.Ellipsis)
+                    TextButton(onRetry) { Text("Riprova") }
+                }
+            }
             Spacer(Modifier.height(16.dp)); Box(Modifier.fillMaxSize()) { content() }
         }
     }
@@ -128,7 +138,7 @@ private fun HomeScreen(vm: MainViewModel, catalog: CatalogState?, fav: FavoriteS
                     FilledTonalButton({ onRoute("epg") }) { Icon(Icons.Default.CalendarMonth, null); Spacer(Modifier.width(8.dp)); Text("Guida TV") }
                     OutlinedButton({ onRoute("home-customize") }) { Icon(Icons.Default.Tune, null); Spacer(Modifier.width(8.dp)); Text("Personalizza") }
                 }
-                "continueWatching" -> if (watch.isNotEmpty()) Section("Continua a guardare", null) { LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) { items(watch.take(10)) { entry -> val media = catalog?.allItems?.firstOrNull { it.id == entry.contentId }; if (media != null) MediaCard(media, false, onClick = { onPlay(media) }) else Text(entry.title, color = Color.White) } } }
+                "continueWatching" -> if (watch.isNotEmpty()) Section("Continua a guardare", null) { LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) { items(watch.take(settings.historyLimit.coerceIn(1, 100))) { entry -> val media = catalog?.allItems?.firstOrNull { it.id == entry.contentId }; if (media != null) MediaCard(media, false, onClick = { onPlay(media) }) else Text(entry.title, color = Color.White) } } }
                 "sourceCard" -> Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF141720)), border = BorderStroke(1.dp, Color.White.copy(.08f)), modifier = Modifier.fillMaxWidth()) { Row(Modifier.padding(18.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { Column { Text("Sorgenti", color = Color.White, fontWeight = FontWeight.Bold); Text("${sources.size} configurate • ${catalog?.allItems?.size ?: 0} elementi", color = Color.White.copy(.65f)) }; OutlinedButton({ onRoute("sources") }) { Text("Gestisci") } } }
                 "sources" -> Section("Sorgenti", null) { LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { items(sources.take(12)) { s -> AssistChip({ onRoute("sources") }, label = { Text(s.name) }) } } }
                 "liveTV" -> Section("Live preferiti", null) { val list = catalog?.live?.filter { it.id in fav.live }.orEmpty(); if (list.isEmpty()) EmptyHint("Nessun canale preferito") else LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) { items(list.take(12)) { MediaCard(it, true, onClick = { onPlay(it) }) } } }
@@ -163,15 +173,11 @@ private fun CatalogScreen(title: String, items: List<MediaItem>, categories: Lis
         MovieDetailScreen(vm.app, selected!!, vm.catalog.value?.allItems.orEmpty(), favorite, onBack = { selected = null }, onPlay = { i, pos -> onPlayWithPosition(onPlay, i, pos) })
         return
     }
-    val categoryNames = categories.associate { it.id to it.name }
-    val filterKeys = items.mapNotNull { it.categoryId ?: it.group }.distinct()
-    val filtered = items.filter { filter == null || (it.categoryId ?: it.group) == filter }.filterNot { it.id in parental.lockedIds }
+    val libSettings by vm.settings.collectAsStateWithLifecycle()
+    val filtered = remember(items, filter, parental.lockedIds) { items.filter { matchesGroup(it, filter) }.filterNot { it.id in parental.lockedIds } }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        if (filterKeys.isNotEmpty()) LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            item { FilterChip(filter == null, { filter = null }, label = { Text("Tutto") }) }
-            items(filterKeys) { key -> FilterChip(filter == key, { filter = key }, label = { Text(categoryNames[key] ?: key) }) }
-        }
-        if (filtered.isEmpty()) EmptyHint("Catalogo vuoto o filtro senza risultati.") else LazyVerticalGrid(columns = GridCells.Adaptive(minSize = if (detail) 160.dp else 190.dp), verticalArrangement = Arrangement.spacedBy(14.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), contentPadding = PaddingValues(bottom = 40.dp)) {
+        LibraryHeader(title, categories, items, filter, { filter = it }, libSettings, vm, allowPoster = detail)
+        if (filtered.isEmpty()) EmptyHint(if (items.isEmpty()) "Nessun contenuto: controlla la sorgente in Sorgenti e riprova a ricaricare." else "Nessun risultato per questo gruppo.") else LazyVerticalGrid(columns = GridCells.Adaptive(minSize = libraryGridMin(libSettings, !detail)), verticalArrangement = Arrangement.spacedBy(14.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), contentPadding = PaddingValues(bottom = 40.dp)) {
             items(filtered) { item -> MediaCard(item, vm.appFavorite(favorite, item), onClick = { if (detail) selected = item else onPlay(item) }) }
         }
     }
@@ -182,10 +188,12 @@ private fun onPlayWithPosition(onPlay: (MediaItem) -> Unit, item: MediaItem, pos
 @Composable private fun SeriesScreen(series: List<MediaItem>, episodes: List<MediaItem>, categories: List<Category>, favorite: FavoriteState, parental: ParentalState, vm: MainViewModel, onPlay: (MediaItem) -> Unit) {
     var selected by remember { mutableStateOf<MediaItem?>(null) }; var filter by remember { mutableStateOf<String?>(null) }
     if (selected != null) { SeriesDetailScreen(vm.app, selected!!, episodes, favorite, onBack = { selected = null }, onPlay = { i, pos -> onPlayWithPosition(onPlay, i, pos) }); return }
-    val names=categories.associate{it.id to it.name}; val keys=series.mapNotNull{it.categoryId ?: it.group}.distinct(); val filtered=series.filterNot{it.id in parental.lockedIds}.filter{filter==null || (it.categoryId ?: it.group)==filter}
-    Column(verticalArrangement=Arrangement.spacedBy(10.dp)){
-        if(keys.isNotEmpty()) LazyRow(horizontalArrangement=Arrangement.spacedBy(8.dp)){item{FilterChip(filter==null,{filter=null},label={Text("Tutto")})};items(keys){k->FilterChip(filter==k,{filter=k},label={Text(names[k]?:k)})}}
-        LazyVerticalGrid(GridCells.Adaptive(180.dp),contentPadding=PaddingValues(bottom=40.dp),horizontalArrangement=Arrangement.spacedBy(14.dp),verticalArrangement=Arrangement.spacedBy(14.dp)){items(filtered){s->MediaCard(s,s.id in favorite.series,onClick={selected=s})}}
+    val libSettings by vm.settings.collectAsStateWithLifecycle()
+    val filtered = remember(series, filter, parental.lockedIds) { series.filterNot { it.id in parental.lockedIds }.filter { matchesGroup(it, filter) } }
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        LibraryHeader("Serie", categories, series, filter, { filter = it }, libSettings, vm, allowPoster = true)
+        if (filtered.isEmpty()) EmptyHint(if (series.isEmpty()) "Nessuna serie: controlla la sorgente e ricarica." else "Nessun risultato per questo gruppo.") else
+            LazyVerticalGrid(GridCells.Adaptive(libraryGridMin(libSettings, false)), contentPadding = PaddingValues(bottom = 40.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) { items(filtered) { s -> MediaCard(s, s.id in favorite.series, onClick = { selected = s }) } }
     }
 }
 
@@ -195,7 +203,7 @@ private fun SearchScreen(app: GassPlayerApplication, catalog: CatalogState?, onP
     var submitted by remember { mutableStateOf("") }
     val history by app.search.flow.collectAsStateWithLifecycle(SearchHistory())
     val scope = rememberCoroutineScope()
-    val results = remember(submitted, catalog) { if (submitted.isBlank()) emptyList() else catalog?.allItems.orEmpty().filter { it.title.contains(submitted, true) } }
+    val results = remember(submitted, catalog) { if (submitted.isBlank()) emptyList() else catalog?.allItems.orEmpty().filter { it.title.contains(submitted, true) }.take(100) }
     Column {
         OutlinedTextField(q, { q = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("Cerca live, film, serie") }, trailingIcon = { IconButton({ submitted = q; scope.launch { app.search.add(q) } }) { Icon(Icons.Default.Search, null) } })
         Spacer(Modifier.height(10.dp))
@@ -206,67 +214,6 @@ private fun SearchScreen(app: GassPlayerApplication, catalog: CatalogState?, onP
         }
         LazyVerticalGrid(GridCells.Adaptive(180.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             items(results) { MediaCard(it, false, onClick = { scope.launch { app.search.add(submitted) }; onPlay(it) }) }
-        }
-    }
-}
-
-@Composable
-private fun EpgScreen(app: GassPlayerApplication, live: List<MediaItem>, onPlay: (MediaItem) -> Unit) {
-    var selected by remember { mutableStateOf<MediaItem?>(null) }
-    var programs by remember { mutableStateOf<List<EpgProgram>>(emptyList()) }
-    val sources by app.sources.sources.collectAsStateWithLifecycle(emptyList())
-    val external by app.externalEpg.flow.collectAsStateWithLifecycle(emptyList())
-    Row(Modifier.fillMaxSize()) {
-        LazyColumn(Modifier.width(260.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            items(live) { c ->
-                Card(onClick = { selected = c }, modifier = Modifier.fillMaxWidth()) {
-                    Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        if (c.logoUrl != null) AsyncImage(c.logoUrl, null, Modifier.size(42.dp))
-                        Spacer(Modifier.width(8.dp)); Text(c.title, maxLines=1, overflow=TextOverflow.Ellipsis)
-                    }
-                }
-            }
-        }
-        Spacer(Modifier.width(16.dp))
-        LaunchedEffect(selected?.id, external) {
-            selected?.let { c ->
-                val source = sources.firstOrNull { it.id == c.sourceId }
-                var found = emptyList<EpgProgram>()
-                if (source != null) {
-                    found = runCatching { app.epg.shortEpg(source, c.id.substringAfterLast(':')) }.getOrDefault(emptyList())
-                }
-                if (found.isEmpty()) {
-                    val channelKey = c.metadataTag?.takeIf { it.isNotBlank() } ?: c.id.substringAfterLast(':')
-                    val normalizedTitle = c.title.lowercase().filter { it.isLetterOrDigit() }
-                    val all = buildList {
-                        for (e in external.filter { it.isEnabled }) {
-                            runCatching { app.epg.xmltv(e.urlString, e.id) }.getOrDefault(emptyList()).also { addAll(it) }
-                        }
-                    }
-                    found = all.filter { p ->
-                        p.streamId.equals(channelKey, ignoreCase = true) || p.streamId.equals(c.metadataTag.orEmpty(), ignoreCase = true) || p.description.orEmpty().lowercase().filter { it.isLetterOrDigit() } == normalizedTitle
-                    }.sortedBy { it.startMs }
-                }
-                programs = found
-            }
-        }
-        Column(Modifier.fillMaxSize()) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {  }
-            LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                items(programs) { p ->
-                    Card(onClick = { if (selected != null) onPlay(selected!!) }, modifier = Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(14.dp)) {
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                Column(Modifier.weight(1f)) { Text(p.title, fontWeight = FontWeight.Bold); Text(java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(p.startMs))) }
-                                TextButton({ app.reminders.schedule(p) }) { Text("Ricorda") }
-                            }
-                            p.description?.let { Text(it, maxLines=3, overflow=TextOverflow.Ellipsis) }
-                            LinearProgressIndicator(progress = { p.progress() }, Modifier.fillMaxWidth())
-                            if (p.hasArchive) TextButton({ selected?.let { onPlay(it) } }) { Text("Catch-up") }
-                        }
-                    }
-                }
-            }
         }
     }
 }
@@ -349,7 +296,7 @@ private fun AddSourceDialog(app: GassPlayerApplication, vm: MainViewModel, onDis
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
-    val valid = if (type == SourceType.XTREAM) host.isNotBlank() && user.isNotBlank() && pass.isNotBlank() else url.isNotBlank()
+    val valid = if (type == SourceType.XTREAM) host.isNotBlank() && ((user.isNotBlank() && pass.isNotBlank()) || XtreamRepository.credentialsFromUrl(host) != null) else url.isNotBlank()
     AlertDialog(
         onDismissRequest = { if (!busy) onDismiss() },
         title = { Text("Nuova sorgente") },
@@ -376,7 +323,9 @@ private fun AddSourceDialog(app: GassPlayerApplication, vm: MainViewModel, onDis
                 scope.launch {
                     busy = true
                     error = null
-                    val actualHost = host.trim().ifBlank { url.trim() }
+                    val pasted = if (type == SourceType.XTREAM) XtreamRepository.credentialsFromUrl(host) else null
+                    val actualHost = if (type == SourceType.XTREAM) runCatching { XtreamRepository.serverBase(host) }.getOrElse { error = it.message; busy = false; return@launch } else url.trim()
+                    user = user.ifBlank { pasted?.first.orEmpty() }; pass = pass.ifBlank { pasted?.second.orEmpty() }
                     val candidate = MediaSourceConfig(
                         id = UUID.randomUUID().toString(),
                         name = name.trim().ifBlank { "Sorgente" },
@@ -388,7 +337,7 @@ private fun AddSourceDialog(app: GassPlayerApplication, vm: MainViewModel, onDis
                     )
                     val result = runCatching {
                         when (type) {
-                            SourceType.XTREAM -> app.xtream.authenticate(XtreamCredentials(candidate.host, candidate.username.orEmpty(), candidate.password.orEmpty()))
+                            SourceType.XTREAM -> app.xtream.probe(candidate)
                             SourceType.M3U8 -> {
                                 val playlistUrl = candidate.playlistUrl ?: candidate.host
                                 val fetched = app.network.getTextResult(
@@ -429,63 +378,7 @@ private fun AddSourceDialog(app: GassPlayerApplication, vm: MainViewModel, onDis
     }
 }
 
-@Composable
-private fun SettingsScreen(app: GassPlayerApplication, settings: AppSettings, vm: MainViewModel, onOpen:(String)->Unit) {
-    var local by remember(settings) { mutableStateOf(settings) }
-    LazyColumn(verticalArrangement=Arrangement.spacedBy(8.dp), contentPadding=PaddingValues(bottom=48.dp)) {
-        item { SettingToggle("Riprendi riproduzione", local.resumePlayback) { local=local.copy(resumePlayback=it); vm.updateSettings(local) } }
-        item { SettingToggle("Autoplay prossimo episodio", local.autoplayNextEpisode) { local=local.copy(autoplayNextEpisode=it); vm.updateSettings(local) } }
-        item { SettingToggle("Mostra numeri canale", local.showChannelNumbers) { local=local.copy(showChannelNumbers=it); vm.updateSettings(local) } }
-        item { SettingToggle("Download solo Wi‑Fi", local.downloadWifiOnly) { local=local.copy(downloadWifiOnly=it); vm.updateSettings(local) } }
-        item { SettingRow("Lingua app", local.language, listOf("system","it","en","es")) { local=local.copy(language=it); vm.updateSettings(local) } }
-        item { SettingRow("Aggiornamento catalogo", local.catalogRefreshInterval, RefreshInterval.entries.map { it.id }) { local=local.copy(catalogRefreshInterval=it); vm.updateSettings(local) } }
-        item { SettingToggle("Aggiorna catalogo all'avvio", local.catalogRefreshOnLaunch) { local=local.copy(catalogRefreshOnLaunch=it); vm.updateSettings(local) } }
-        item { SettingToggle("Mostra EPG nelle card", local.showEpgInChannelTiles) { local=local.copy(showEpgInChannelTiles=it); vm.updateSettings(local) } }
-        item { SettingToggle("Precarica serie", local.preloadSeries) { local=local.copy(preloadSeries=it); vm.updateSettings(local) } }
-        item { SettingToggle("Aggiornamento EPG automatico", local.epgAutoUpdateEnabled) { local=local.copy(epgAutoUpdateEnabled=it); vm.updateSettings(local) } }
-        item { SettingToggle("Adaptive bitrate", local.adaptiveBitrate) { local=local.copy(adaptiveBitrate=it); vm.updateSettings(local) } }
-        item { SettingToggle("Hardware decoding", local.hardwareDecode) { local=local.copy(hardwareDecode=it, softwareDecode=!it); vm.updateSettings(local) } }
-        item { SettingToggle("Async decode", local.asyncDecode) { local=local.copy(asyncDecode=it); vm.updateSettings(local) } }
-        item { SettingToggle("Accurate seek", local.accurateSeek) { local=local.copy(accurateSeek=it); vm.updateSettings(local) } }
-        item { SettingToggle("HTTP cache", local.httpCache) { local=local.copy(httpCache=it); vm.updateSettings(local) } }
-        item { SettingToggle("Audio only", local.audioOnly) { local=local.copy(audioOnly=it); vm.updateSettings(local) } }
-        item { SettingToggle("Deinterlace", local.deinterlace) { local=local.copy(deinterlace=it); vm.updateSettings(local) } }
-        item { SettingToggle("Mantieni sottotitoli immagine", local.preserveImageSubtitles) { local=local.copy(preserveImageSubtitles=it); vm.updateSettings(local) } }
-        item { SettingToggle("Panorama 360°", local.panorama360) { local=local.copy(panorama360=it); vm.updateSettings(local) } }
-        item { SettingToggle("Rotazione automatica 360°", local.autoRotate360) { local=local.copy(autoRotate360=it); vm.updateSettings(local) } }
-        item { SettingToggle("Loop riproduzione", local.loopPlayback) { local=local.copy(loopPlayback=it); vm.updateSettings(local) } }
-        item { SettingRow("Lingua sottotitoli", local.subtitleLanguage, listOf("it","en","es")) { local=local.copy(subtitleLanguage=it); vm.updateSettings(local) } }
-        item { SettingRow("Densità", local.density, listOf("compact","comfortable")) { local=local.copy(density=it); vm.updateSettings(local) } }
-        item { SettingRow("Tema", local.theme, listOf("system","light","dark")) { local=local.copy(theme=it); vm.updateSettings(local) } }
-        item { SettingInt("Buffer minimo (s)", local.minBufferSec, 1..60) { local=local.copy(minBufferSec=it.coerceAtLeast(1).coerceAtMost(local.maxBufferSec)); vm.updateSettings(local) } }
-        item { SettingInt("Buffer massimo (s)", local.maxBufferSec, 5..180) { local=local.copy(maxBufferSec=it.coerceAtLeast(local.minBufferSec).coerceAtMost(180)); vm.updateSettings(local) } }
-        item { SettingInt("Velocità", (local.preferredPlaybackSpeed*100).toInt(), 50..200, step=5) { local=local.copy(preferredPlaybackSpeed=it/100f); vm.updateSettings(local) } }
-        item { SettingInt("A/V delay (ms)", local.videoDelayMs, -500..500, step=10) { local=local.copy(videoDelayMs=it); vm.updateSettings(local) } }
-        item { SettingRow("Aspect ratio", local.aspectRatio, listOf("fit","fill","16:9","4:3","original")) { local=local.copy(aspectRatio=it); vm.updateSettings(local) } }
-        item { SettingRow("FFmpeg low resolution", local.ffmpegLowResolution, listOf("full","half","quarter")) { local=local.copy(ffmpegLowResolution=it); vm.updateSettings(local) } }
-        item { OutlinedTextField(local.ffmpegOptions,{local=local.copy(ffmpegOptions=it); vm.updateSettings(local)},modifier=Modifier.fillMaxWidth(),label={Text("Opzioni FFmpeg")}) }
-        item { OutlinedTextField(local.ffmpegFilters,{local=local.copy(ffmpegFilters=it); vm.updateSettings(local)},modifier=Modifier.fillMaxWidth(),label={Text("Filtri FFmpeg")}) }
-        item { Button({ onOpen("epg-manage") }, modifier=Modifier.fillMaxWidth()) { Text("Gestisci fonti EPG") } }
-        item { Button({ onOpen("vpn") }, modifier=Modifier.fillMaxWidth()) { Text("VPN personale") } }
-        item { Button({ onOpen("parental") }, modifier=Modifier.fillMaxWidth()) { Text("Controllo genitori") } }
-        item { Button({ onOpen("downloads") }, modifier=Modifier.fillMaxWidth()) { Text("Download") } }
-        item { Button({ onOpen("diagnostics") }, modifier=Modifier.fillMaxWidth()) { Text("Debug e diagnostica") } }
-        item { Button({ onOpen("merged") }, modifier=Modifier.fillMaxWidth()) { Text("Playlist unificate") } }
-        item { Button({ onOpen("backup") }, modifier=Modifier.fillMaxWidth()) { Text("Backup e migrazione") } }
-        item { Button({ onOpen("home-customize") }, modifier=Modifier.fillMaxWidth()) { Text("Personalizza Home") } }
-        item { Button({ onOpen("trakt") }, modifier=Modifier.fillMaxWidth()) { Text("Trakt.tv") } }
-        item { Text("Metadata", color=Color.White, fontSize=18.sp, fontWeight=FontWeight.Bold, modifier=Modifier.padding(top=12.dp)) }
-        item { OutlinedTextField(local.tmdbApiKey,{local=local.copy(tmdbApiKey=it); vm.updateSettings(local)},modifier=Modifier.fillMaxWidth(),label={Text("TMDB API key")}) }
-        item { OutlinedTextField(local.omdbApiKey,{local=local.copy(omdbApiKey=it); vm.updateSettings(local)},modifier=Modifier.fillMaxWidth(),label={Text("OMDb API key")}) }
-        item { OutlinedTextField(local.traktClientId,{local=local.copy(traktClientId=it); vm.updateSettings(local)},modifier=Modifier.fillMaxWidth(),label={Text("Trakt client ID")}) }
-        item { OutlinedTextField(local.traktClientSecret,{local=local.copy(traktClientSecret=it); vm.updateSettings(local)},modifier=Modifier.fillMaxWidth(),label={Text("Trakt client secret")}) }
-        item { OutlinedTextField(local.openSubtitlesApiKey,{local=local.copy(openSubtitlesApiKey=it); vm.updateSettings(local)},modifier=Modifier.fillMaxWidth(),label={Text("OpenSubtitles API key")}) }
-        item { OutlinedTextField(local.customUserAgent,{local=local.copy(customUserAgent=it); vm.updateSettings(local)},modifier=Modifier.fillMaxWidth(),singleLine=true,label={Text("User-Agent personalizzato")}) }
-        item { OutlinedTextField(local.preferredDns,{local=local.copy(preferredDns=it); vm.updateSettings(local)},modifier=Modifier.fillMaxWidth(),singleLine=true,label={Text("DNS preferito")}) }
-    }
-}
-
-@Composable private fun SettingInt(label:String, value:Int, range:IntRange, step:Int=1, onChange:(Int)->Unit){ Column(Modifier.fillMaxWidth()){ Text("$label: $value",color=Color.White); Slider(value=value.toFloat(),onValueChange={onChange(it.toInt())},valueRange=range.first.toFloat()..range.last.toFloat(),steps=((range.last-range.first)/step-1).coerceAtLeast(0)) } }
+@Composable internal fun SettingInt(label:String, value:Int, range:IntRange, step:Int=1, onChange:(Int)->Unit){ Column(Modifier.fillMaxWidth()){ Text("$label: $value",color=Color.White); Slider(value=value.toFloat(),onValueChange={onChange(it.toInt())},valueRange=range.first.toFloat()..range.last.toFloat(),steps=((range.last-range.first)/step-1).coerceAtLeast(0)) } }
 @Composable private fun SettingToggle(label:String, value:Boolean, onChange:(Boolean)->Unit){ Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){ Text(label,color=Color.White); Switch(value,onChange) } }
 @Composable private fun SettingRow(label:String, value:String, choices:List<String>, onChange:(String)->Unit){ var expanded by remember{mutableStateOf(false)}; Box{ OutlinedButton({expanded=true},Modifier.fillMaxWidth()){ Text("$label: $value") }; DropdownMenu(expanded,{expanded=false}){choices.forEach{DropdownMenuItem({Text(it)},onClick={onChange(it);expanded=false})}} } }
 

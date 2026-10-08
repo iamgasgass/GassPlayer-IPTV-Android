@@ -32,6 +32,7 @@ class MainViewModel(val app: GassPlayerApplication) : ViewModel() {
     fun refresh(force: Boolean = true) = viewModelScope.launch {
         _loading.value = true
         _catalog.value = runCatching { app.catalog.loadAll(force) }.onFailure { _message.value = it.message }.getOrNull()
+            ?.also { c -> _message.value = c.errors.firstOrNull() }
         _loading.value = false
         app.prefs.saveLastRefresh(System.currentTimeMillis())
     }

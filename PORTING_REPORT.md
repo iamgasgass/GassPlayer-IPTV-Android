@@ -68,3 +68,20 @@ Il progetto iOS contiene 119 file complessivi, 103 file Swift, XcodeGen `project
 - Updated Media3 `ExoPlayer.Builder` usage to `setLoadControl(...)`.
 - Fixed Trakt device-code expiration field usage (`expiresInSec`).
 - Added Kotlin Serialization `jsonObject` extension import for VPN discovery.
+
+## FIXED15 — caricamento Xtream/M3U/EPG e parità con iOS
+Rete e catalogo
+- User-Agent predefinito ora `VLC/3.0.20 LibVLC/3.0.20` (come iOS): molti pannelli rifiutavano `GassPlayer/Android/1.0` e rispondevano con liste vuote.
+- `NetworkApi.getJsonObjects`: parsing JSON in streaming (array, oggetto indicizzato, busta `data`, `false`), niente più albero JSON in memoria su cataloghi da 100k+ voci; supporto gzip anche senza `Content-Encoding`; fallback ISO-8859-1.
+- Catalogo Xtream: live/VOD/serie e categorie scaricati in parallelo (max 6 connessioni per host, come iOS); gli errori non vengono più inghiottiti: se non arriva nulla l'errore reale compare in app con pulsante "Riprova".
+- La scala dei candidati http/https/porte si ferma sulle risposte definitive (401/403/404) e ricorda la base funzionante; i candidati alternativi usano un timeout di connessione breve.
+- Host Xtream tollerante: accetta `host:porta`, URL `get.php?...`/`player_api.php?...` e ne estrae le credenziali; verifica sorgente con `probe`.
+- Nessuna cache di snapshot vuoti; le categorie non sono più troncate a 60.
+EPG
+- Titoli/descrizioni `get_short_epg` decodificati da Base64; URL costruiti con `serverBase`; timeshift con data `yyyy-MM-dd:HH-mm`.
+- XMLTV letto con XmlPullParser in streaming (gzip incluso), finestra −3h/+72h; fallback `xmltv.php` per sorgenti Xtream e `epg_channel_id` per l'abbinamento.
+- Nuova griglia EPG (`EpgGrid.kt`) con le stesse metriche di `EPGGridView.swift`: densità compatta/comoda, 160 dp per 30 min, colonna canali fissa, badge qualità, asse "adesso", Ieri/Oggi/Domani, 32 canali per pagina (tetto 250), menu "…" (Aspetto, Assetti, Colori, Aggiorna guida, Solo preferiti).
+Interfaccia
+- Menu "…" delle librerie Live/Film/Serie (Densità griglia incl. Poster, UI Gruppi Scorrevole/Espansibile, Ricarica) in `LibraryMenu.kt`.
+- Impostazioni riorganizzate come iOS (`SettingsHub.kt`): Playlist, Avanzate, Rete, Integrazioni, Supporto + pagine Generale, Interfaccia, Lettore video, TMDB/OMDb, Diagnostica, Informazioni.
+Non verificato: nessuna build Gradle/Android SDK nel sandbox; i sorgenti vanno compilati e provati su dispositivo con la playlist reale.
