@@ -9,6 +9,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.net.URI
 import java.util.concurrent.TimeUnit
+import java.util.Locale
 
 class NetworkApi {
     @Volatile var userAgent: String = "GassPlayer/Android/1.0"
@@ -16,11 +17,12 @@ class NetworkApi {
     private val client = OkHttpClient.Builder()
         .retryOnConnectionFailure(true)
         .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(90, TimeUnit.SECONDS)
+        .readTimeout(180, TimeUnit.SECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)
+        .callTimeout(240, TimeUnit.SECONDS)
         .followRedirects(true)
         .followSslRedirects(true)
-        .connectionPool(okhttp3.ConnectionPool(8, 5, TimeUnit.MINUTES))
+        .connectionPool(okhttp3.ConnectionPool(12, 5, TimeUnit.MINUTES))
         .build()
 
     data class TextResponse(val text: String, val finalUrl: String)
@@ -37,26 +39,72 @@ class NetworkApi {
             putAll(headers)
         }
         var lastError: Throwable? = null
-        for (candidate in candidateUrls(requestUrl)) {
-            try {
-                val builder = Request.Builder()
-                    .url(candidate)
-                    .header("User-Agent", requestHeaders["User-Agent"] ?: requestHeaders["user-agent"] ?: userAgent)
-                    .header("Accept", requestHeaders["Accept"] ?: "*/*")
-                requestHeaders.forEach { (k, v) ->
-                    if (!k.equals("User-Agent", true) && !k.equals("Accept", true)) builder.header(k, v)
-                }
-                client.newCall(builder.build()).execute().use { response ->
-                    if (response.isSuccessful) {
-                        return@withContext TextResponse(response.body.string().removePrefix("\uFEFF"), response.request.url.toString())
+        val uas = userAgentCandidates(requestHeaders)
+        outer@ for (candidate in candidateUrls(requestUrl)) {
+            for (ua in uas) {
+                try {
+                    val builder = Request.Builder()
+                        .url(candidate)
+                        .header("User-Agent", ua)
+                        .header("Accept", requestHeaders["Accept"] ?: "*/*")
+                        .header("Accept-Encoding", requestHeaders["Accept-Encoding"] ?: "identity")
+                        .header("Cache-Control", requestHeaders["Cache-Control"] ?: "no-cache")
+                    requestHeaders.forEach { (k, v) ->
+                        if (!k.equals("User-Agent", true) && !k.equals("Accept", true) &&
+                            !k.equals("Accept-Encoding", true) && !k.equals("Cache-Control", true)) builder.header(k, v)
                     }
-                    lastError = IllegalStateException("HTTP ${response.code} from $candidate")
+                    client.newCall(builder.build()).execute().use { response ->
+                        if (response.isSuccessful) {
+                            val text = response.body.string().removePrefix("\uFEFF")
+                            val contentType = response.header("Content-Type").orEmpty().lowercase(Locale.ROOT)
+                            if (isLikelyTextPayload(text, contentType, requestUrl)) {
+                                return@withContext TextResponse(text, response.request.url.toString())
+                            }
+                            lastError = IllegalStateException("Risposta non testuale da $candidate")
+                        } else {
+                            lastError = IllegalStateException("HTTP ${response.code} from $candidate")
+                        }
+                    }
+                } catch (t: Throwable) {
+                    lastError = t
                 }
-            } catch (t: Throwable) {
-                lastError = t
+                // A 200 HTML/login response may be a UA-specific block page. Try the next UA
+                // before abandoning the candidate URL. If all UAs fail, continue with transport fallback.
             }
         }
         throw lastError ?: IllegalStateException("Network request failed")
+    }
+
+    private fun userAgentCandidates(headers: Map<String, String>): List<String> {
+        val explicit = headers.entries.firstOrNull { it.key.equals("User-Agent", true) }?.value?.trim()
+        return buildList {
+            explicit?.takeIf { it.isNotBlank() }?.let(::add)
+            add(userAgent)
+            addAll(companionObjectUserAgents())
+        }.filter { it.isNotBlank() }.distinct()
+    }
+
+    private fun companionObjectUserAgents(): List<String> = listOf(
+        "VLC/3.0.20 LibVLC/3.0.20",
+        "Lavf/60.16.100",
+        "IPTVSmartersPro",
+        "okhttp/4.12.0",
+        "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124.0 Mobile Safari/537.36"
+    )
+
+    private fun isLikelyTextPayload(text: String, contentType: String, requestedUrl: String): Boolean {
+        if (text.isBlank()) return false
+        if (contentType.contains("json") || contentType.contains("mpegurl") || contentType.contains("text/") || contentType.contains("xml")) return true
+        val trimmed = text.trimStart()
+        if (trimmed.startsWith("{") || trimmed.startsWith("[")) return true
+        if (trimmed.startsWith("#EXT") || trimmed.startsWith("<?xml") || trimmed.contains("<tv")) return true
+        val lowerUrl = requestedUrl.lowercase(Locale.ROOT)
+        if (listOf(".m3u", ".m3u8", "player_api.php", "xmltv.php", "get.php").any { lowerUrl.contains(it) }) {
+            val head = trimmed.take(4096).lowercase(Locale.ROOT)
+            return head.contains("#extm3u") || head.contains("#extinf") || head.contains("#ext-x-") || head.contains("stream_id") || head.contains("user_info") || head.contains("<tv") || head.contains("<?xml")
+        }
+        // Generic JSON/text API payloads can be valid without a distinctive header.
+        return !trimmed.startsWith("<html") && !trimmed.startsWith("<!doctype html")
     }
 
     suspend fun getJson(url: String, headers: Map<String, String> = emptyMap()): JsonElement =
@@ -101,6 +149,19 @@ class NetworkApi {
 
     companion object {
         fun stripInlineHeaders(raw: String): String = splitInlineHeaders(raw).first
+        fun looksLikePlaylist(text: String): Boolean {
+            val t = text.trimStart()
+            if (t.isBlank()) return false
+            val head = t.take(16 * 1024).lowercase(Locale.ROOT)
+            return head.contains("#extm3u") || head.contains("#extinf") || head.contains("#ext-x-") ||
+                Regex("(?m)^(?:https?|rtmp|rtsp|rtsps|udp|srt)://").containsMatchIn(head)
+        }
+
+        fun looksLikeXmlTv(text: String): Boolean {
+            val t = text.trimStart().lowercase(Locale.ROOT)
+            return t.startsWith("<?xml") || t.startsWith("<tv") || t.contains("<channel") && t.contains("<programme")
+        }
+
 
         fun candidateUrls(raw: String): List<String> {
             val normalized = normalizeUrl(raw)

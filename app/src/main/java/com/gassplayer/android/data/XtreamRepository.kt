@@ -24,37 +24,99 @@ class XtreamRepository(private val api: NetworkApi) {
 
     suspend fun loadCatalog(source: MediaSourceConfig): CatalogBundle {
         val creds = XtreamCredentials(serverBase(source.host), source.username.orEmpty(), source.password.orEmpty())
-        authenticate(creds)
+        // A few compatible panels expose a working generated playlist but an incomplete or
+        // non-standard player_api authentication response. Authentication therefore remains
+        // best-effort here; the playlist is the authoritative content path.
+        runCatching { authenticate(creds) }
 
-        val liveCategories = requestArray(creds, "get_live_categories").map { Category(it.stringOrNull("category_id").orEmpty(), it.stringOrNull("category_name").orEmpty(), source.id) }
-        val vodCategories = requestArray(creds, "get_vod_categories").map { Category(it.stringOrNull("category_id").orEmpty(), it.stringOrNull("category_name").orEmpty(), source.id) }
-        val seriesCategories = requestArray(creds, "get_series_categories").map { Category(it.stringOrNull("category_id").orEmpty(), it.stringOrNull("category_name").orEmpty(), source.id) }
-        var live = requestArray(creds, "get_live_streams").mapIndexed { i, o -> o.toLive(source, i, creds) }.filter { it.id.substringAfterLast(':').isNotBlank() }.distinctBy { it.id }
-        var movies = requestArray(creds, "get_vod_streams").mapIndexed { i, o -> o.toVod(source, i, creds) }.filter { it.id.substringAfterLast(':').isNotBlank() }.distinctBy { it.id }
-        var series = requestArray(creds, "get_series").map { it.toSeries(source) }.filter { it.id.substringAfterLast(':').isNotBlank() }.distinctBy { it.id }
+        // The generated Xtream playlist is treated as a first-class catalogue source.
+        // Player-API endpoints are then merged into it to recover metadata, categories and
+        // series details that some panels omit from their M3U. This avoids the old behaviour
+        // where a non-empty but incomplete API response suppressed the working playlist path.
+        val playlist = loadXtreamPlaylist(source.id, creds)
+        var live = playlist.filter { it.kind == MediaKind.LIVE }.mapIndexed { i, item ->
+            item.copy(number = item.number ?: i + 1)
+        }
+        var movies = playlist.filter { it.kind == MediaKind.MOVIE }
+        var series = playlist.filter { it.kind == MediaKind.SERIES }
+        val playlistEpisodes = playlist.filter { it.kind == MediaKind.EPISODE }
 
-        // A subset of panels expose get_series but return an empty/error response. Their
-        // generated M3U still contains the series/episode entries, so use it as a targeted
-        // fallback instead of failing the entire Xtream source.
-        var fallbackEpisodes = emptyList<MediaItem>()
-        if (series.isEmpty() || live.isEmpty() || movies.isEmpty()) {
-            runCatching {
-                val playlistUrl = xtreamPlaylist(creds)
-                val fetched = api.getTextResult(playlistUrl, mapOf("Accept" to "application/vnd.apple.mpegurl, application/x-mpegURL, text/plain, */*"))
-                M3UParser.parse(source.id, fetched.text, NetworkApi.stripInlineHeaders(fetched.finalUrl))
-            }.onSuccess { parsed ->
-                if (series.isEmpty()) series = parsed.filter { it.kind == MediaKind.SERIES }.distinctBy { it.id }
-                if (live.isEmpty()) {
-                    live = parsed.filter { it.kind == MediaKind.LIVE }.mapIndexed { i, item ->
-                        item.copy(number = item.number ?: i + 1)
-                    }.distinctBy { it.id }
-                }
-                if (movies.isEmpty()) movies = parsed.filter { it.kind == MediaKind.MOVIE }.distinctBy { it.id }
-                fallbackEpisodes = parsed.filter { it.kind == MediaKind.EPISODE }.distinctBy { it.id }
-            }
+        val liveCategories = requestArray(creds, "get_live_categories")
+            .map { Category(it.stringOrNull("category_id").orEmpty(), it.stringOrNull("category_name").orEmpty(), source.id) }
+        val vodCategories = requestArray(creds, "get_vod_categories")
+            .map { Category(it.stringOrNull("category_id").orEmpty(), it.stringOrNull("category_name").orEmpty(), source.id) }
+        val seriesCategories = requestArray(creds, "get_series_categories")
+            .map { Category(it.stringOrNull("category_id").orEmpty(), it.stringOrNull("category_name").orEmpty(), source.id) }
+
+        val apiLive = requestArray(creds, "get_live_streams").mapIndexed { i, o -> o.toLive(source, i, creds) }
+        val apiMovies = requestArray(creds, "get_vod_streams").mapIndexed { i, o -> o.toVod(source, i, creds) }
+        val apiSeries = requestArray(creds, "get_series").map { it.toSeries(source) }
+
+        live = mergePreferred(live, apiLive)
+        movies = mergePreferred(movies, apiMovies)
+        series = mergePreferred(series, apiSeries)
+
+        // Some panels return an empty get_series result even though the playlist contains all
+        // episodes. Build synthetic parent series from the episode metadata when necessary.
+        if (series.isEmpty() && playlistEpisodes.isNotEmpty()) {
+            series = synthesizeSeriesFromEpisodes(playlistEpisodes, source.id)
         }
 
-        return CatalogBundle(liveCategories, vodCategories, seriesCategories, live, movies, series, fallbackEpisodes)
+        val totalContent = live.size + movies.size + series.size + playlistEpisodes.size
+        if (totalContent == 0) {
+            error("Xtream non ha restituito contenuti. Verificare host, porta, username/password oppure un pannello Xtream compatibile con player_api/get.php.")
+        }
+        return CatalogBundle(liveCategories, vodCategories, seriesCategories, live, movies, series, playlistEpisodes)
+    }
+
+    private fun mergePreferred(playlist: List<MediaItem>, api: List<MediaItem>): List<MediaItem> {
+        val map = LinkedHashMap<String, MediaItem>()
+        fun put(item: MediaItem) {
+            val key = canonicalContentKey(item)
+            val previous = map[key]
+            map[key] = when {
+                previous == null -> item
+                previous.title.isBlank() && item.title.isNotBlank() -> item
+                previous.logoUrl.isNullOrBlank() && !item.logoUrl.isNullOrBlank() -> previous.copy(logoUrl = item.logoUrl)
+                previous.posterUrl.isNullOrBlank() && !item.posterUrl.isNullOrBlank() -> previous.copy(posterUrl = item.posterUrl)
+                previous.streamMimeType.isNullOrBlank() && !item.streamMimeType.isNullOrBlank() -> previous.copy(streamMimeType = item.streamMimeType)
+                previous.categoryId.isNullOrBlank() && !item.categoryId.isNullOrBlank() -> previous.copy(categoryId = item.categoryId, group = item.group)
+                else -> previous
+            }
+        }
+        playlist.forEach(::put)
+        api.forEach(::put)
+        return map.values.toList()
+    }
+
+    private fun canonicalContentKey(item: MediaItem): String {
+        val raw = item.streamUrl.trim()
+        val path = runCatching { URI(raw).path.orEmpty() }.getOrDefault(raw)
+        val lower = path.lowercase(Locale.ROOT)
+        val kindPath = when {
+            "/live/" in lower -> MediaKind.LIVE
+            "/movie/" in lower -> MediaKind.MOVIE
+            "/series/" in lower -> MediaKind.EPISODE
+            else -> item.kind
+        }
+        if (kindPath != item.kind && item.kind != MediaKind.SERIES) {
+            val segment = path.substringAfterLast('/').substringBeforeLast('.')
+            if (segment.isNotBlank()) return "${kindPath.name}:$segment"
+        }
+        return if (raw.isBlank()) item.id else "${item.kind}:$raw"
+    }
+
+    private fun synthesizeSeriesFromEpisodes(episodes: List<MediaItem>, sourceId: String): List<MediaItem> {
+        return episodes.groupBy { it.seriesId ?: normalizeSeriesMatch(it.title) }
+            .mapNotNull { (key, eps) ->
+                val first = eps.firstOrNull() ?: return@mapNotNull null
+                MediaItem(
+                    id = "$sourceId:series:$key", sourceId = sourceId, kind = MediaKind.SERIES,
+                    title = first.group?.takeIf { it.isNotBlank() } ?: first.title.substringBefore(Regex("(?i)\\s+s\\d{1,2}\\s*e\\d{1,3}.*$"), first.title).trim(),
+                    streamUrl = "", logoUrl = first.logoUrl, posterUrl = first.logoUrl, group = first.group,
+                    categoryId = first.categoryId, number = first.number, metadataTag = first.metadataTag
+                )
+            }
     }
 
     suspend fun vodDetail(source: MediaSourceConfig, vodId: String): MediaItem? {
@@ -67,23 +129,20 @@ class XtreamRepository(private val api: NetworkApi) {
     suspend fun seriesEpisodes(source: MediaSourceConfig, seriesId: String, seriesTitleHint: String? = null): List<MediaItem> {
         val creds = XtreamCredentials(serverBase(source.host), source.username.orEmpty(), source.password.orEmpty())
         val roots = buildList {
-            runCatching {
-                add(api.getJson(playerApi(creds, mapOf("action" to "get_series_info", "series_id" to seriesId))).jsonObject)
-            }
-            // A number of compatible Xtream panels expose a lighter streams endpoint instead of
-            // embedding the complete episode object in get_series_info. Try it only as a fallback.
-            runCatching {
-                add(api.getJson(playerApi(creds, mapOf("action" to "get_series_streams", "series_id" to seriesId))).jsonObject)
-            }
+            runCatching { add(api.getJson(playerApi(creds, mapOf("action" to "get_series_info", "series_id" to seriesId))) ) }
+            // Compatible Xtream panels sometimes return this endpoint as a top-level JSON array.
+            runCatching { add(api.getJson(playerApi(creds, mapOf("action" to "get_series_streams", "series_id" to seriesId))) ) }
+            // Other panels split the catalogue into explicit seasons.
+            runCatching { add(api.getJson(playerApi(creds, mapOf("action" to "get_seasons", "series_id" to seriesId))) ) }
         }.distinctBy { it.toString() }
-        val primaryRoot = roots.firstOrNull()
 
+        val primaryRoot = roots.firstOrNull()?.jsonObjectOrNull()
         val episodeObjects = roots.flatMap { root ->
-            buildList {
-                root["episodes"]?.let { addAll(flattenEpisodes(it)) }
-                root["data"]?.let { addAll(flattenEpisodes(it)) }
-                if (looksLikeEpisodeObject(root)) add(null to root)
-            }
+            val flattened = flattenEpisodes(root)
+            if (flattened.isNotEmpty()) flattened
+            else root.jsonObjectOrNull()?.let { obj ->
+                buildList { if (looksLikeEpisodeObject(obj)) add(null to obj) }
+            }.orEmpty()
         }
         val direct = episodeObjects
             .mapNotNull { (seasonOverride, episode) -> episode.toEpisode(source, creds, seriesId, seasonOverride) }
@@ -91,16 +150,19 @@ class XtreamRepository(private val api: NetworkApi) {
             .distinctBy { it.id }
         if (direct.isNotEmpty()) return direct
 
-        // Some panels expose season lists separately. If present, use get_series_streams per season
-        // before falling back to the much larger generated M3U playlist.
+        // Some panels expose season lists separately. Try every discovered season with
+        // get_series_streams and also tolerate array/object response shapes.
         val seasonNumbers = roots.flatMap { root ->
-            root["seasons"]?.let { seasons ->
-                when (seasons) {
-                    is JsonArray -> seasons.mapNotNull { it.jsonObjectOrNull()?.intOrNull("season_number") ?: it.jsonObjectOrNull()?.stringOrNull("season")?.toIntOrNull() }
-                    is JsonObject -> seasons.keys.mapNotNull { it.toIntOrNull() }
-                    else -> emptyList()
+            val obj = root.jsonObjectOrNull()
+            val seasons = obj?.get("seasons") ?: obj?.get("data") ?: root
+            when (seasons) {
+                is JsonArray -> seasons.flatMap { season ->
+                    val so = season.jsonObjectOrNull()
+                    listOfNotNull(so?.intOrNull("season_number"), so?.intOrNull("season"), so?.stringOrNull("season")?.toIntOrNull())
                 }
-            } ?: emptyList()
+                is JsonObject -> seasons.keys.mapNotNull { it.toIntOrNull() }
+                else -> emptyList()
+            }
         }.distinct().sorted()
         if (seasonNumbers.isNotEmpty()) {
             val seasonEpisodes = seasonNumbers.flatMap { season ->
@@ -119,22 +181,19 @@ class XtreamRepository(private val api: NetworkApi) {
             if (seasonEpisodes.isNotEmpty()) return seasonEpisodes
         }
 
-        // Some panels expose the series catalogue but fail to return episode details from the
-        // JSON API at all. Recover the episodes from the provider's generated M3U.
-        // Recover the episodes from the provider's generated M3U. The title hint also lets
-        // synthetic M3U-only series recover even when their synthetic ID is not an API series_id.
+        // API-compatible panels can expose the complete episode list only through their generated
+        // M3U. Filter the merged playlist by series name/group and attach the real requested series ID.
         val seriesName = seriesTitleHint?.takeIf { it.isNotBlank() }
             ?: primaryRoot?.get("info")?.jsonObjectOrNull()?.stringOrNull("name")
             ?: primaryRoot?.get("info")?.jsonObjectOrNull()?.stringOrNull("title")
         if (seriesName.isNullOrBlank()) return emptyList()
         return runCatching {
-            val playlistUrl = xtreamPlaylist(creds)
-            val fetched = api.getTextResult(playlistUrl, mapOf("Accept" to "application/vnd.apple.mpegurl, application/x-mpegURL, text/plain, */*"))
             val target = normalizeSeriesMatch(seriesName)
-            M3UParser.parse(source.id, fetched.text, NetworkApi.stripInlineHeaders(fetched.finalUrl))
+            loadXtreamPlaylist(source.id, creds)
                 .filter {
                     it.kind == MediaKind.EPISODE &&
-                        (normalizeSeriesMatch(it.title) == target || normalizeSeriesMatch(it.group.orEmpty()) == target)
+                        (normalizeSeriesMatch(it.title) == target || normalizeSeriesMatch(it.group.orEmpty()) == target ||
+                            normalizeSeriesMatch(it.metadataTag.orEmpty()) == target)
                 }
                 .map { it.copy(seriesId = seriesId) }
                 .sortedWith(compareBy({ it.seasonNumber ?: 0 }, { it.episodeNumber ?: 0 }, { it.title.lowercase(Locale.ROOT) }))
@@ -163,9 +222,80 @@ class XtreamRepository(private val api: NetworkApi) {
         return "${serverBase(creds.host)}/player_api.php?" + pairs.entries.joinToString("&") { "${enc(it.key)}=${enc(it.value)}" }
     }
 
-    private fun xtreamPlaylist(creds: XtreamCredentials): String {
+    private suspend fun loadXtreamPlaylist(sourceId: String, creds: XtreamCredentials): List<MediaItem> {
+        val urls = linkedSetOf<String>()
+        val variants = listOf(
+            "m3u_plus" to "m3u8",
+            "m3u_plus" to "ts",
+            "m3u_plus" to null,
+            "m3u_plus" to "rtmp",
+            "m3u" to "m3u8",
+            "m3u" to "ts",
+            "m3u" to null,
+            "m3u" to "rtmp",
+            "m3u8" to "m3u8",
+            "m3u8" to "ts",
+            "m3u8" to null
+        )
+        variants.forEach { (type, output) -> urls += xtreamPlaylist(creds, type, output) }
+
         val base = serverBase(creds.host)
-        return "$base/get.php?username=${enc(creds.username)}&password=${enc(creds.password)}&type=m3u_plus&output=m3u8"
+        val u = enc(creds.username); val p = enc(creds.password)
+        // Compatible panels also expose a direct credentials-in-path playlist. Only use these
+        // fallbacks if the standard generator produced nothing, to avoid unnecessary traffic.
+        val direct = listOf("$base/$u/$p/playlist.m3u", "$base/$u/$p/playlist.m3u8")
+        val merged = LinkedHashMap<String, MediaItem>()
+        var successfulPlaylist = false
+        for (url in urls) {
+            val parsed = runCatching {
+                val fetched = api.getTextResult(url, mapOf(
+                    "Accept" to "application/vnd.apple.mpegurl, application/x-mpegURL, audio/mpegurl, text/plain, */*",
+                    "Accept-Encoding" to "identity",
+                    "Cache-Control" to "no-cache"
+                ))
+                M3UParser.parse(sourceId, fetched.text, NetworkApi.stripInlineHeaders(fetched.finalUrl))
+            }.getOrDefault(emptyList())
+            if (parsed.isNotEmpty()) successfulPlaylist = true
+            parsed.forEach { item ->
+                val titleKey = item.title.trim().lowercase(Locale.ROOT)
+                val key = "${item.kind}:$titleKey:${item.streamUrl.trim()}"
+                val previous = merged[key]
+                merged[key] = if (previous == null) item else previous.copy(
+                    logoUrl = previous.logoUrl ?: item.logoUrl,
+                    posterUrl = previous.posterUrl ?: item.posterUrl,
+                    backdropUrl = previous.backdropUrl ?: item.backdropUrl,
+                    categoryId = previous.categoryId ?: item.categoryId,
+                    group = previous.group ?: item.group,
+                    metadataTag = previous.metadataTag ?: item.metadataTag,
+                    streamHeaders = previous.streamHeaders.ifEmpty { item.streamHeaders },
+                    streamMimeType = previous.streamMimeType ?: item.streamMimeType
+                )
+            }
+        }
+        if (!successfulPlaylist) {
+            for (url in direct) {
+                val parsed = runCatching {
+                    val fetched = api.getTextResult(url, mapOf("Accept" to "application/vnd.apple.mpegurl, application/x-mpegURL, text/plain, */*", "Accept-Encoding" to "identity"))
+                    M3UParser.parse(sourceId, fetched.text, NetworkApi.stripInlineHeaders(fetched.finalUrl))
+                }.getOrDefault(emptyList())
+                parsed.forEach { item ->
+                    val key = "${item.kind}:${item.title.trim().lowercase(Locale.ROOT)}:${item.streamUrl.trim()}"
+                    merged.putIfAbsent(key, item)
+                }
+            }
+        }
+        return merged.values.toList()
+    }
+
+    private fun xtreamPlaylist(creds: XtreamCredentials, type: String = "m3u_plus", output: String? = "m3u8"): String {
+        val base = serverBase(creds.host)
+        val params = buildString {
+            append("username=").append(enc(creds.username))
+            append("&password=").append(enc(creds.password))
+            append("&type=").append(enc(type))
+            if (!output.isNullOrBlank()) append("&output=").append(enc(output))
+        }
+        return "$base/get.php?$params"
     }
 
     private fun serverBase(rawHost: String): String {

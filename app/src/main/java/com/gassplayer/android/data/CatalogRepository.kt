@@ -24,12 +24,24 @@ class CatalogRepository(private val context: Context, private val prefs: AppPref
     }
 
     private suspend fun loadSource(source: MediaSourceConfig, force: Boolean): SourceSnapshot {
-        if (!force) restore(source.id)?.takeIf { System.currentTimeMillis() - it.updatedAt < 6 * 60 * 60_000L }?.let { return it }
+        if (!force) {
+            restore(source.id)?.let { cached ->
+                val fresh = System.currentTimeMillis() - cached.updatedAt < 6 * 60 * 60_000L
+                val hasContent = cached.live.isNotEmpty() || cached.movies.isNotEmpty() || cached.series.isNotEmpty() || cached.episodes.isNotEmpty()
+                // A previously cached Xtream snapshot containing only live/VOD is not considered
+                // complete: series/episodes are a first-class part of the provider playlist and
+                // must be refreshed until at least one series or episode is recovered.
+                val hasXtreamSeries = source.type != SourceType.XTREAM || cached.series.isNotEmpty() || cached.episodes.isNotEmpty()
+                if (fresh && hasContent && hasXtreamSeries) return cached
+            }
+        }
         val snapshot = when (source.type) {
             SourceType.XTREAM -> {
                 val b = xtream.loadCatalog(source)
-                val preload = prefs.settingsFlow.first().preloadSeries
-                val episodes = if (preload) b.episodes + b.series.take(12).flatMap { runCatching { xtream.seriesEpisodes(source, it.id.substringAfterLast(':'), it.title) }.getOrDefault(emptyList()) } else b.episodes
+                // loadXtreamPlaylist() already returns all episode entries. Avoid the old
+                // first-12-series cap and avoid blocking the entire catalogue on hundreds of
+                // per-series API calls; details are fetched lazily when the user opens a series.
+                val episodes = b.episodes
                 SourceSnapshot(source.id, b.liveCategories, b.vodCategories, b.seriesCategories, b.live, b.movies, b.series, episodes, System.currentTimeMillis())
             }
             SourceType.M3U8 -> {

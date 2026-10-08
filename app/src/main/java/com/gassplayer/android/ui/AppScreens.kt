@@ -164,7 +164,7 @@ private fun CatalogScreen(title: String, items: List<MediaItem>, categories: Lis
         return
     }
     val categoryNames = categories.associate { it.id to it.name }
-    val filterKeys = items.mapNotNull { it.categoryId ?: it.group }.distinct().take(60)
+    val filterKeys = items.mapNotNull { it.categoryId ?: it.group }.distinct()
     val filtered = items.filter { filter == null || (it.categoryId ?: it.group) == filter }.filterNot { it.id in parental.lockedIds }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         if (filterKeys.isNotEmpty()) LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -182,7 +182,7 @@ private fun onPlayWithPosition(onPlay: (MediaItem) -> Unit, item: MediaItem, pos
 @Composable private fun SeriesScreen(series: List<MediaItem>, episodes: List<MediaItem>, categories: List<Category>, favorite: FavoriteState, parental: ParentalState, vm: MainViewModel, onPlay: (MediaItem) -> Unit) {
     var selected by remember { mutableStateOf<MediaItem?>(null) }; var filter by remember { mutableStateOf<String?>(null) }
     if (selected != null) { SeriesDetailScreen(vm.app, selected!!, episodes, favorite, onBack = { selected = null }, onPlay = { i, pos -> onPlayWithPosition(onPlay, i, pos) }); return }
-    val names=categories.associate{it.id to it.name}; val keys=series.mapNotNull{it.categoryId ?: it.group}.distinct().take(60); val filtered=series.filterNot{it.id in parental.lockedIds}.filter{filter==null || (it.categoryId ?: it.group)==filter}
+    val names=categories.associate{it.id to it.name}; val keys=series.mapNotNull{it.categoryId ?: it.group}.distinct(); val filtered=series.filterNot{it.id in parental.lockedIds}.filter{filter==null || (it.categoryId ?: it.group)==filter}
     Column(verticalArrangement=Arrangement.spacedBy(10.dp)){
         if(keys.isNotEmpty()) LazyRow(horizontalArrangement=Arrangement.spacedBy(8.dp)){item{FilterChip(filter==null,{filter=null},label={Text("Tutto")})};items(keys){k->FilterChip(filter==k,{filter=k},label={Text(names[k]?:k)})}}
         LazyVerticalGrid(GridCells.Adaptive(180.dp),contentPadding=PaddingValues(bottom=40.dp),horizontalArrangement=Arrangement.spacedBy(14.dp),verticalArrangement=Arrangement.spacedBy(14.dp)){items(filtered){s->MediaCard(s,s.id in favorite.series,onClick={selected=s})}}
@@ -195,7 +195,7 @@ private fun SearchScreen(app: GassPlayerApplication, catalog: CatalogState?, onP
     var submitted by remember { mutableStateOf("") }
     val history by app.search.flow.collectAsStateWithLifecycle(SearchHistory())
     val scope = rememberCoroutineScope()
-    val results = remember(submitted, catalog) { if (submitted.isBlank()) emptyList() else catalog?.allItems.orEmpty().filter { it.title.contains(submitted, true) }.take(100) }
+    val results = remember(submitted, catalog) { if (submitted.isBlank()) emptyList() else catalog?.allItems.orEmpty().filter { it.title.contains(submitted, true) } }
     Column {
         OutlinedTextField(q, { q = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("Cerca live, film, serie") }, trailingIcon = { IconButton({ submitted = q; scope.launch { app.search.add(q) } }) { Icon(Icons.Default.Search, null) } })
         Spacer(Modifier.height(10.dp))
@@ -218,7 +218,7 @@ private fun EpgScreen(app: GassPlayerApplication, live: List<MediaItem>, onPlay:
     val external by app.externalEpg.flow.collectAsStateWithLifecycle(emptyList())
     Row(Modifier.fillMaxSize()) {
         LazyColumn(Modifier.width(260.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            items(live.take(80)) { c ->
+            items(live) { c ->
                 Card(onClick = { selected = c }, modifier = Modifier.fillMaxWidth()) {
                     Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
                         if (c.logoUrl != null) AsyncImage(c.logoUrl, null, Modifier.size(42.dp))
@@ -245,7 +245,7 @@ private fun EpgScreen(app: GassPlayerApplication, live: List<MediaItem>, onPlay:
                     }
                     found = all.filter { p ->
                         p.streamId.equals(channelKey, ignoreCase = true) || p.streamId.equals(c.metadataTag.orEmpty(), ignoreCase = true) || p.description.orEmpty().lowercase().filter { it.isLetterOrDigit() } == normalizedTitle
-                    }.sortedBy { it.startMs }.take(60)
+                    }.sortedBy { it.startMs }
                 }
                 programs = found
             }
