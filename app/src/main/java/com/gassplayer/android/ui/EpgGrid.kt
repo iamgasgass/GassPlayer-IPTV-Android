@@ -313,11 +313,11 @@ fun EpgGridScreen(
         )
         toast?.let { msg ->
             LaunchedEffect(msg) { delay(2500); toast = null }
-            Text(msg, color = Color.White.copy(.85f), fontSize = 12.sp, modifier = Modifier.padding(vertical = 4.dp))
+            Text(msg, color = glassForeground().copy(.85f), fontSize = 12.sp, modifier = Modifier.padding(vertical = 4.dp))
         }
 
         if (live.isEmpty()) {
-            Text("Nessun canale live disponibile. Aggiungi una sorgente e attendi il caricamento.", color = Color.White.copy(.6f), modifier = Modifier.padding(16.dp))
+            Text("Nessun canale live disponibile. Aggiungi una sorgente e attendi il caricamento.", color = glassForeground().copy(.6f), modifier = Modifier.padding(16.dp))
             return@Column
         }
 
@@ -350,7 +350,7 @@ fun EpgGridScreen(
                     ) {
                         Text(
                             dayTitle,
-                            color = Color.White,
+                            color = glassForeground(),
                             fontSize = if (compact) 24.sp else 28.sp,
                             fontFamily = FontFamily.SansSerif,
                             fontWeight = FontWeight.Bold,
@@ -368,7 +368,7 @@ fun EpgGridScreen(
                             while (tick <= windowEnd) {
                                 Text(
                                     fmt.format(Date(tick)),
-                                    color = Color.White.copy(if (compact) .60f else .58f),
+                                    color = glassForeground().copy(if (compact) .60f else .58f),
                                     fontSize = if (compact) 20.sp else 22.sp,
                                     fontFamily = FontFamily.SansSerif,
                                     fontWeight = if (compact) FontWeight.SemiBold else FontWeight.Medium,
@@ -432,7 +432,7 @@ fun EpgGridScreen(
                                         .background(if (darkTiles) DarkTileBase else Color(0.10f, 0.10f, 0.10f)),
                                     contentAlignment = Alignment.CenterStart
                                 ) {
-                                    Text(label, color = Color.White.copy(.65f), fontSize = if (compact) 14.sp else 15.sp,
+                                    Text(label, color = glassForeground().copy(.65f), fontSize = if (compact) 14.sp else 15.sp,
                                         fontFamily = FontFamily.SansSerif,
                                         modifier = Modifier.padding(horizontal = if (compact) 14.dp else 18.dp))
                                 }
@@ -553,7 +553,7 @@ private fun ChannelBanner(
                 Icon(
                     Icons.Default.LiveTv,
                     contentDescription = "Canale TV",
-                    tint = Color.White,
+                    tint = glassForeground(),
                     modifier = Modifier.size(if (compact) 22.dp else 26.dp).align(Alignment.Center)
                 )
             }
@@ -570,7 +570,7 @@ private fun ChannelBanner(
                     .size(badgeSize).clip(RoundedCornerShape(50)).background(Color(0xFF4D4D4D)),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Default.History, null, tint = Color.White, modifier = Modifier.size(if (compact) 14.dp else 16.dp))
+                Icon(Icons.Default.History, null, tint = glassForeground(), modifier = Modifier.size(if (compact) 14.dp else 16.dp))
             }
         }
     }
@@ -589,25 +589,25 @@ private fun EpgSearchHeader(
             .border(BorderStroke(1.dp, Color.White.copy(.12f)), RoundedCornerShape(50)).padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(Icons.Default.Search, contentDescription = "Cerca", tint = Color.White.copy(.6f), modifier = Modifier.size(20.dp))
+        Icon(Icons.Default.Search, contentDescription = "Cerca", tint = glassForeground().copy(.6f), modifier = Modifier.size(20.dp))
         Spacer(Modifier.width(10.dp))
         BasicTextField(
             value = value,
             onValueChange = onValueChange,
             singleLine = true,
-            textStyle = TextStyle(color = Color.White, fontSize = 16.sp, fontFamily = FontFamily.SansSerif),
+            textStyle = TextStyle(color = glassForeground(), fontSize = 16.sp, fontFamily = FontFamily.SansSerif),
             cursorBrush = SolidColor(Color.White),
             modifier = Modifier.weight(1f),
             decorationBox = { inner ->
                 Box {
-                    if (value.isEmpty()) Text("Cerca per nome del programma", color = Color.White.copy(.55f), fontSize = 16.sp, fontFamily = FontFamily.SansSerif, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (value.isEmpty()) Text("Cerca per nome del programma", color = glassForeground().copy(.55f), fontSize = 16.sp, fontFamily = FontFamily.SansSerif, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     inner()
                 }
             }
         )
         if (value.isNotEmpty()) {
             IconButton(onClick = { onValueChange("") }, modifier = Modifier.size(32.dp)) {
-                Icon(Icons.Default.Close, contentDescription = "Cancella ricerca", tint = Color.White.copy(.6f), modifier = Modifier.size(18.dp))
+                Icon(Icons.Default.Close, contentDescription = "Cancella ricerca", tint = glassForeground().copy(.6f), modifier = Modifier.size(18.dp))
             }
         }
     }
@@ -668,14 +668,14 @@ private fun EpgProgramTile(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            Text(baseName, color = Color.White, fontSize = 13.sp, fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
+                            Text(baseName, color = glassForeground(), fontSize = 13.sp, fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
                             if (quality != null) QualityBadge(quality, compact = true)
                         }
-                        Text(startLabel, color = Color.White.copy(.60f), fontSize = 13.sp, fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.Medium,
+                        Text(startLabel, color = glassForeground().copy(.60f), fontSize = 13.sp, fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.Medium,
                             maxLines = 1, softWrap = false, modifier = Modifier.offset(x = timeOffset))
                     }
                     Box(Modifier.fillMaxWidth().height(20.dp).clipToBounds()) {
-                        Text(program.title.ifBlank { "—" }, color = Color.White.copy(.92f), fontSize = 14.sp, fontFamily = FontFamily.SansSerif,
+                        Text(program.title.ifBlank { "—" }, color = glassForeground().copy(.92f), fontSize = 14.sp, fontFamily = FontFamily.SansSerif,
                             maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.offset(x = stickyContentX))
                     }
                 }
@@ -686,12 +686,12 @@ private fun EpgProgramTile(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        Text(baseName, color = Color.White.copy(.70f), fontSize = 11.sp, fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
+                        Text(baseName, color = glassForeground().copy(.70f), fontSize = 11.sp, fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
                         if (quality != null) QualityBadge(quality, compact = false)
                     }
-                    Text(startLabel, color = Color.White.copy(.55f), fontSize = 12.sp, fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.Medium,
+                    Text(startLabel, color = glassForeground().copy(.55f), fontSize = 12.sp, fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.Medium,
                         maxLines = 1, softWrap = false, modifier = Modifier.offset(x = stickyContentX).padding(top = 16.dp))
-                    Text(program.title.ifBlank { "—" }, color = Color.White, fontSize = 16.sp, fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.SemiBold,
+                    Text(program.title.ifBlank { "—" }, color = glassForeground(), fontSize = 16.sp, fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.SemiBold,
                         maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.offset(x = stickyContentX).padding(top = 33.dp))
                 }
             }
@@ -703,7 +703,7 @@ private fun EpgProgramTile(
 private fun QualityBadge(text: String, compact: Boolean) {
     Text(
         text,
-        color = Color.White.copy(.65f),
+        color = glassForeground().copy(.65f),
         fontSize = if (compact) 11.sp else 10.sp,
         fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.SemiBold,

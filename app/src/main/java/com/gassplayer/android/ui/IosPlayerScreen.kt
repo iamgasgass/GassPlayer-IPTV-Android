@@ -469,10 +469,10 @@ fun IosPlayerScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                CircularProgressIndicator(color = Color.White)
+                CircularProgressIndicator(color = glassForeground())
                 Text(
                     text = recoveryStatus ?: "Caricamento…",
-                    color = Color.White.copy(.85f),
+                    color = glassForeground().copy(.85f),
                     fontSize = 13.sp
                 )
             }
@@ -495,10 +495,10 @@ fun IosPlayerScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Icon(Icons.Default.ErrorOutline, null, tint = Color(0xFFFFB4AB), modifier = Modifier.size(28.dp))
-                    Text("Impossibile riprodurre il flusso", color = Color.White, fontWeight = FontWeight.SemiBold)
+                    Text("Impossibile riprodurre il flusso", color = glassForeground(), fontWeight = FontWeight.SemiBold)
                     Text(
                         playbackError.orEmpty(),
-                        color = Color.White.copy(.72f),
+                        color = glassForeground().copy(.72f),
                         fontSize = 12.sp,
                         maxLines = 3,
                         overflow = TextOverflow.Ellipsis
@@ -583,9 +583,9 @@ fun IosPlayerScreen(
                     Modifier.padding(horizontal = 16.dp, vertical = 11.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Default.LockOpen, null, tint = Color.White)
+                    Icon(Icons.Default.LockOpen, null, tint = glassForeground())
                     Spacer(Modifier.width(8.dp))
-                    Text("Sblocca", color = Color.White, fontWeight = FontWeight.SemiBold)
+                    Text("Sblocca", color = glassForeground(), fontWeight = FontWeight.SemiBold)
                 }
             }
         }
@@ -619,7 +619,7 @@ fun IosPlayerScreen(
                 Text(
                     message,
                     modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
-                    color = Color.White,
+                    color = glassForeground(),
                     fontWeight = FontWeight.Bold
                 )
             }
@@ -854,7 +854,7 @@ private fun PlayerControlsOverlay(
 
             Text(
                 smallLine.orEmpty(),
-                color = Color.White.copy(.9f),
+                color = glassForeground().copy(.9f),
                 fontSize = 15.sp,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
@@ -863,7 +863,7 @@ private fun PlayerControlsOverlay(
 
             Text(
                 if (item.kind == MediaKind.LIVE && currentLiveProgram != null) currentLiveProgram.title else item.title,
-                color = Color.White,
+                color = glassForeground(),
                 fontSize = 29.sp,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 2,
@@ -874,7 +874,7 @@ private fun PlayerControlsOverlay(
                 currentLiveProgram?.description?.takeIf { it.isNotBlank() }?.let {
                     Text(
                         it,
-                        color = Color.White.copy(.9f),
+                        color = glassForeground().copy(.9f),
                         fontSize = 13.sp,
                         maxLines = 3,
                         overflow = TextOverflow.Ellipsis
@@ -955,7 +955,7 @@ private fun PlayerControlsOverlay(
                     } else {
                         "LIVE"
                     },
-                    color = Color.White.copy(.88f),
+                    color = glassForeground().copy(.88f),
                     fontSize = 13.sp
                 )
             }
@@ -981,7 +981,7 @@ private fun NextEpisodePrompt(
         ) {
             Text(
                 "Prossimo episodio  ›",
-                color = Color.White,
+                color = glassForeground(),
                 modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp),
                 fontWeight = FontWeight.SemiBold
             )
@@ -1006,7 +1006,7 @@ private fun PlayerLevelHud(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Icon(icon, contentDescription = label, tint = Color.White)
+            Icon(icon, contentDescription = label, tint = glassForeground())
             androidx.compose.foundation.layout.Box(
                 Modifier.height(120.dp).width(5.dp).background(Color.White.copy(.22f), RoundedCornerShape(50))
             ) {
@@ -1015,7 +1015,7 @@ private fun PlayerLevelHud(
                         .align(Alignment.BottomCenter).background(Color.White, RoundedCornerShape(50))
                 )
             }
-            Text("${(value.coerceIn(0f, 1f) * 100).roundToInt()}%", color = Color.White, fontSize = 11.sp)
+            Text("${(value.coerceIn(0f, 1f) * 100).roundToInt()}%", color = glassForeground(), fontSize = 11.sp)
         }
     }
 }
@@ -1023,7 +1023,7 @@ private fun PlayerLevelHud(
 @Composable
 private fun BadgeChip(text: String) {
     Surface(
-        color = Color.White.copy(.28f),
+        color = glassForeground().copy(.28f),
         shape = RoundedCornerShape(6.dp),
         border = BorderStroke(1.dp, Color.White.copy(.16f))
     ) {
@@ -1055,13 +1055,13 @@ private fun ResumeOverlay(position: Long, title: String, onResume: () -> Unit, o
                 Modifier.padding(26.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                Text("Riprendi la visione?", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                Text("Riprendi la visione?", color = glassForeground(), fontSize = 24.sp, fontWeight = FontWeight.Bold)
                 Text(
                     "Ti eri fermato a ${formatTime(position)}",
-                    color = Color.White.copy(.74f),
+                    color = glassForeground().copy(.74f),
                     fontSize = 14.sp
                 )
-                Text(title, color = Color.White.copy(.92f), fontSize = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(title, color = glassForeground().copy(.92f), fontSize = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     PlayerGlassButton(onClick = onResume, darkSurface = true) { Text("Riprendi da…") }
                     PlayerGlassButton(onClick = onRestart, darkSurface = true) { Text("Ricomincia da capo") }

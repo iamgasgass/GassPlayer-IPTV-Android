@@ -13,6 +13,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
@@ -35,6 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onKeyEvent
@@ -109,90 +111,576 @@ private fun AdaptiveShell(route: String, tv: Boolean, loading: Boolean, message:
     val destinations = listOf("home" to "Home", "live" to "Live TV", "movies" to "Film", "series" to "Serie", "epg" to "Guida", "search" to "Cerca", "sources" to "Sorgenti", "settings" to "Impostazioni")
     val railScrollState = rememberScrollState()
     val railScope = rememberCoroutineScope()
-    Row(Modifier.fillMaxSize().background(Dark)) {
-        // Keep the entire left navigation reachable on short windows and Android TV.
-        // The bring-into-view request is particularly important with a D-pad when the
-        // focused destination is below the currently visible part of the rail.
-        NavigationRail(
-            modifier = Modifier
-                .fillMaxHeight()
-                .width(if (tv) 132.dp else 92.dp)
-                .verticalScroll(railScrollState),
-            containerColor = Color(0xFF0E1016)
-        ) {
-            Spacer(Modifier.height(12.dp))
-            destinations.forEach { (id, label) ->
-                val bringIntoView = remember(id) { BringIntoViewRequester() }
-                NavigationRailItem(
-                    selected = route == id,
-                    onClick = { onRoute(id) },
-                    icon = { Icon(navIcon(id), null) },
-                    label = { Text(label, maxLines = 1) },
-                    modifier = Modifier
-                        .bringIntoViewRequester(bringIntoView)
-                        .onFocusChanged { focusState ->
-                            if (focusState.isFocused) {
-                                railScope.launch { runCatching { bringIntoView.bringIntoView() } }
+    LiquidGlassBackdrop(Modifier.fillMaxSize()) {
+        Row(Modifier.fillMaxSize()) {
+            LiquidGlassSurface(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .width(if (tv) 142.dp else 104.dp),
+                cornerRadius = 26.dp,
+                contentPadding = 7.dp
+            ) {
+                Column(
+                    Modifier.fillMaxSize().verticalScroll(railScrollState).padding(vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(7.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    destinations.forEach { (id, label) ->
+                        val bringIntoView = remember(id) { BringIntoViewRequester() }
+                        var focused by remember(id) { mutableStateOf(false) }
+                        Surface(
+                            onClick = { onRoute(id) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .bringIntoViewRequester(bringIntoView)
+                                .onFocusChanged { state ->
+                                    focused = state.isFocused
+                                    if (state.isFocused) railScope.launch { runCatching { bringIntoView.bringIntoView() } }
+                                },
+                            shape = RoundedCornerShape(18.dp),
+                            color = Color.Transparent
+                        ) {
+                            LiquidGlassSurface(
+                                modifier = Modifier.fillMaxWidth(),
+                                cornerRadius = 18.dp,
+                                contentPadding = if (tv) 13.dp else 9.dp,
+                                highlighted = route == id || focused
+                            ) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                                    Icon(navIcon(id), null, tint = if (route == id) Color(0xFF9ABEFF) else glassForeground(.75f), modifier = Modifier.size(if (tv) 25.dp else 22.dp))
+                                    Text(label, color = if (route == id) glassForeground() else glassForeground(.72f), fontSize = if (tv) 12.sp else 10.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = androidx.compose.ui.text.style.TextAlign.Center, fontWeight = if (route == id) FontWeight.SemiBold else FontWeight.Normal)
+                                }
                             }
                         }
-                )
-            }
-        }
-        Column(Modifier.fillMaxSize().padding(horizontal = if (tv) 28.dp else 16.dp, vertical = 18.dp)) {
-            Text(title, color = Color.White, fontSize = if (tv) 32.sp else 26.sp, fontWeight = FontWeight.Bold)
-            if (loading) { Spacer(Modifier.height(8.dp)); LinearProgressIndicator(Modifier.fillMaxWidth()); Text("Caricamento playlist…", color = Color.White.copy(.6f), fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp)) }
-            else if (!message.isNullOrBlank() && route != "sources" && route != "settings") {
-                Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Warning, null, tint = Color(0xFFFFB340)); Spacer(Modifier.width(8.dp))
-                    Text(message, color = Color(0xFFFFB340), fontSize = 13.sp, modifier = Modifier.weight(1f), maxLines = 3, overflow = TextOverflow.Ellipsis)
-                    TextButton(onRetry) { Text("Riprova") }
+                    }
                 }
             }
-            Spacer(Modifier.height(16.dp)); Box(Modifier.fillMaxSize()) { content() }
+            Column(Modifier.fillMaxSize().padding(horizontal = if (tv) 28.dp else 16.dp, vertical = 18.dp)) {
+                Text(
+                    title,
+                    color = glassForeground(),
+                    fontSize = if (tv) 32.sp else 26.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (loading) {
+                    Spacer(Modifier.height(8.dp)); LinearProgressIndicator(Modifier.fillMaxWidth(), color = Color(0xFF8CB7FF), trackColor = Color.White.copy(.08f))
+                    Text("Caricamento playlist…", color = glassForeground().copy(.6f), fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
+                } else if (!message.isNullOrBlank() && route != "sources" && route != "settings") {
+                    LiquidGlassSurface(Modifier.fillMaxWidth().padding(top = 8.dp), cornerRadius = 15.dp, contentPadding = 10.dp) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Warning, null, tint = Color(0xFFFFB340)); Spacer(Modifier.width(8.dp))
+                            Text(message, color = Color(0xFFFFD08A), fontSize = 13.sp, modifier = Modifier.weight(1f), maxLines = 3, overflow = TextOverflow.Ellipsis)
+                            TextButton(onRetry) { Text("Riprova") }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(16.dp)); Box(Modifier.fillMaxSize()) { content() }
+            }
         }
     }
 }
 
 private fun navIcon(id: String) = when(id) { "home" -> Icons.Default.Home; "live" -> Icons.Default.LiveTv; "movies" -> Icons.Default.Movie; "series" -> Icons.Default.Tv; "epg" -> Icons.Default.CalendarMonth; "search" -> Icons.Default.Search; "sources" -> Icons.Default.SettingsInputAntenna; else -> Icons.Default.Settings }
 
+private val homeSectionTitles = linkedMapOf(
+    "heading" to "Intestazione",
+    "search" to "Ricerca",
+    "continueWatching" to "Continua a guardare",
+    "sourceCard" to "Sorgente",
+    "sources" to "Sorgenti",
+    "liveTV" to "Live TV",
+    "guidaTV" to "Guida TV",
+    "onDemand" to "On demand",
+    "favoriteChannels" to "Canali preferiti",
+    "favoriteSeries" to "Serie TV preferite",
+    "favoriteMovies" to "Film preferiti",
+    "trendingSeries" to "Serie di tendenza",
+    "trendingMovies" to "Film di tendenza"
+)
+
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 private fun HomeScreen(vm: MainViewModel, catalog: CatalogState?, fav: FavoriteState, watch: List<WatchEntry>, sources: List<MediaSourceConfig>, onRoute: (String) -> Unit, onPlay: (MediaItem) -> Unit) {
     val settings by vm.settings.collectAsStateWithLifecycle()
-    val visibleOrder = settings.homeSectionOrder.ifEmpty { defaultHomeSections }.distinct().filterNot { settings.hiddenHomeSections.contains(it) }
-    LazyColumn(verticalArrangement = Arrangement.spacedBy(20.dp), contentPadding = PaddingValues(bottom = 48.dp)) {
-        items(visibleOrder, key = { it }) { section ->
-            when (section) {
-                "heading" -> Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    FilledTonalButton({ onRoute("live") }) { Icon(Icons.Default.LiveTv, null); Spacer(Modifier.width(8.dp)); Text("Live TV") }
-                    FilledTonalButton({ onRoute("movies") }) { Icon(Icons.Default.Movie, null); Spacer(Modifier.width(8.dp)); Text("Film") }
-                    FilledTonalButton({ onRoute("series") }) { Icon(Icons.Default.Tv, null); Spacer(Modifier.width(8.dp)); Text("Serie") }
-                    FilledTonalButton({ onRoute("epg") }) { Icon(Icons.Default.CalendarMonth, null); Spacer(Modifier.width(8.dp)); Text("Guida TV") }
-                    OutlinedButton({ onRoute("home-customize") }) { Icon(Icons.Default.Tune, null); Spacer(Modifier.width(8.dp)); Text("Personalizza") }
+    val activeSource by vm.activeSource.collectAsStateWithLifecycle()
+    val allSectionOrder = remember(settings.homeSectionOrder) { (settings.homeSectionOrder + defaultHomeSections).distinct() }
+    val visibleOrder = allSectionOrder.filterNot { settings.hiddenHomeSections.contains(it) }
+    var homeMode by remember { mutableStateOf("overview") }
+    var homeMenuOpen by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
+    var debouncedQuery by remember { mutableStateOf("") }
+    var sourceMenuOpen by remember { mutableStateOf(false) }
+    var selectedDetail by remember { mutableStateOf<MediaItem?>(null) }
+    var trendingSeries by remember(settings.tmdbApiKey) { mutableStateOf<List<MetadataResult>>(emptyList()) }
+    var trendingMovies by remember(settings.tmdbApiKey) { mutableStateOf<List<MetadataResult>>(emptyList()) }
+    var trendingUnavailable by remember { mutableStateOf<String?>(null) }
+    var continueMenuOpen by remember { mutableStateOf(false) }
+
+    LaunchedEffect(settings.tmdbApiKey, visibleOrder.contains("trendingSeries"), visibleOrder.contains("trendingMovies")) {
+        if (settings.tmdbApiKey.isBlank()) {
+            trendingSeries = emptyList(); trendingMovies = emptyList()
+        } else {
+            if (visibleOrder.contains("trendingSeries")) trendingSeries = runCatching { vm.app.tmdb.trending("tv", settings.tmdbApiKey) }.getOrDefault(emptyList())
+            if (visibleOrder.contains("trendingMovies")) trendingMovies = runCatching { vm.app.tmdb.trending("movie", settings.tmdbApiKey) }.getOrDefault(emptyList())
+        }
+    }
+
+    if (selectedDetail != null) {
+        val detail = selectedDetail!!
+        when (detail.kind) {
+            MediaKind.MOVIE -> MovieDetailScreen(vm.app, detail, catalog?.movies.orEmpty(), fav, onBack = { selectedDetail = null }, onPlay = { item, pos -> onPlayWithPosition(onPlay, item, pos) })
+            MediaKind.SERIES -> SeriesDetailScreen(vm.app, detail, catalog?.episodes.orEmpty(), fav, onBack = { selectedDetail = null }, onPlay = { item, pos -> onPlayWithPosition(onPlay, item, pos) })
+            else -> onPlay(detail)
+        }
+        return
+    }
+
+    fun openLibraryItem(item: MediaItem) {
+        when (item.kind) {
+            MediaKind.MOVIE, MediaKind.SERIES -> selectedDetail = item
+            MediaKind.LIVE, MediaKind.EPISODE -> onPlay(item)
+        }
+    }
+
+    LaunchedEffect(query) {
+        kotlinx.coroutines.delay(250)
+        debouncedQuery = query.trim()
+    }
+    val searching = query.trim().isNotEmpty()
+    val renderedOrder = if (searching) visibleOrder.filter { it == "heading" || it == "search" } else visibleOrder
+    val homeSearchResults = remember(debouncedQuery, catalog) { if (debouncedQuery.length < 2) emptyList() else catalog?.search(debouncedQuery, 100).orEmpty() }
+    val menuItems = listOf("overview" to "Home", "live" to "Preferiti Live TV", "movies" to "Preferiti Film", "series" to "Preferiti Serie TV")
+    val favoriteItems = remember(homeMode, catalog, fav) {
+        when (homeMode) {
+            "live" -> catalog?.byIds(MediaKind.LIVE, fav.live).orEmpty()
+            "movies" -> catalog?.byIds(MediaKind.MOVIE, fav.movies).orEmpty()
+            "series" -> catalog?.byIds(MediaKind.SERIES, fav.series).orEmpty()
+            else -> emptyList()
+        }
+    }
+
+    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        // The iOS Home menu is always available, even if the user hides the heading section.
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Box {
+                Surface(onClick = { homeMenuOpen = true }, shape = RoundedCornerShape(50), color = Color.Transparent) {
+                    LiquidGlassPill(selected = true) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                            Icon(when (homeMode) { "live" -> Icons.Default.LiveTv; "movies" -> Icons.Default.Movie; "series" -> Icons.Default.Tv; else -> Icons.Default.Home }, null, tint = Color(0xFF9ABEFF), modifier = Modifier.size(17.dp))
+                            Text(menuItems.first { it.first == homeMode }.second, color = glassForeground(), fontWeight = FontWeight.SemiBold, maxLines = 1)
+                            Icon(Icons.Default.ExpandMore, null, tint = glassForeground().copy(.75f), modifier = Modifier.size(17.dp))
+                        }
+                    }
                 }
-                "continueWatching" -> if (watch.isNotEmpty()) Section("Continua a guardare", null) { LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) { items(watch.take(settings.historyLimit.coerceIn(1, 100))) { entry -> val media = catalog?.findById(entry.contentId); if (media != null) MediaCard(media, false, onClick = { onPlay(media) }) else Text(entry.title, color = Color.White) } } }
-                "sourceCard" -> Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF141720)), border = BorderStroke(1.dp, Color.White.copy(.08f)), modifier = Modifier.fillMaxWidth()) { Row(Modifier.padding(18.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { Column { Text("Sorgenti", color = Color.White, fontWeight = FontWeight.Bold); Text("${sources.size} configurate • ${catalog?.allItems?.size ?: 0} elementi", color = Color.White.copy(.65f)) }; OutlinedButton({ onRoute("sources") }) { Text("Gestisci") } } }
-                "sources" -> Section("Sorgenti", null) { LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { items(sources.take(12)) { s -> AssistChip({ onRoute("sources") }, label = { Text(s.name) }) } } }
-                "liveTV" -> Section("Live preferiti", null) { val list = catalog?.byIds(MediaKind.LIVE, fav.live).orEmpty(); if (list.isEmpty()) EmptyHint("Nessun canale preferito") else LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) { items(list.take(12)) { MediaCard(it, true, onClick = { onPlay(it) }) } } }
-                "guidaTV" -> Section("Guida TV", null) { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { Text("EPG e reminder locali", color = Color.White.copy(.7f)); OutlinedButton({ onRoute("epg") }) { Text("Apri guida") } } }
-                "favoriteChannels" -> Section("Canali preferiti", null) { val list = catalog?.byIds(MediaKind.LIVE, fav.live).orEmpty(); if (list.isEmpty()) EmptyHint("Nessun canale preferito") else LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) { items(list.take(12)) { MediaCard(it, true, onClick = { onPlay(it) }) } } }
-                "favoriteSeries" -> Section("Serie TV preferite", null) { val list = catalog?.byIds(MediaKind.SERIES, fav.series).orEmpty(); if (list.isEmpty()) EmptyHint("Nessuna serie preferita") else LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) { items(list.take(12)) { MediaCard(it, true, onClick = { onPlay(it) }) } } }
-                "favoriteMovies" -> Section("Film preferiti", null) { val list = catalog?.byIds(MediaKind.MOVIE, fav.movies).orEmpty(); if (list.isEmpty()) EmptyHint("Nessun film preferito") else LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) { items(list.take(12)) { MediaCard(it, true, onClick = { onPlay(it) }) } } }
-                "onDemand" -> Section("On demand", null) { val list = catalog?.movies.orEmpty(); if (list.isEmpty()) EmptyHint("Nessun film disponibile") else LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) { items(list.take(12)) { MediaCard(it, it.id in fav.movies, onClick = { onPlay(it) }) } } }
+                DropdownMenu(homeMenuOpen, { homeMenuOpen = false }) {
+                    menuItems.forEach { (id, label) ->
+                        DropdownMenuItem(text = { Text(label) }, onClick = { homeMode = id; homeMenuOpen = false }, leadingIcon = { Icon(when (id) { "live" -> Icons.Default.LiveTv; "movies" -> Icons.Default.Movie; "series" -> Icons.Default.Tv; else -> Icons.Default.Home }, null) }, trailingIcon = { if (homeMode == id) Icon(Icons.Default.Check, null) })
+                    }
+                }
+            }
+            Spacer(Modifier.weight(1f))
+            Surface(onClick = { onRoute("home-customize") }, color = Color.Transparent, shape = RoundedCornerShape(50)) {
+                LiquidGlassPill {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Icon(Icons.Default.Tune, null, tint = glassForeground().copy(.85f), modifier = Modifier.size(16.dp))
+                        Text("Personalizza", color = glassForeground(), fontSize = 13.sp)
+                    }
+                }
+            }
+        }
+
+        if (homeMode != "overview") {
+            if (favoriteItems.isEmpty()) {
+                LiquidGlassSurface(Modifier.fillMaxWidth(), contentPadding = 22.dp) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Icon(Icons.Default.FavoriteBorder, null, tint = Color(0xFF9ABEFF), modifier = Modifier.size(30.dp))
+                        Text("Nessun preferito", color = glassForeground(), fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                        Text("Aggiungi contenuti ai preferiti per ritrovarli qui.", color = glassForeground().copy(.68f))
+                    }
+                }
+            } else {
+                LazyVerticalGrid(
+                    columns = GridCells.Adaptive(minSize = libraryGridMin(settings, homeMode == "live")),
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    contentPadding = PaddingValues(bottom = 40.dp)
+                ) {
+                    items(favoriteItems, key = { it.id }) { item ->
+                        MediaCard(item, true, onClick = { if (homeMode == "live") onPlay(item) else openLibraryItem(item) }, onToggleFavorite = { vm.toggleFavorite(item) })
+                    }
+                }
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(20.dp),
+                contentPadding = PaddingValues(start = 2.dp, end = 2.dp, top = 2.dp, bottom = 48.dp)
+            ) {
+                items(renderedOrder, key = { it }) { section ->
+                    Box(Modifier.animateItem()) {
+                    when (section) {
+                        "heading" -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                                Text("Tutto il tuo intrattenimento", color = glassForeground(), fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                                Text(if (activeSource != null) "Scegli cosa guardare dalla sorgente attiva." else "Configura una sorgente dalle Impostazioni quando vuoi.", color = glassForeground().copy(.64f), fontSize = 14.sp)
+                            }
+                            androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                item { HomeActionChip("Live TV", Icons.Default.LiveTv) { onRoute("live") } }
+                                item { HomeActionChip("Film", Icons.Default.Movie) { onRoute("movies") } }
+                                item { HomeActionChip("Serie", Icons.Default.Tv) { onRoute("series") } }
+                                item { HomeActionChip("Guida TV", Icons.Default.CalendarMonth) { onRoute("epg") } }
+                            }
+                        }
+                        "search" -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius = 20.dp, contentPadding = 10.dp) {
+                                OutlinedTextField(
+                                    value = query,
+                                    onValueChange = { query = it },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    singleLine = true,
+                                    placeholder = { Text("Cerca Live TV, film e serie…", color = glassForeground().copy(.48f)) },
+                                    leadingIcon = { Icon(Icons.Default.Search, null, tint = glassForeground().copy(.65f)) },
+                                    trailingIcon = { if (query.isNotEmpty()) IconButton({ query = "" }) { Icon(Icons.Default.Close, "Cancella", tint = glassForeground().copy(.65f)) } },
+                                    colors = OutlinedTextFieldDefaults.colors(focusedTextColor = glassForeground(), unfocusedTextColor = glassForeground(), focusedBorderColor = Color(0xFF8CB7FF), unfocusedBorderColor = Color.White.copy(.12f), cursorColor = Color(0xFF8CB7FF))
+                                )
+                            }
+                            if (!searching) {
+                                Text("Ricerca globale nella sorgente attiva", color = glassForeground().copy(.5f), fontSize = 12.sp)
+                            } else if (query.trim().length < 2) {
+                                Text("Digita almeno due caratteri", color = glassForeground().copy(.55f), fontSize = 12.sp)
+                            } else if (debouncedQuery != query.trim()) {
+                                Text("Ricerca in corso…", color = glassForeground().copy(.55f), fontSize = 12.sp)
+                            } else if (activeSource == null) {
+                                EmptyHint("Attiva una sorgente dalle Impostazioni per cercare nei suoi titoli.")
+                            } else if (homeSearchResults.isEmpty()) {
+                                EmptyHint("Nessun risultato per “${query.trim()}”")
+                            } else {
+                                Text("${homeSearchResults.size} risultati", color = glassForeground().copy(.62f), fontSize = 12.sp)
+                                val grouped = listOf(
+                                    MediaKind.LIVE to "Live TV",
+                                    MediaKind.MOVIE to "Film",
+                                    MediaKind.SERIES to "Serie TV",
+                                    MediaKind.EPISODE to "Episodi"
+                                )
+                                grouped.forEach { (kind, label) ->
+                                    val resultGroup = homeSearchResults.filter { it.kind == kind }
+                                    if (resultGroup.isNotEmpty()) Section(label, null) {
+                                        androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                            items(resultGroup.take(16), key = { it.id }) { item -> MediaCard(item, vm.appFavorite(fav, item), onClick = { openLibraryItem(item) }, onToggleFavorite = { vm.toggleFavorite(item) }) }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        "continueWatching" -> {
+                            val entries = watch.filter { entry ->
+                                when (settings.homeContinueKind) {
+                                    "live" -> entry.kind == MediaKind.LIVE
+                                    "movie" -> entry.kind == MediaKind.MOVIE
+                                    "series" -> entry.kind == MediaKind.SERIES || entry.kind == MediaKind.EPISODE
+                                    else -> true
+                                }
+                            }.take(settings.historyLimit.coerceIn(1, 100))
+                            if (entries.isNotEmpty()) Section("Continua a guardare", null) {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text("Filtro", color = glassForeground().copy(.55f), fontSize = 12.sp)
+                                    Box {
+                                        TextButton(onClick = { continueMenuOpen = true }) { Text(when (settings.homeContinueKind) { "live" -> "Live TV"; "movie" -> "Film"; "series" -> "Serie TV"; else -> "Tutti" }); Icon(Icons.Default.ExpandMore, null) }
+                                        DropdownMenu(continueMenuOpen, { continueMenuOpen = false }) {
+                                            listOf(null to "Tutti", "live" to "Live TV", "movie" to "Film", "series" to "Serie TV").forEach { (value, label) -> DropdownMenuItem(text = { Text(label) }, onClick = { vm.updateSettings(settings.copy(homeContinueKind = value)); continueMenuOpen = false }) }
+                                        }
+                                    }
+                                }
+                                androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    items(entries, key = { it.contentId }) { entry ->
+                                        val media = catalog?.findById(entry.contentId) ?: MediaItem(entry.contentId, "", entry.kind, entry.title, entry.url, metadataTag = "resume:${entry.positionMs}")
+                                        MediaCard(media, vm.appFavorite(fav, media), onClick = { onPlayWithPosition(onPlay, media, entry.positionMs) }, onToggleFavorite = { vm.toggleFavorite(media) })
+                                    }
+                                }
+                            }
+                        }
+                        "sourceCard" -> {
+                            val activeName = activeSource?.name ?: sources.firstOrNull { it.id == activeSource?.id }?.name
+                            LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius = 22.dp, contentPadding = 18.dp) {
+                                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Box(Modifier.size(46.dp).clip(RoundedCornerShape(15.dp)).background((if (activeName == null) Color(0xFF9ABEFF) else Color(0xFF54D6A0)).copy(.16f)), contentAlignment = Alignment.Center) {
+                                            Icon(if (activeName == null) Icons.Default.AutoAwesome else Icons.Default.CheckCircle, null, tint = if (activeName == null) Color(0xFF9ABEFF) else Color(0xFF54D6A0), modifier = Modifier.size(25.dp))
+                                        }
+                                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                            Text(if (activeName == null) "Inizia quando vuoi" else "Sorgente pronta", color = glassForeground(), fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                                            Text(activeName ?: "Nessuna sorgente configurata", color = glassForeground().copy(.78f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            Text("${sources.size} sorgenti · ${catalog?.allItems?.size ?: 0} elementi", color = glassForeground().copy(.48f), fontSize = 12.sp)
+                                        }
+                                        if (sources.size > 1 && activeSource != null) {
+                                            Box {
+                                                Surface(onClick = { sourceMenuOpen = true }, color = Color.Transparent, shape = RoundedCornerShape(50)) {
+                                                    LiquidGlassPill {
+                                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                                            Text("Cambia", color = glassForeground(), fontSize = 12.sp)
+                                                            Icon(Icons.Default.ExpandMore, null, tint = glassForeground().copy(.7f), modifier = Modifier.size(16.dp))
+                                                        }
+                                                    }
+                                                }
+                                                DropdownMenu(sourceMenuOpen, { sourceMenuOpen = false }) {
+                                                    sources.forEach { source ->
+                                                        DropdownMenuItem(
+                                                            text = { Text(source.name) },
+                                                            leadingIcon = { Icon(Icons.Default.Storage, null) },
+                                                            trailingIcon = { if (source.id == activeSource?.id) Icon(Icons.Default.Check, null) },
+                                                            onClick = { vm.setActive(source.id); sourceMenuOpen = false }
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        OutlinedButton(onClick = { onRoute("sources") }) { Text(if (activeName == null) "Aggiungi" else "Gestisci") }
+                                    }
+                                    if (activeName == null) Text("Aggiungi una playlist M3U o un account supportato dalle Impostazioni. Live TV, film e serie appariranno qui dopo il caricamento.", color = glassForeground().copy(.62f), fontSize = 13.sp)
+                                }
+                            }
+                        }
+                        "sources" -> Section("Sorgenti", null) {
+                            Surface(onClick = { onRoute("sources") }, color = Color.Transparent, shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
+                                LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius = 20.dp, contentPadding = 16.dp) {
+                                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                        Box(Modifier.size(42.dp).clip(RoundedCornerShape(13.dp)).background(Color(0xFF3478F6).copy(.15f)), contentAlignment = Alignment.Center) { Icon(Icons.Default.Layers, null, tint = Color(0xFF9ABEFF), modifier = Modifier.size(23.dp)) }
+                                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                            Text("Sorgenti", color = glassForeground(), fontWeight = FontWeight.SemiBold)
+                                            Text(if (sources.isEmpty()) "Nessuna sorgente configurata" else "${sources.size} sorgenti configurate", color = glassForeground().copy(.58f), fontSize = 12.sp)
+                                        }
+                                        Icon(Icons.Default.ChevronRight, null, tint = glassForeground().copy(.42f))
+                                    }
+                                }
+                            }
+                        }
+                        "liveTV" -> HomeDestinationCard("Live TV", if (activeSource == null) "Disponibile con una sorgente" else "${catalog?.live?.size ?: 0} canali disponibili", if (activeSource == null) "I canali appariranno qui" else "Canali in diretta dalla sorgente attiva", Icons.Default.LiveTv, Color(0xFFFF6961), "Apri Live TV") { onRoute("live") }
+                        "guidaTV" -> HomeDestinationCard("Guida TV", "EPG e promemoria locali", "Consulta la programmazione e vai al canale che vuoi guardare.", Icons.Default.CalendarMonth, Color(0xFF9ABEFF), "Apri guida") { onRoute("epg") }
+                        "favoriteChannels" -> {
+                            val list = catalog?.byIds(MediaKind.LIVE, fav.live).orEmpty()
+                            if (list.isNotEmpty()) Section("Canali preferiti", { homeMode = "live" }) {
+                                androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) { items(list.take(20), key = { it.id }) { item -> MediaCard(item, true, onClick = { onPlay(item) }, onToggleFavorite = { vm.toggleFavorite(item) }) } }
+                            }
+                        }
+                        "favoriteSeries" -> {
+                            val list = catalog?.byIds(MediaKind.SERIES, fav.series).orEmpty()
+                            if (list.isNotEmpty()) Section("Serie TV preferite", { homeMode = "series" }) {
+                                androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) { items(list.take(20), key = { it.id }) { item -> MediaCard(item, true, onClick = { openLibraryItem(item) }, onToggleFavorite = { vm.toggleFavorite(item) }) } }
+                            }
+                        }
+                        "favoriteMovies" -> {
+                            val list = catalog?.byIds(MediaKind.MOVIE, fav.movies).orEmpty()
+                            if (list.isNotEmpty()) Section("Film preferiti", { homeMode = "movies" }) {
+                                androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) { items(list.take(20), key = { it.id }) { item -> MediaCard(item, true, onClick = { openLibraryItem(item) }, onToggleFavorite = { vm.toggleFavorite(item) }) } }
+                            }
+                        }
+                        "onDemand" -> Section("On demand", null) {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                HomeCompactDestinationCard("VOD", if (activeSource == null) "Disponibile con una sorgente" else "Film e contenuti on demand", Icons.Default.Movie, Color(0xFFB19CFF), Modifier.weight(1f)) { onRoute("movies") }
+                                HomeCompactDestinationCard("Serie TV", if (activeSource == null) "Disponibile con una sorgente" else "Scopri le tue serie", Icons.Default.Tv, Color(0xFF8CB7FF), Modifier.weight(1f)) { onRoute("series") }
+                            }
+                        }
+                        "trendingSeries" -> Section("Serie di tendenza", { onRoute("series") }) {
+                            if (settings.tmdbApiKey.isBlank()) EmptyHint("Configura la chiave API TMDB in Impostazioni per caricare le tendenze.")
+                            else if (trendingSeries.isEmpty()) EmptyHint("Tendenze serie non disponibili: controlla la chiave TMDB e la rete.")
+                            else androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                items(trendingSeries.take(16), key = { it.id }) { trend -> TrendingCard(trend, true) {
+                                    val match = catalog?.series.orEmpty().firstOrNull { item -> item.title.matchesTrendTitle(trend.title) || (trend.originalTitle?.let { item.title.matchesTrendTitle(it) } == true) }
+                                    if (match != null) openLibraryItem(match) else trendingUnavailable = trend.title
+                                } }
+                            }
+                        }
+                        "trendingMovies" -> Section("Film di tendenza", { onRoute("movies") }) {
+                            if (settings.tmdbApiKey.isBlank()) EmptyHint("Configura la chiave API TMDB in Impostazioni per caricare le tendenze.")
+                            else if (trendingMovies.isEmpty()) EmptyHint("Tendenze film non disponibili: controlla la chiave TMDB e la rete.")
+                            else androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                items(trendingMovies.take(16), key = { it.id }) { trend -> TrendingCard(trend, false) {
+                                    val match = catalog?.movies.orEmpty().firstOrNull { item -> item.title.matchesTrendTitle(trend.title) || (trend.originalTitle?.let { item.title.matchesTrendTitle(it) } == true) }
+                                    if (match != null) openLibraryItem(match) else trendingUnavailable = trend.title
+                                } }
+                            }
+                        }
+                    }
+                    }
+                }
+            }
+        }
+    }
+
+    trendingUnavailable?.let { title ->
+        AlertDialog(
+            onDismissRequest = { trendingUnavailable = null },
+            title = { Text("Titolo non presente nella playlist") },
+            text = { Text("“$title” è tra le tendenze, ma non è stato trovato nella sorgente attiva.") },
+            confirmButton = { TextButton(onClick = { trendingUnavailable = null }) { Text("OK") } },
+            dismissButton = { TextButton(onClick = { trendingUnavailable = null; onRoute("sources") }) { Text("Gestisci sorgenti") } }
+        )
+    }
+}
+
+private fun String.normalizedTitle(): String {
+    val folded = java.text.Normalizer.normalize(lowercase(), java.text.Normalizer.Form.NFD)
+        .replace("\\p{Mn}+".toRegex(), "")
+        .filter { it.isLetterOrDigit() || it.isWhitespace() }
+        .trim()
+    val noYear = folded.replace("\\s+(?:19|20)\\d{2}$".toRegex(), "").trim()
+    return (if (noYear.length >= 2) noYear else folded).filter { it.isLetterOrDigit() }
+}
+
+/** Exact normalized matches first, then conservative partial matches for TMDB/playlist naming variants. */
+private fun String.matchesTrendTitle(other: String): Boolean {
+    val left = normalizedTitle()
+    val right = other.normalizedTitle()
+    if (left.isBlank() || right.isBlank()) return false
+    if (left == right) return true
+    if (minOf(left.length, right.length) < 5) return false
+    return left.contains(right) || right.contains(left)
+}
+
+@Composable
+private fun HomeActionChip(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, onClick: () -> Unit) {
+    Surface(onClick = onClick, shape = RoundedCornerShape(50), color = Color.Transparent) {
+        LiquidGlassPill {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                Icon(icon, null, tint = Color(0xFF9ABEFF), modifier = Modifier.size(16.dp))
+                Text(label, color = glassForeground(), fontSize = 13.sp)
             }
         }
     }
 }
 
-@Composable private fun Section(title: String, onSeeAll: (() -> Unit)?, content: @Composable () -> Unit) { Column { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { Text(title, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.SemiBold); if (onSeeAll != null) TextButton(onSeeAll) { Text("Vedi tutto") } }; Spacer(Modifier.height(8.dp)); content() } }
-@Composable private fun EmptyHint(text: String) { Text(text, color = Color.White.copy(.5f), modifier = Modifier.padding(vertical = 12.dp)) }
+@Composable
+private fun HomeCompactDestinationCard(
+    title: String,
+    subtitle: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    tint: Color,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Surface(onClick = onClick, modifier = modifier.heightIn(min = 150.dp), color = Color.Transparent, shape = RoundedCornerShape(22.dp)) {
+        LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius = 22.dp, contentPadding = 16.dp) {
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(Modifier.size(42.dp).clip(RoundedCornerShape(13.dp)).background(tint.copy(.16f)), contentAlignment = Alignment.Center) {
+                    Icon(icon, null, tint = tint, modifier = Modifier.size(23.dp))
+                }
+                Spacer(Modifier.height(6.dp))
+                Text(title, color = glassForeground(), fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+                Text(subtitle, color = glassForeground().copy(.58f), fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+        }
+    }
+}
+
+@Composable
+private fun HomeDestinationCard(title: String, metric: String, subtitle: String, icon: androidx.compose.ui.graphics.vector.ImageVector, tint: Color, buttonLabel: String, onClick: () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(title, color = glassForeground(), fontSize = 20.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+            TextButton(onClick = onClick) { Text(buttonLabel) }
+        }
+        Surface(onClick = onClick, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(22.dp), color = Color.Transparent) {
+            LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius = 22.dp, contentPadding = 18.dp) {
+                Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(50.dp).clip(RoundedCornerShape(16.dp)).background(tint.copy(.16f)), contentAlignment = Alignment.Center) { Icon(icon, null, tint = tint, modifier = Modifier.size(27.dp)) }
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(title, color = glassForeground(), fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                        Text(metric, color = glassForeground().copy(.76f), fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        Text(subtitle, color = glassForeground().copy(.56f), fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
+                    Icon(Icons.Default.ChevronRight, null, tint = glassForeground().copy(.42f))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TrendingCard(item: MetadataResult, isSeries: Boolean, onClick: () -> Unit) {
+    Surface(onClick = onClick, modifier = Modifier.width(156.dp).height(270.dp), color = Color.Transparent, shape = RoundedCornerShape(18.dp)) {
+        LiquidGlassSurface(modifier = Modifier.fillMaxSize(), cornerRadius = 18.dp, contentPadding = 0.dp) {
+            Column(Modifier.fillMaxSize()) {
+                Box(Modifier.fillMaxWidth().height(205.dp).background(Color(0xFF10141D))) {
+                    val artwork = item.posterUrl ?: item.backdropUrl
+                    if (artwork != null) AsyncImage(artwork, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(.30f)))))
+                    item.rating?.let { rating ->
+                        LiquidGlassPill(Modifier.align(Alignment.TopEnd).padding(7.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) { Icon(Icons.Default.Star, null, tint = Color(0xFFFFD166), modifier = Modifier.size(12.dp)); Text(String.format(java.util.Locale.ROOT, "%.1f", rating), color = glassForeground(), fontSize = 11.sp) }
+                        }
+                    }
+                }
+                Column(Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(item.title, color = glassForeground(), maxLines = 2, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                    Text(if (isSeries) "Serie TV · Tendenza" else "Film · Tendenza", color = glassForeground().copy(.52f), fontSize = 11.sp, maxLines = 1)
+                }
+            }
+        }
+    }
+}
+
+@Composable private fun Section(title: String, onSeeAll: (() -> Unit)?, content: @Composable () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text(title, color = glassForeground(), fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+            if (onSeeAll != null) TextButton(onSeeAll) { Text("Vedi tutto", color = Color(0xFF9ABEFF)) }
+        }
+        content()
+    }
+}
+
+@Composable private fun EmptyHint(text: String) { Text(text, color = glassForeground().copy(.52f), modifier = Modifier.padding(vertical = 12.dp), fontSize = 13.sp) }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun MediaCard(item: MediaItem, favorite: Boolean, onClick: () -> Unit, onLongClick: (() -> Unit)? = null) {
-    val w = if (item.kind == MediaKind.LIVE) 190.dp else 160.dp; val h = if (item.kind == MediaKind.LIVE) 108.dp else 220.dp
-    Card(modifier = Modifier.width(w).combinedClickable(onClick = onClick, onLongClick = onLongClick), colors = CardDefaults.cardColors(containerColor = Color(0xFF141720)), shape = MaterialTheme.shapes.medium) {
-        Box(Modifier.fillMaxWidth().height(h).background(Color(0xFF0C0E13))) { item.posterUrl?.let { AsyncImage(it, null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }; if (favorite) Icon(Icons.Default.Favorite, null, tint = Blue, modifier = Modifier.padding(8.dp).align(Alignment.TopEnd)); if (item.kind == MediaKind.LIVE && item.logoUrl != null) AsyncImage(item.logoUrl, null, modifier = Modifier.size(64.dp).align(Alignment.Center), contentScale = ContentScale.Fit) }
-        Column(Modifier.padding(10.dp)) { Text(item.title, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium); item.group?.takeIf { it.isNotBlank() }?.let { Text(it, color = Color.White.copy(.55f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) } }
+private fun MediaCard(item: MediaItem, favorite: Boolean, onClick: () -> Unit, onToggleFavorite: (() -> Unit)? = null) {
+    val w = if (item.kind == MediaKind.LIVE) 190.dp else 160.dp
+    val h = if (item.kind == MediaKind.LIVE) 108.dp else 220.dp
+    var focused by remember(item.id) { mutableStateOf(false) }
+    val scale by androidx.compose.animation.core.animateFloatAsState(if (focused) 1.025f else 1f, label = "media-card-focus")
+    Surface(
+        modifier = Modifier.width(w)
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .onFocusChanged { focused = it.isFocused }
+            .combinedClickable(onClick = onClick, onToggleFavorite = onLongClick),
+        shape = RoundedCornerShape(18.dp),
+        color = Color.Transparent,
+        border = BorderStroke(if (focused) 1.25.dp else .55.dp, glassForeground(if (focused) .42f else .15f))
+    ) {
+        LiquidGlassSurface(modifier = Modifier.fillMaxWidth(), cornerRadius = 18.dp, contentPadding = 0.dp, highlighted = focused) {
+            Column {
+                Box(Modifier.fillMaxWidth().height(h).background(Color(0xFF0C0E13))) {
+                    item.backdropUrl?.takeIf { item.kind != MediaKind.LIVE }?.let { AsyncImage(it, null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+                    if (item.posterUrl != null && item.kind != MediaKind.LIVE) AsyncImage(item.posterUrl, null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(.30f)))))
+                    if (item.kind == MediaKind.LIVE && item.logoUrl != null) AsyncImage(item.logoUrl, null, modifier = Modifier.fillMaxSize().padding(18.dp), contentScale = ContentScale.Fit)
+                    if (onToggleFavorite != null) {
+                        Surface(
+                            onClick = onToggleFavorite,
+                            modifier = Modifier.align(Alignment.TopEnd).padding(7.dp).size(34.dp),
+                            shape = RoundedCornerShape(50),
+                            color = Color.Black.copy(.35f),
+                            border = BorderStroke(.7.dp, Color.White.copy(.28f))
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    if (favorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                                    contentDescription = if (favorite) "Rimuovi dai preferiti" else "Aggiungi ai preferiti",
+                                    tint = if (favorite) Color(0xFFFF91AD) else Color.White.copy(.92f),
+                                    modifier = Modifier.size(17.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+                Column(Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(item.title, color = glassForeground(), maxLines = 2, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
+                    item.group?.takeIf { it.isNotBlank() }?.let { Text(it, color = glassForeground().copy(.55f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                }
+            }
+        }
     }
 }
 
@@ -209,7 +697,7 @@ private fun CatalogScreen(title: String, items: List<MediaItem>, categories: Lis
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         LibraryHeader(title, categories, items, filter, { filter = it }, libSettings, vm, allowPoster = detail)
         if (filtered.isEmpty()) EmptyHint(if (items.isEmpty()) "Nessun contenuto: controlla la sorgente in Sorgenti e riprova a ricaricare." else "Nessun risultato per questo gruppo.") else LazyVerticalGrid(columns = GridCells.Adaptive(minSize = libraryGridMin(libSettings, !detail)), verticalArrangement = Arrangement.spacedBy(14.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), contentPadding = PaddingValues(bottom = 40.dp)) {
-            items(filtered) { item -> MediaCard(item, vm.appFavorite(favorite, item), onClick = { if (detail) selected = item else onPlay(item) }) }
+            items(filtered) { item -> MediaCard(item, vm.appFavorite(favorite, item), onClick = { if (detail) selected = item else onPlay(item) }, onToggleFavorite = { vm.toggleFavorite(item) }) }
         }
     }
 }
@@ -224,7 +712,7 @@ private fun onPlayWithPosition(onPlay: (MediaItem) -> Unit, item: MediaItem, pos
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         LibraryHeader("Serie", categories, series, filter, { filter = it }, libSettings, vm, allowPoster = true)
         if (filtered.isEmpty()) EmptyHint(if (series.isEmpty()) "Nessuna serie: controlla la sorgente e ricarica." else "Nessun risultato per questo gruppo.") else
-            LazyVerticalGrid(GridCells.Adaptive(libraryGridMin(libSettings, false)), contentPadding = PaddingValues(bottom = 40.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) { items(filtered) { s -> MediaCard(s, s.id in favorite.series, onClick = { selected = s }) } }
+            LazyVerticalGrid(GridCells.Adaptive(libraryGridMin(libSettings, false)), contentPadding = PaddingValues(bottom = 40.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) { items(filtered) { s -> MediaCard(s, s.id in favorite.series, onClick = { selected = s }, onToggleFavorite = { vm.toggleFavorite(s) }) } }
     }
 }
 
@@ -236,15 +724,17 @@ private fun SearchScreen(app: GassPlayerApplication, catalog: CatalogState?, onP
     val scope = rememberCoroutineScope()
     val results = remember(submitted, catalog) { if (submitted.isBlank()) emptyList() else catalog?.search(submitted, 100).orEmpty() }
     Column {
-        OutlinedTextField(q, { q = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("Cerca live, film, serie") }, trailingIcon = { IconButton({ submitted = q; scope.launch { app.search.add(q) } }) { Icon(Icons.Default.Search, null) } })
+        LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius = 18.dp, contentPadding = 10.dp) {
+            OutlinedTextField(q, { q = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("Cerca live, film, serie") }, trailingIcon = { IconButton({ submitted = q; scope.launch { app.search.add(q) } }) { Icon(Icons.Default.Search, null) } }, colors = OutlinedTextFieldDefaults.colors(focusedTextColor = glassForeground(), unfocusedTextColor = glassForeground(), cursorColor = Color(0xFF8CB7FF), focusedBorderColor = Color(0xFF8CB7FF), unfocusedBorderColor = Color.White.copy(.12f)))
+        }
         Spacer(Modifier.height(10.dp))
         if (submitted.isBlank() && history.terms.isNotEmpty()) {
-            Text("Ricerche recenti", color = Color.White.copy(.6f))
+            Text("Ricerche recenti", color = glassForeground().copy(.6f))
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { items(history.terms) { AssistChip({ q = it; submitted = it }, label = { Text(it) }) } }
             Spacer(Modifier.height(12.dp))
         }
         LazyVerticalGrid(GridCells.Adaptive(180.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            items(results) { MediaCard(it, false, onClick = { scope.launch { app.search.add(submitted) }; onPlay(it) }) }
+            items(results) { MediaCard(it, false, onClick = { scope.launch { app.search.add(submitted) }; onPlay(it) }, onToggleFavorite = { scope.launch { app.favorites.toggle(it) } }) }
         }
     }
 }
@@ -256,14 +746,14 @@ private fun ExternalEpgManageScreen(app: GassPlayerApplication) {
     var name by remember { mutableStateOf("") }
     var url by remember { mutableStateOf("") }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("Fonti XMLTV esterne", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        Text("Fonti XMLTV esterne", color = glassForeground(), fontSize = 20.sp, fontWeight = FontWeight.Bold)
         OutlinedTextField(name, { name = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Nome fonte") })
         OutlinedTextField(url, { url = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("URL XMLTV") })
         Button({ scope.launch { if (app.externalEpg.add(name, url)) { name = ""; url = "" } } }) { Text("Aggiungi fonte EPG") }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(sources, key = { it.id }) { source ->
-                Card { Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) { Text(source.name, color = Color.White, fontWeight = FontWeight.Bold); Text(source.urlString, color = Color.White.copy(.6f), maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius = 18.dp, contentPadding = 0.dp) { Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) { Text(source.name, color = glassForeground(), fontWeight = FontWeight.Bold); Text(source.urlString, color = glassForeground().copy(.6f), maxLines = 1, overflow = TextOverflow.Ellipsis) }
                     Switch(source.isEnabled, { enabled -> scope.launch { app.externalEpg.toggle(source.id, enabled) } })
                     IconButton({ scope.launch { app.externalEpg.remove(source.id) } }) { Icon(Icons.Default.Delete, null) }
                 } }
@@ -285,11 +775,11 @@ private fun ExternalEpgManageScreen(app: GassPlayerApplication) {
         LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             items(sources, key = { it.id }) { s ->
                 var renameOpen by remember(s.id) { mutableStateOf(false) }
-                Card {
+                LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius = 18.dp, contentPadding = 0.dp) {
                     Row(Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
-                            Text(if(s.isPinned) "★ ${s.name}" else s.name, color = Color.White, fontWeight = FontWeight.Bold)
-                            Text("${s.type} • ${s.host}", color = Color.White.copy(.6f))
+                            Text(if(s.isPinned) "★ ${s.name}" else s.name, color = glassForeground(), fontWeight = FontWeight.Bold)
+                            Text("${s.type} • ${s.host}", color = glassForeground().copy(.6f))
                             Text(if (s.lastVerificationSucceeded) "Verificata • ${s.lastKnownChannelCount}" else "Non verificata", color = if (s.lastVerificationSucceeded) Color(0xFF6EDC82) else Color(0xFFFFB55E))
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -317,18 +807,15 @@ private fun SourceDialogFrame(
     content: @Composable ColumnScope.() -> Unit
 ) {
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
-        Surface(
+        LiquidGlassSurface(
             modifier = Modifier
                 .fillMaxWidth(0.92f)
                 .widthIn(max = 620.dp)
                 .heightIn(max = 760.dp),
-            shape = RoundedCornerShape(28.dp),
-            color = MaterialTheme.colorScheme.surface,
-            contentColor = MaterialTheme.colorScheme.onSurface,
-            tonalElevation = 10.dp,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .28f))
+            cornerRadius = 28.dp,
+            contentPadding = 22.dp
         ) {
-            Column(Modifier.padding(22.dp)) {
+            Column(Modifier.fillMaxWidth()) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         title,
@@ -517,22 +1004,22 @@ private fun AddSourceDialog(app: GassPlayerApplication, vm: MainViewModel, onDis
 @Composable private fun DownloadsScreen(app: GassPlayerApplication) {
     val infos by androidx.work.WorkManager.getInstance(app).getWorkInfosByTagFlow("gass_download").collectAsStateWithLifecycle(emptyList())
     Column {
-        Text("Download in background", color=Color.White)
+        Text("Download in background", color = glassForeground())
         Spacer(Modifier.height(10.dp))
         LazyColumn(verticalArrangement=Arrangement.spacedBy(8.dp)){
             items(infos){info->
                 val p = info.progress.getInt("progress", if(info.state==androidx.work.WorkInfo.State.SUCCEEDED) 100 else 0)
-                Card(Modifier.fillMaxWidth()){Column(Modifier.padding(14.dp)){Text(info.outputData.getString("file") ?: info.id.toString(),color=Color.White);LinearProgressIndicator(progress={p/100f},Modifier.fillMaxWidth());Text(info.state.name,color=Color.White.copy(.6f))}}
+                LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius = 18.dp, contentPadding = 14.dp){Column(verticalArrangement=Arrangement.spacedBy(8.dp)){Text(info.outputData.getString("file") ?: info.id.toString(),color = glassForeground());LinearProgressIndicator(progress={p/100f},Modifier.fillMaxWidth(), color = Color(0xFF8CB7FF), trackColor = Color.White.copy(.08f));Text(info.state.name,color = glassForeground().copy(.6f))}}
             }
         }
     }
 }
 
-@Composable internal fun SettingInt(label:String, value:Int, range:IntRange, step:Int=1, onChange:(Int)->Unit){ Column(Modifier.fillMaxWidth()){ Text("$label: $value",color=Color.White); Slider(value=value.toFloat(),onValueChange={onChange(it.toInt())},valueRange=range.first.toFloat()..range.last.toFloat(),steps=((range.last-range.first)/step-1).coerceAtLeast(0)) } }
-@Composable private fun SettingToggle(label:String, value:Boolean, onChange:(Boolean)->Unit){ Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){ Text(label,color=Color.White); Switch(value,onChange) } }
+@Composable internal fun SettingInt(label:String, value:Int, range:IntRange, step:Int=1, onChange:(Int)->Unit){ Column(Modifier.fillMaxWidth()){ Text("$label: $value",color = glassForeground()); Slider(value=value.toFloat(),onValueChange={onChange(it.toInt())},valueRange=range.first.toFloat()..range.last.toFloat(),steps=((range.last-range.first)/step-1).coerceAtLeast(0)) } }
+@Composable private fun SettingToggle(label:String, value:Boolean, onChange:(Boolean)->Unit){ Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){ Text(label,color = glassForeground()); Switch(value,onChange) } }
 @Composable private fun SettingRow(label:String, value:String, choices:List<String>, onChange:(String)->Unit){ var expanded by remember{mutableStateOf(false)}; Box{ OutlinedButton({expanded=true},Modifier.fillMaxWidth()){ Text("$label: $value") }; DropdownMenu(expanded,{expanded=false}){choices.forEach{DropdownMenuItem({Text(it)},onClick={onChange(it);expanded=false})}} } }
 
-@Composable private fun ParentalScreen(vm:MainViewModel,state:ParentalState){ var pin by remember{mutableStateOf("")}; var newPin by remember{mutableStateOf("")}; var msg by remember{mutableStateOf<String?>(null)}; val scope=rememberCoroutineScope(); Column(verticalArrangement=Arrangement.spacedBy(10.dp)){Text("PIN locale con SHA-256 e blocco per contenuto/categoria",color=Color.White.copy(.7f));OutlinedTextField(newPin,{newPin=it},label={Text("Nuovo PIN")});Button({scope.launch{vm.app.parental.setPin(newPin);msg="PIN impostato"}}){Text("Imposta PIN")};OutlinedTextField(pin,{pin=it},label={Text("Verifica PIN")});Button({scope.launch{msg=if(vm.app.parental.verify(pin))"PIN corretto" else "PIN non valido"}}){Text("Verifica")};msg?.let{Text(it,color=Color.White)} }
+@Composable private fun ParentalScreen(vm:MainViewModel,state:ParentalState){ var pin by remember{mutableStateOf("")}; var newPin by remember{mutableStateOf("")}; var msg by remember{mutableStateOf<String?>(null)}; val scope=rememberCoroutineScope(); Column(verticalArrangement=Arrangement.spacedBy(10.dp)){Text("PIN locale con SHA-256 e blocco per contenuto/categoria",color = glassForeground().copy(.7f));OutlinedTextField(newPin,{newPin=it},label={Text("Nuovo PIN")});Button({scope.launch{vm.app.parental.setPin(newPin);msg="PIN impostato"}}){Text("Imposta PIN")};OutlinedTextField(pin,{pin=it},label={Text("Verifica PIN")});Button({scope.launch{msg=if(vm.app.parental.verify(pin))"PIN corretto" else "PIN non valido"}}){Text("Verifica")};msg?.let{Text(it,color = glassForeground())} }
 }
 
 @Composable private fun VpnScreen(app:GassPlayerApplication){
@@ -540,7 +1027,7 @@ private fun AddSourceDialog(app: GassPlayerApplication, vm: MainViewModel, onDis
     var server by remember(cfg){mutableStateOf(cfg.serverEndpoint)}; var user by remember(cfg){mutableStateOf(cfg.username)}; var pass by remember(cfg){mutableStateOf(cfg.password)}; var state by remember{mutableStateOf("Disconnessa")}; var discovery by remember{mutableStateOf<VPNConfig?>(null)}; val scope=rememberCoroutineScope()
     val launcher=rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()){ result -> if(result.resultCode==Activity.RESULT_OK) runCatching{app.vpn.startIkev2();state="Connessa"} }
     LazyColumn(verticalArrangement=Arrangement.spacedBy(8.dp)){
-        item{Text("IKEv2 usa lo stack VPN nativo Android; WireGuard usa il tunnel ufficiale del progetto WireGuard.",color=Color.White.copy(.7f))}
+        item{Text("IKEv2 usa lo stack VPN nativo Android; WireGuard usa il tunnel ufficiale del progetto WireGuard.",color = glassForeground().copy(.7f))}
         item{OutlinedTextField(server,{server=it},Modifier.fillMaxWidth(),label={Text("Endpoint")})}
         item{OutlinedTextField(user,{user=it},Modifier.fillMaxWidth(),label={Text("Username")})}
         item{OutlinedTextField(pass,{pass=it},Modifier.fillMaxWidth(),label={Text("Password")})}
@@ -549,9 +1036,9 @@ private fun AddSourceDialog(app: GassPlayerApplication, vm: MainViewModel, onDis
             OutlinedButton({app.vpn.stopIkev2();state="Disconnessa"}){Text("Stop")}
         }}
         item{Button({scope.launch{discovery=app.vpn.providerDiscovery(server,user,pass)}}){Text("Scopri VPN dal provider")}}
-        discovery?.let{ d -> item{Card{Column(Modifier.padding(14.dp)){Text("Configurazione trovata: ${d.protocol}");Text(d.serverEndpoint);Text("DNS: ${d.dns.joinToString()}")}}} }
-        item{Text("Stato: $state",color=Color.White)}
-        item{Text("OpenVPN resta rappresentato a livello di configurazione, come nella sorgente iOS: non viene pubblicizzato come motore cifrato integrato.",color=Color.White.copy(.55f),fontSize=12.sp)}
+        discovery?.let{ d -> item{LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius = 18.dp, contentPadding = 14.dp){Column(verticalArrangement=Arrangement.spacedBy(5.dp)){Text("Configurazione trovata: ${d.protocol}", color = glassForeground());Text(d.serverEndpoint, color = glassForeground().copy(.78f));Text("DNS: ${d.dns.joinToString()}", color = glassForeground().copy(.65f))}}} }
+        item{Text("Stato: $state",color = glassForeground())}
+        item{Text("OpenVPN resta rappresentato a livello di configurazione, come nella sorgente iOS: non viene pubblicizzato come motore cifrato integrato.",color = glassForeground().copy(.55f),fontSize=12.sp)}
     }
 }
 
@@ -559,7 +1046,7 @@ private fun AddSourceDialog(app: GassPlayerApplication, vm: MainViewModel, onDis
     val context=LocalContext.current; val scope=rememberCoroutineScope(); var status by remember{mutableStateOf("")}
     val create=rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")){uri-> if(uri!=null) scope.launch{val text=app.backup.fullExport(); context.contentResolver.openOutputStream(uri)?.use{it.write(text.toByteArray())};status="Backup esportato"}}
     val pick=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()){uri-> if(uri!=null) scope.launch{val text=context.contentResolver.openInputStream(uri)?.bufferedReader()?.readText().orEmpty();runCatching{app.backup.importAny(text)};status="Import completato o parziale"}}
-    Column(verticalArrangement=Arrangement.spacedBy(10.dp)){Button({create.launch("gassplayer-backup.json")}){Text("Esporta sorgenti + preferenze")};OutlinedButton({pick.launch(arrayOf("application/json","text/*"))}){Text("Importa JSON")};Button({scope.launch{app.cloud.requestBackup();status="Richiesta Auto Backup inviata"}}){Text("Sincronizza con backup Android")};Text(status,color=Color.White)}
+    Column(verticalArrangement=Arrangement.spacedBy(10.dp)){Button({create.launch("gassplayer-backup.json")}){Text("Esporta sorgenti + preferenze")};OutlinedButton({pick.launch(arrayOf("application/json","text/*"))}){Text("Importa JSON")};Button({scope.launch{app.cloud.requestBackup();status="Richiesta Auto Backup inviata"}}){Text("Sincronizza con backup Android")};Text(status,color = glassForeground())}
 }
 
 @Composable
@@ -580,38 +1067,99 @@ private fun TraktScreen(app: GassPlayerApplication, settings: AppSettings, vm: M
         }
     }
     LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 40.dp)) {
-        item { Text("Collega Trakt.tv", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold) }
+        item { Text("Collega Trakt.tv", color = glassForeground(), fontSize = 20.sp, fontWeight = FontWeight.Bold) }
         item { OutlinedTextField(local.traktClientId, { local = local.copy(traktClientId = it); vm.updateSettings(local) }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("Client ID") }) }
         item { OutlinedTextField(local.traktClientSecret, { local = local.copy(traktClientSecret = it); vm.updateSettings(local) }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("Client Secret") }) }
         if (account.accessToken.isNotBlank()) {
-            item { Card { Column(Modifier.padding(14.dp)) { Text("Connesso a Trakt.tv", color = Color.White, fontWeight = FontWeight.Bold); Text("Lo scrobbling di film/episodi usa il token salvato su questo dispositivo.", color = Color.White.copy(.65f)); OutlinedButton({ scope.launch { app.prefs.saveTrakt(TraktAccount()) } }) { Text("Disconnetti") } } } }
+            item { LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius = 18.dp, contentPadding = 14.dp) { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { Text("Connesso a Trakt.tv", color = glassForeground(), fontWeight = FontWeight.Bold); Text("Lo scrobbling di film/episodi usa il token salvato su questo dispositivo.", color = glassForeground().copy(.65f)); OutlinedButton({ scope.launch { app.prefs.saveTrakt(TraktAccount()) } }) { Text("Disconnetti") } } } }
         } else if (device == null) {
             item { Button(enabled = local.traktClientId.isNotBlank() && local.traktClientSecret.isNotBlank(), onClick = { scope.launch { device = app.trakt.deviceCode(local.traktClientId.trim(), local.traktClientSecret.trim()); message = if (device != null) "Autorizza il dispositivo e attendi la conferma." else "Impossibile iniziare il flusso Trakt." } }) { Text("Connetti a Trakt.tv") } }
         } else {
             val code = device!!
-            item { Card { Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { Text("Codice dispositivo", color = Color.White.copy(.7f)); Text(code.userCode, color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold); Text(code.verificationUrl, color = Color.White.copy(.7f)); Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { Button({ context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(if (code.verificationUrl.startsWith("http")) code.verificationUrl else "https://${code.verificationUrl}"))) }) { Text("Apri Trakt") }; OutlinedButton({ device = null }) { Text("Annulla") } }; Text("In attesa dell'autorizzazione…", color = Color.White.copy(.65f)) } } }
+            item { LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius = 18.dp, contentPadding = 0.dp) { Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { Text("Codice dispositivo", color = glassForeground().copy(.7f)); Text(code.userCode, color = glassForeground(), fontSize = 26.sp, fontWeight = FontWeight.Bold); Text(code.verificationUrl, color = glassForeground().copy(.7f)); Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { Button({ context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(if (code.verificationUrl.startsWith("http")) code.verificationUrl else "https://${code.verificationUrl}"))) }) { Text("Apri Trakt") }; OutlinedButton({ device = null }) { Text("Annulla") } }; Text("In attesa dell'autorizzazione…", color = glassForeground().copy(.65f)) } } }
         }
-        if (message.isNotBlank()) item { Text(message, color = Color.White) }
+        if (message.isNotBlank()) item { Text(message, color = glassForeground()) }
     }
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 private fun HomeCustomizationScreen(vm: MainViewModel) {
     val settings by vm.settings.collectAsStateWithLifecycle()
-    var local by remember(settings) { mutableStateOf(settings) }
-    val labels = mapOf("heading" to "Intestazione", "continueWatching" to "Continua a guardare", "sourceCard" to "Scheda sorgente", "sources" to "Sorgenti", "liveTV" to "Live TV", "guidaTV" to "Guida TV", "favoriteChannels" to "Canali preferiti", "favoriteSeries" to "Serie TV preferite", "favoriteMovies" to "Film preferiti", "onDemand" to "On demand")
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Sezioni Home", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-        Text("Nascondi o riordina le sezioni; le impostazioni vengono conservate tra i riavvii.", color = Color.White.copy(.65f))
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            items(local.homeSectionOrder, key = { it }) { id ->
-                val index = local.homeSectionOrder.indexOf(id)
-                Card { Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Switch(checked = id !in local.hiddenHomeSections, onCheckedChange = { visible -> local = local.copy(hiddenHomeSections = if (visible) local.hiddenHomeSections - id else local.hiddenHomeSections + id); vm.updateSettings(local) })
-                    Text(labels[id] ?: id, color = Color.White, modifier = Modifier.weight(1f))
-                    IconButton(enabled = index > 0, onClick = { val list = local.homeSectionOrder.toMutableList(); list.add(index - 1, list.removeAt(index)); local = local.copy(homeSectionOrder = list); vm.updateSettings(local) }) { Icon(Icons.Default.KeyboardArrowUp, null) }
-                    IconButton(enabled = index < local.homeSectionOrder.lastIndex, onClick = { val list = local.homeSectionOrder.toMutableList(); list.add(index + 1, list.removeAt(index)); local = local.copy(homeSectionOrder = list); vm.updateSettings(local) }) { Icon(Icons.Default.KeyboardArrowDown, null) }
-                } }
+    val completeOrder = remember(settings.homeSectionOrder) { (settings.homeSectionOrder + defaultHomeSections).distinct() }
+    var local by remember(settings) { mutableStateOf(settings.copy(homeSectionOrder = completeOrder)) }
+    var continueMenu by remember { mutableStateOf(false) }
+    fun save(next: AppSettings) { local = next; vm.updateSettings(next) }
+    val visible = local.homeSectionOrder.filterNot { it in local.hiddenHomeSections }
+    val hidden = local.homeSectionOrder.filter { it in local.hiddenHomeSections }
+
+    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius = 20.dp, contentPadding = 16.dp) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text("Sezioni Home", color = glassForeground(), fontSize = 21.sp, fontWeight = FontWeight.Bold)
+                        Text("Ordina, nascondi o riaggiungi blocchi. Le modifiche si applicano subito.", color = glassForeground().copy(.63f), fontSize = 12.sp)
+                    }
+                    Icon(Icons.Default.Tune, null, tint = Color(0xFF9ABEFF), modifier = Modifier.size(24.dp))
+                }
+                OutlinedButton(onClick = { save(local.copy(homeSectionOrder = defaultHomeSections, hiddenHomeSections = emptySet(), homeContinueKind = null)) }) {
+                    Icon(Icons.Default.RestartAlt, null); Spacer(Modifier.width(6.dp)); Text("Ripristina ordine iOS")
+                }
+            }
+        }
+        Text("VISIBILI · ${visible.size}", color = glassForeground().copy(.58f), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 30.dp)) {
+            items(visible, key = { it }) { id ->
+                val index = visible.indexOf(id)
+                LiquidGlassSurface(Modifier.fillMaxWidth().animateItem(), cornerRadius = 17.dp, contentPadding = 10.dp) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Icon(Icons.Default.DragHandle, null, tint = glassForeground().copy(.45f))
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Text(homeSectionTitles[id] ?: id, color = glassForeground(), fontWeight = FontWeight.Medium)
+                            if (id == "continueWatching") {
+                                Box {
+                                    TextButton(onClick = { continueMenu = true }, contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp)) {
+                                        Icon(Icons.Default.Tune, null, modifier = Modifier.size(14.dp)); Spacer(Modifier.width(4.dp))
+                                        Text("Filtro: ${when (local.homeContinueKind) { "live" -> "Live TV"; "movie" -> "Film"; "series" -> "Serie TV"; else -> "Tutti" }}", fontSize = 12.sp)
+                                    }
+                                    DropdownMenu(continueMenu, { continueMenu = false }) {
+                                        listOf(null to "Tutti", "live" to "Live TV", "movie" to "Film", "series" to "Serie TV").forEach { (value, label) ->
+                                            DropdownMenuItem(text = { Text(label) }, onClick = { save(local.copy(homeContinueKind = value)); continueMenu = false })
+                                        }
+                                    }
+                                }
+                            } else Text("Posizione ${index + 1}", color = glassForeground().copy(.48f), fontSize = 11.sp)
+                        }
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            IconButton(enabled = index > 0, onClick = {
+                                val activeOrder = visible.toMutableList(); val value = activeOrder.removeAt(index); activeOrder.add(index - 1, value)
+                                save(local.copy(homeSectionOrder = activeOrder + hidden))
+                            }) { Icon(Icons.Default.KeyboardArrowUp, "Sposta su", tint = if (index > 0) glassForeground() else glassForeground(.18f)) }
+                            IconButton(enabled = index < visible.lastIndex, onClick = {
+                                val activeOrder = visible.toMutableList(); val value = activeOrder.removeAt(index); activeOrder.add(index + 1, value)
+                                save(local.copy(homeSectionOrder = activeOrder + hidden))
+                            }) { Icon(Icons.Default.KeyboardArrowDown, "Sposta giù", tint = if (index < visible.lastIndex) glassForeground() else glassForeground(.18f)) }
+                        }
+                        IconButton(onClick = { save(local.copy(hiddenHomeSections = local.hiddenHomeSections + id)) }) {
+                            Icon(Icons.Default.VisibilityOff, "Nascondi", tint = glassForeground().copy(.72f))
+                        }
+                    }
+                }
+            }
+            if (hidden.isNotEmpty()) {
+                item { Spacer(Modifier.height(8.dp)); Text("NASCOSTE · ${hidden.size}", color = glassForeground().copy(.58f), fontSize = 11.sp, fontWeight = FontWeight.Bold) }
+                items(hidden, key = { "hidden-$it" }) { id ->
+                    LiquidGlassSurface(Modifier.fillMaxWidth().animateItem(), cornerRadius = 17.dp, contentPadding = 10.dp) {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Icon(Icons.Default.VisibilityOff, null, tint = glassForeground().copy(.38f))
+                            Text(homeSectionTitles[id] ?: id, color = glassForeground().copy(.75f), modifier = Modifier.weight(1f))
+                            TextButton(onClick = { save(local.copy(hiddenHomeSections = local.hiddenHomeSections - id)) }) {
+                                Icon(Icons.Default.Add, null); Spacer(Modifier.width(4.dp)); Text("Aggiungi")
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -625,22 +1173,22 @@ private fun MergedPlaylistScreen(app: GassPlayerApplication) {
     var name by remember { mutableStateOf("") }
     var selected by remember { mutableStateOf<Set<String>>(emptySet()) }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("Playlist unificate", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-        Text("Raggruppa sorgenti in raccolte logiche, mantenendo l'origine di ogni contenuto.", color = Color.White.copy(.65f))
+        Text("Playlist unificate", color = glassForeground(), fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        Text("Raggruppa sorgenti in raccolte logiche, mantenendo l'origine di ogni contenuto.", color = glassForeground().copy(.65f))
         OutlinedTextField(name, { name = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Nome playlist") })
         LazyColumn(Modifier.heightIn(max = 220.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             items(sources, key = { it.id }) { source ->
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(selected.contains(source.id), { selected = if (it) selected + source.id else selected - source.id })
-                    Column { Text(source.name, color = Color.White); Text(source.host, color = Color.White.copy(.5f), fontSize = 12.sp) }
+                    Column { Text(source.name, color = glassForeground()); Text(source.host, color = glassForeground().copy(.5f), fontSize = 12.sp) }
                 }
             }
         }
         Button({ scope.launch { app.mergedPlaylists.create(name, selected.toList()); name = ""; selected = emptySet() } }, enabled = name.isNotBlank() && selected.isNotEmpty()) { Text("Crea playlist unificata") }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(playlists, key = { it.id }) { playlist ->
-                Card { Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) { Text(playlist.name, color = Color.White, fontWeight = FontWeight.Bold); Text("${playlist.memberSourceIds.size} sorgenti", color = Color.White.copy(.55f)) }
+                LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius = 18.dp, contentPadding = 0.dp) { Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) { Text(playlist.name, color = glassForeground(), fontWeight = FontWeight.Bold); Text("${playlist.memberSourceIds.size} sorgenti", color = glassForeground().copy(.55f)) }
                     IconButton({ scope.launch { app.mergedPlaylists.remove(playlist.id) } }) { Icon(Icons.Default.Delete, null) }
                 } }
             }
@@ -648,6 +1196,6 @@ private fun MergedPlaylistScreen(app: GassPlayerApplication) {
     }
 }
 
-@Composable private fun DiagnosticsScreen(app:GassPlayerApplication){ var log by remember{mutableStateOf(app.diagnostics.read())};Column{Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){Button({log=app.diagnostics.read()}){Text("Aggiorna")};OutlinedButton({app.diagnostics.clear();log=""}){Text("Svuota")}};Spacer(Modifier.height(10.dp));LazyColumn{item{Text(log, color=Color.White.copy(.75f), fontSize=12.sp)}}}}
+@Composable private fun DiagnosticsScreen(app:GassPlayerApplication){ var log by remember{mutableStateOf(app.diagnostics.read())};Column{Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){Button({log=app.diagnostics.read()}){Text("Aggiorna")};OutlinedButton({app.diagnostics.clear();log=""}){Text("Svuota")}};Spacer(Modifier.height(10.dp));LazyColumn{item{Text(log, color = glassForeground().copy(.75f), fontSize=12.sp)}}}}
 
 private fun MainViewModel.appFavorite(state: FavoriteState,item:MediaItem)=when(item.kind){MediaKind.LIVE->item.id in state.live;MediaKind.MOVIE,MediaKind.EPISODE->item.id in state.movies;MediaKind.SERIES->item.id in state.series}

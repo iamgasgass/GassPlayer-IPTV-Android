@@ -134,10 +134,12 @@ data class AppSettings(
     val playerStartBufferSec: Int = 1,
     val historyLimit: Int = 20,
     val homeSectionOrder: List<String> = defaultHomeSections,
-    val hiddenHomeSections: Set<String> = emptySet()
+    val hiddenHomeSections: Set<String> = emptySet(),
+    /** Home → Continua a guardare: null = tutti i tipi. */
+    val homeContinueKind: String? = null
 )
 
-val defaultHomeSections = listOf("heading", "continueWatching", "sourceCard", "sources", "liveTV", "guidaTV", "favoriteChannels", "favoriteSeries", "favoriteMovies", "onDemand")
+val defaultHomeSections = listOf("heading", "search", "continueWatching", "sourceCard", "sources", "liveTV", "guidaTV", "onDemand", "favoriteChannels", "favoriteSeries", "favoriteMovies", "trendingSeries", "trendingMovies")
 
 enum class RefreshInterval(val id: String, val millis: Long?) {
     MANUAL("manual", null), FIFTEEN_MIN("fifteenMinutes", 15 * 60_000L), THIRTY_MIN("thirtyMinutes", 30 * 60_000L), HOUR("oneHour", 60 * 60_000L), THREE_HOURS("threeHours", 3 * 60 * 60_000L), SIX_HOURS("sixHours", 6 * 60 * 60_000L), TWELVE_HOURS("twelveHours", 12 * 60 * 60_000L), DAILY("daily", 24 * 60 * 60_000L);

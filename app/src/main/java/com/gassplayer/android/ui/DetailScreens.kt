@@ -41,17 +41,17 @@ fun MovieDetailScreen(app: GassPlayerApplication, item: MediaItem, allItems: Lis
     Column(Modifier.fillMaxSize()) {
         IconButton(onBack, modifier = Modifier.focusable()) { Icon(Icons.Default.ArrowBack, "Indietro") }
         Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-            Box(Modifier.width(300.dp).fillMaxHeight(.72f).background(Color(0xFF0C0E13))) { (meta?.posterUrl ?: item.posterUrl)?.let { AsyncImage(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) } }
+            Box(Modifier.width(300.dp).fillMaxHeight(.72f).clip(RoundedCornerShape(22.dp)).background(Color(0xFF0C0E13))) { (meta?.posterUrl ?: item.posterUrl)?.let { AsyncImage(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) } }
             LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 40.dp)) {
-                item { Text(meta?.title ?: item.title, color=Color.White, fontSize=30.sp, fontWeight=FontWeight.Bold) }
-                item { Text(meta?.overview ?: item.plot.orEmpty(), color=Color.White.copy(.75f), fontSize=16.sp) }
+                item { LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius=20.dp, contentPadding=16.dp) { Text(meta?.title ?: item.title, color = glassForeground(), fontSize=30.sp, fontWeight=FontWeight.Bold) } }
+                item { LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius=18.dp, contentPadding=15.dp) { Text(meta?.overview ?: item.plot.orEmpty(), color = glassForeground().copy(.78f), fontSize=16.sp) } }
                 item { Row(horizontalArrangement=Arrangement.spacedBy(8.dp), verticalAlignment=Alignment.CenterVertically) { FilledTonalButton({ onPlay(item, currentWatch?.positionMs ?: 0L) }, modifier=Modifier.focusable()){ Icon(Icons.Default.PlayArrow,null); Spacer(Modifier.width(6.dp)); Text(if(currentWatch?.positionMs ?: 0L > 0) "Riprendi" else "Riproduci") }; Button({scope.launch{app.favorites.toggle(item)}}){Icon(if(item.id in favorite.movies)Icons.Default.Favorite else Icons.Default.FavoriteBorder,null);Text("Preferito")}; OutlinedButton({app.downloads.enqueue(item, settings.downloadWifiOnly)}){Icon(Icons.Default.Download,null);Text("Download")} } }
-                item { Text("Rating: ${meta?.rating ?: item.rating ?: "—"} • IMDb ${ratings?.imdb ?: "—"} • RT ${ratings?.rottenTomatoes ?: "—"} • Metacritic ${ratings?.metacritic ?: "—"} • Trakt ${traktRating ?: "—"}", color=Color.White.copy(.68f)) }
-                if(meta?.genres?.isNotEmpty()==true) item{Text("Generi: ${meta!!.genres.joinToString()}",color=Color.White.copy(.7f))}
-                if(meta?.cast?.isNotEmpty()==true) item{Text("Cast: ${meta!!.cast.joinToString()}",color=Color.White.copy(.7f))}
-                item{Text("Sorgenti alternative",color=Color.White,fontWeight=FontWeight.SemiBold)}
-                if(alternates.isEmpty()) item{Text("Nessuna sorgente alternativa rilevata",color=Color.White.copy(.55f))}
-                items(alternates){alt->Card(onClick={onPlay(alt,0L)},modifier=Modifier.fillMaxWidth().focusable()){Row(Modifier.padding(12.dp),horizontalArrangement=Arrangement.SpaceBetween){Text(alt.title,maxLines=1,overflow=TextOverflow.Ellipsis,color=Color.White);Text(alt.sourceId,color=Color.White.copy(.55f),fontSize=12.sp)}}}
+                item { LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius=15.dp, contentPadding=12.dp) { Text("Rating: ${meta?.rating ?: item.rating ?: "—"} • IMDb ${ratings?.imdb ?: "—"} • RT ${ratings?.rottenTomatoes ?: "—"} • Metacritic ${ratings?.metacritic ?: "—"} • Trakt ${traktRating ?: "—"}", color = glassForeground().copy(.72f)) } }
+                if(meta?.genres?.isNotEmpty()==true) item{LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius=15.dp, contentPadding=12.dp){Text("Generi: ${meta!!.genres.joinToString()}",color = glassForeground().copy(.78f))}}
+                if(meta?.cast?.isNotEmpty()==true) item{LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius=15.dp, contentPadding=12.dp){Text("Cast: ${meta!!.cast.joinToString()}",color = glassForeground().copy(.78f))}}
+                item{Text("Sorgenti alternative",color = glassForeground(),fontWeight=FontWeight.SemiBold)}
+                if(alternates.isEmpty()) item{Text("Nessuna sorgente alternativa rilevata",color = glassForeground().copy(.55f))}
+                items(alternates){alt->Surface(onClick={onPlay(alt,0L)},modifier=Modifier.fillMaxWidth().focusable(),shape=RoundedCornerShape(16.dp),color=Color.Transparent){LiquidGlassSurface(Modifier.fillMaxWidth(),cornerRadius=16.dp,contentPadding=0.dp){Row(Modifier.padding(12.dp),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){Text(alt.title,maxLines=1,overflow=TextOverflow.Ellipsis,color = glassForeground(),modifier=Modifier.weight(1f));Spacer(Modifier.width(8.dp));Text(alt.sourceId,color = glassForeground().copy(.55f),fontSize=12.sp)}}}}
             }
         }
     }
@@ -94,13 +94,16 @@ fun SeriesDetailScreen(app: GassPlayerApplication, series: MediaItem, episodes: 
     Column(Modifier.fillMaxSize()) {
         IconButton(onBack, modifier=Modifier.focusable()){Icon(Icons.Default.ArrowBack,"Indietro")}
         Row(Modifier.fillMaxSize(),horizontalArrangement=Arrangement.spacedBy(24.dp)){
-            Box(Modifier.width(300.dp).fillMaxHeight(.72f).background(Color(0xFF0C0E13))){
+            Box(Modifier.width(300.dp).fillMaxHeight(.72f).clip(RoundedCornerShape(22.dp)).background(Color(0xFF0C0E13))){
                 (meta?.posterUrl ?: series.posterUrl)?.let{AsyncImage(it,null,Modifier.fillMaxSize(),contentScale=ContentScale.Crop)}
             }
             Column(Modifier.fillMaxSize()){
-                Text(meta?.title ?: series.title,color=Color.White,fontSize=30.sp,fontWeight=FontWeight.Bold)
-                Spacer(Modifier.height(8.dp))
-                Text(meta?.overview ?: series.plot.orEmpty(),color=Color.White.copy(.75f),maxLines=5,overflow=TextOverflow.Ellipsis)
+                LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius=20.dp, contentPadding=16.dp) {
+                    Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                        Text(meta?.title ?: series.title,color = glassForeground(),fontSize=30.sp,fontWeight=FontWeight.Bold)
+                        Text(meta?.overview ?: series.plot.orEmpty(),color = glassForeground().copy(.76f),maxLines=5,overflow=TextOverflow.Ellipsis)
+                    }
+                }
                 Spacer(Modifier.height(10.dp))
                 Row(horizontalArrangement=Arrangement.spacedBy(8.dp), verticalAlignment=Alignment.CenterVertically) {
                     seasons.keys.sorted().forEach{s->FilterChip(s==season,{season=s},label={Text("S$s")})}
@@ -113,18 +116,20 @@ fun SeriesDetailScreen(app: GassPlayerApplication, series: MediaItem, episodes: 
                 }
                 Spacer(Modifier.height(10.dp))
                 if (!loadingEpisodes && seasons.isEmpty()) {
-                    Text("Nessun episodio disponibile: il provider non ha restituito i dettagli della serie.", color=Color.White.copy(.65f))
+                    Text("Nessun episodio disponibile: il provider non ha restituito i dettagli della serie.", color = glassForeground().copy(.65f))
                 } else {
                     LazyColumn(verticalArrangement=Arrangement.spacedBy(7.dp),contentPadding=PaddingValues(bottom=40.dp)){
                         items(seasons[season].orEmpty()){ep->
                             val wp=watch.firstOrNull{it.contentId==ep.id}
-                            Card(onClick={onPlay(ep,wp?.positionMs?:0L)},modifier=Modifier.fillMaxWidth().focusable()){
-                                Row(Modifier.padding(12.dp),verticalAlignment=Alignment.CenterVertically){
-                                    Column(Modifier.weight(1f)){
-                                        Text("E${ep.episodeNumber?:0} • ${ep.title}",color=Color.White,fontWeight=FontWeight.SemiBold)
-                                        ep.plot?.let{Text(it,maxLines=2,overflow=TextOverflow.Ellipsis,color=Color.White.copy(.65f))}
+                            Surface(onClick={onPlay(ep,wp?.positionMs?:0L)},modifier=Modifier.fillMaxWidth().focusable(),shape=RoundedCornerShape(16.dp),color=Color.Transparent){
+                                LiquidGlassSurface(Modifier.fillMaxWidth(),cornerRadius=16.dp,contentPadding=0.dp){
+                                    Row(Modifier.padding(12.dp),verticalAlignment=Alignment.CenterVertically){
+                                        Column(Modifier.weight(1f)){
+                                            Text("E${ep.episodeNumber?:0} • ${ep.title}",color = glassForeground(),fontWeight=FontWeight.SemiBold)
+                                            ep.plot?.let{Text(it,maxLines=2,overflow=TextOverflow.Ellipsis,color = glassForeground().copy(.65f))}
+                                        }
+                                        IconButton({app.downloads.enqueue(ep,scopeSettings.downloadWifiOnly)}){Icon(Icons.Default.Download,null)}
                                     }
-                                    IconButton({app.downloads.enqueue(ep,scopeSettings.downloadWifiOnly)}){Icon(Icons.Default.Download,null)}
                                 }
                             }
                         }

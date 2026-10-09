@@ -12,6 +12,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -54,7 +55,7 @@ internal fun SettingsHub(app: GassPlayerApplication, settings: AppSettings, vm: 
                     sources.firstOrNull { it.name == name }?.let { vm.setActive(it.id) }
                 } else HubRow("Sorgente attiva", sources.firstOrNull { it.id == active }?.name ?: "Nessuna", Icons.Default.CheckCircle) { onOpen("sources") }
                 HubRow("Playlist unificate", "Unisci più sorgenti", Icons.Default.Merge) { onOpen("merged") }
-                Text("Per configurare Live TV, VOD e Serie TV, apri Sorgenti e tocca “Aggiungi playlist”.", color = Color.White.copy(.5f), fontSize = 12.sp, modifier = Modifier.padding(horizontal = 4.dp))
+                Text("Per configurare Live TV, VOD e Serie TV, apri Sorgenti e tocca “Aggiungi playlist”.", color = glassForeground().copy(.5f), fontSize = 12.sp, modifier = Modifier.padding(horizontal = 4.dp))
             } }
             item { HubSection("Avanzate", "Generale, interfaccia, lettore e backup", Icons.Default.Tune) {
                 HubRow("Generale", "Catalogo e cronologia", Icons.Default.Settings) { page = "general" }
@@ -113,7 +114,7 @@ internal fun SettingsHub(app: GassPlayerApplication, settings: AppSettings, vm: 
                     } }
                     item { HubSection("User Agent", "Identificativo delle richieste di rete", Icons.Default.Public) {
                         OutlinedTextField(local.customUserAgent, { save(local.copy(customUserAgent = it)) }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("User Agent") }, placeholder = { Text(NetworkApi.DEFAULT_USER_AGENT) })
-                        Text("Vuoto = ${NetworkApi.DEFAULT_USER_AGENT}. La modifica viene applicata alle nuove richieste di rete.", color = Color.White.copy(.5f), fontSize = 12.sp)
+                        Text("Vuoto = ${NetworkApi.DEFAULT_USER_AGENT}. La modifica viene applicata alle nuove richieste di rete.", color = glassForeground().copy(.5f), fontSize = 12.sp)
                     } }
                 }
                 "ui" -> {
@@ -230,15 +231,25 @@ private fun intervalLabel(id: String) = when (id) {
     "threeHours" -> "Ogni 3 ore"; "sixHours" -> "Ogni 6 ore"; "twelveHours" -> "Ogni 12 ore"; "daily" -> "Ogni giorno"; else -> id
 }
 
-@Composable private fun PageTitle(text: String) { Text(text, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 4.dp)) }
+@Composable private fun PageTitle(text: String) { Text(text, color = glassForeground(), fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 4.dp)) }
 
 @Composable
 private fun HubSection(title: String, subtitle: String, icon: ImageVector, content: @Composable ColumnScope.() -> Unit) {
-    Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF141720)), border = BorderStroke(1.dp, Color.White.copy(.08f)), shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    LiquidGlassSurface(
+        modifier = Modifier.fillMaxWidth(),
+        cornerRadius = 21.dp,
+        contentPadding = 16.dp
+    ) {
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(icon, null, tint = Color(0xFF3478F6)); Spacer(Modifier.width(10.dp))
-                Column { Text(title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp); Text(subtitle, color = Color.White.copy(.55f), fontSize = 12.sp) }
+                Box(Modifier.size(38.dp).clip(RoundedCornerShape(13.dp)).background(Color(0xFF3478F6).copy(.17f)), contentAlignment = Alignment.Center) {
+                    Icon(icon, null, tint = Color(0xFF9ABEFF), modifier = Modifier.size(21.dp))
+                }
+                Spacer(Modifier.width(10.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(title, color = glassForeground(), fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                    Text(subtitle, color = glassForeground().copy(.56f), fontSize = 12.sp)
+                }
             }
             content()
         }
@@ -247,23 +258,37 @@ private fun HubSection(title: String, subtitle: String, icon: ImageVector, conte
 
 @Composable
 private fun HubRow(title: String, detail: String, icon: ImageVector, destructive: Boolean = false, onClick: () -> Unit) {
-    Surface(onClick = onClick, shape = RoundedCornerShape(12.dp), color = Color.White.copy(.05f), modifier = Modifier.fillMaxWidth()) {
-        Row(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(icon, null, tint = if (destructive) MaterialTheme.colorScheme.error else Color.White.copy(.8f)); Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Text(title, color = if (destructive) MaterialTheme.colorScheme.error else Color.White, fontWeight = FontWeight.Medium)
-                if (detail.isNotBlank()) Text(detail, color = Color.White.copy(.55f), fontSize = 12.sp, maxLines = 2)
+    var focused by remember(title) { mutableStateOf(false) }
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(14.dp),
+        color = Color.Transparent,
+        modifier = Modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused }
+    ) {
+        LiquidGlassSurface(modifier = Modifier.fillMaxWidth(), cornerRadius = 14.dp, contentPadding = 0.dp, highlighted = focused) {
+            Row(Modifier.padding(horizontal = 13.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(icon, null, tint = if (destructive) MaterialTheme.colorScheme.error else glassForeground(.82f))
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(title, color = if (destructive) MaterialTheme.colorScheme.error else glassForeground(), fontWeight = FontWeight.Medium)
+                    if (detail.isNotBlank()) Text(detail, color = glassForeground().copy(.56f), fontSize = 12.sp, maxLines = 2)
+                }
+                Icon(Icons.Default.ChevronRight, null, tint = glassForeground().copy(.42f))
             }
-            Icon(Icons.Default.ChevronRight, null, tint = Color.White.copy(.35f))
         }
     }
 }
 
 @Composable
 private fun HubToggle(title: String, detail: String?, value: Boolean, onChange: (Boolean) -> Unit) {
-    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color.White.copy(.05f)).padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) { Text(title, color = Color.White, fontWeight = FontWeight.Medium); if (detail != null) Text(detail, color = Color.White.copy(.55f), fontSize = 12.sp) }
-        Switch(value, onChange)
+    LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius = 14.dp, contentPadding = 0.dp) {
+        Row(Modifier.padding(horizontal = 13.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(title, color = glassForeground(), fontWeight = FontWeight.Medium)
+                if (detail != null) Text(detail, color = glassForeground().copy(.56f), fontSize = 12.sp)
+            }
+            Switch(value, onChange)
+        }
     }
 }
 
@@ -271,16 +296,18 @@ private fun HubToggle(title: String, detail: String?, value: Boolean, onChange: 
 private fun HubChoice(title: String, current: String, choices: List<String>, onPick: (String) -> Unit) {
     var open by remember { mutableStateOf(false) }
     Box {
-        Surface(onClick = { open = true }, shape = RoundedCornerShape(12.dp), color = Color.White.copy(.05f), modifier = Modifier.fillMaxWidth()) {
-            Row(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(title, color = Color.White, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
-                Text(current, color = Color.White.copy(.6f)); Icon(Icons.Default.UnfoldMore, null, tint = Color.White.copy(.4f))
+        Surface(onClick = { open = true }, shape = RoundedCornerShape(14.dp), color = Color.Transparent, modifier = Modifier.fillMaxWidth()) {
+            LiquidGlassSurface(modifier = Modifier.fillMaxWidth(), cornerRadius = 14.dp, contentPadding = 0.dp) {
+                Row(Modifier.padding(horizontal = 13.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(title, color = glassForeground(), fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                    Text(current, color = glassForeground().copy(.67f), maxLines = 1)
+                    Spacer(Modifier.width(5.dp)); Icon(Icons.Default.UnfoldMore, null, tint = glassForeground().copy(.48f))
+                }
             }
         }
         DropdownMenu(open, { open = false }) { choices.forEach { c -> CheckItem(c, c == current) { onPick(c); open = false } } }
     }
 }
-
 
 @Composable
 private fun SettingDelayCommit(
@@ -291,14 +318,16 @@ private fun SettingDelayCommit(
     onChange: (Int) -> Unit
 ) {
     var draft by remember(value) { mutableFloatStateOf(value.toFloat()) }
-    Column(Modifier.fillMaxWidth()) {
-        Text("$title: ${draft.toInt()}", color = MaterialTheme.colorScheme.onSurface)
-        Slider(
+    LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius = 14.dp, contentPadding = 12.dp) {
+        Column(Modifier.fillMaxWidth()) {
+            Text("$title: ${draft.toInt()}", color = glassForeground())
+            Slider(
             value = draft.coerceIn(range.first.toFloat(), range.last.toFloat()),
             onValueChange = { draft = it },
             valueRange = range.first.toFloat()..range.last.toFloat(),
             steps = ((range.last - range.first) / step - 1).coerceAtLeast(0),
-            onValueChangeFinished = { onChange(draft.toInt().coerceIn(range.first, range.last)) }
-        )
+                onValueChangeFinished = { onChange(draft.toInt().coerceIn(range.first, range.last)) }
+            )
+        }
     }
 }

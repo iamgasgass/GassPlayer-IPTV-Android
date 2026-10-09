@@ -67,7 +67,11 @@ class MainViewModel(val app: GassPlayerApplication) : ViewModel() {
 
     fun toggleFavorite(item: MediaItem) = viewModelScope.launch { app.favorites.toggle(item) }
     fun toggleLock(id: String) = viewModelScope.launch { app.parental.toggleLock(id) }
-    fun setActive(id: String?) = viewModelScope.launch { app.sources.setActive(id) }
+    fun setActive(id: String?) = viewModelScope.launch {
+        app.sources.setActive(id)
+        // The active source determines the catalog backing every library/Home rail.
+        refresh(true)
+    }
 
     fun updateSettings(s: AppSettings) = viewModelScope.launch {
         app.prefs.saveSettings(s)

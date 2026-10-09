@@ -7,8 +7,30 @@ import java.net.URLEncoder
 
 class TmdbService(private val api: NetworkApi) {
     suspend fun search(query: String, apiKey: String): List<MetadataResult> = withContext(Dispatchers.IO) { if (apiKey.isBlank()) return@withContext emptyList(); val root = api.getJson("https://api.themoviedb.org/3/search/multi?api_key=${enc(apiKey)}&query=${enc(query)}&language=it-IT"); root.jsonObject["results"]?.jsonArray?.mapNotNull { it.jsonObject.toMeta() } ?: emptyList() }
+    /** Trending rails used by the iOS HomeView, returned as metadata cards to be matched against the active playlist. */
+    suspend fun trending(mediaType: String, apiKey: String, window: String = "week"): List<MetadataResult> = withContext(Dispatchers.IO) {
+        if (apiKey.isBlank()) return@withContext emptyList()
+        val path = if (mediaType.equals("tv", ignoreCase = true) || mediaType.equals("series", ignoreCase = true)) "tv" else "movie"
+        val period = if (window == "day") "day" else "week"
+        val root = api.getJson("https://api.themoviedb.org/3/trending/$path/$period?api_key=${enc(apiKey)}&language=it-IT")
+        root.jsonObject["results"]?.jsonArray?.mapNotNull { it.jsonObject.toMeta() } ?: emptyList()
+    }
     suspend fun details(id: String, apiKey: String, series: Boolean): MetadataResult? = withContext(Dispatchers.IO) { if (apiKey.isBlank()) return@withContext null; val path = if (series) "tv" else "movie"; api.getJson("https://api.themoviedb.org/3/$path/$id?api_key=${enc(apiKey)}&language=it-IT&append_to_response=credits,external_ids,images").jsonObject.toMeta() }
-    private fun JsonObject.toMeta(): MetadataResult? { val id = stringOrNull("id") ?: return null; return MetadataResult(id, stringOrNull("title") ?: stringOrNull("name") ?: "", doubleOrNull("vote_average"), stringOrNull("poster_path")?.let { "https://image.tmdb.org/t/p/w780$it" }, stringOrNull("backdrop_path")?.let { "https://image.tmdb.org/t/p/w1280$it" }, stringOrNull("overview"), genres = this["genres"]?.jsonArray?.mapNotNull { it.jsonObject["name"]?.jsonPrimitive?.contentOrNull } ?: emptyList(), cast = this["credits"]?.jsonObject?.get("cast")?.jsonArray?.take(8)?.mapNotNull { it.jsonObject["name"]?.jsonPrimitive?.contentOrNull } ?: emptyList(), externalId = this["external_ids"]?.jsonObject?.get("imdb_id")?.jsonPrimitive?.contentOrNull) }
+    private fun JsonObject.toMeta(): MetadataResult? {
+        val id = stringOrNull("id") ?: return null
+        return MetadataResult(
+            id = id,
+            title = stringOrNull("title") ?: stringOrNull("name") ?: "",
+            rating = doubleOrNull("vote_average"),
+            posterUrl = stringOrNull("poster_path")?.let { "https://image.tmdb.org/t/p/w780$it" },
+            backdropUrl = stringOrNull("backdrop_path")?.let { "https://image.tmdb.org/t/p/w1280$it" },
+            overview = stringOrNull("overview"),
+            genres = this["genres"]?.jsonArray?.mapNotNull { it.jsonObject["name"]?.jsonPrimitive?.contentOrNull } ?: emptyList(),
+            cast = this["credits"]?.jsonObject?.get("cast")?.jsonArray?.take(8)?.mapNotNull { it.jsonObject["name"]?.jsonPrimitive?.contentOrNull } ?: emptyList(),
+            externalId = this["external_ids"]?.jsonObject?.get("imdb_id")?.jsonPrimitive?.contentOrNull,
+            originalTitle = stringOrNull("original_title") ?: stringOrNull("original_name")
+        )
+    }
     private fun JsonObject.stringOrNull(k: String)=this[k]?.jsonPrimitive?.contentOrNull
     private fun JsonObject.doubleOrNull(k:String)=this[k]?.jsonPrimitive?.doubleOrNull
     private fun enc(v:String)=URLEncoder.encode(v,"UTF-8")
@@ -33,7 +55,18 @@ class TraktService(private val api: NetworkApi) {
 }
 
 @kotlinx.serialization.Serializable
-data class MetadataResult(val id: String, val title: String, val rating: Double? = null, val posterUrl: String? = null, val backdropUrl: String? = null, val overview: String? = null, val genres: List<String> = emptyList(), val cast: List<String> = emptyList(), val externalId: String? = null)
+data class MetadataResult(
+    val id: String,
+    val title: String,
+    val rating: Double? = null,
+    val posterUrl: String? = null,
+    val backdropUrl: String? = null,
+    val overview: String? = null,
+    val genres: List<String> = emptyList(),
+    val cast: List<String> = emptyList(),
+    val externalId: String? = null,
+    val originalTitle: String? = null
+)
 
 data class Ratings(val imdb: Double?, val rottenTomatoes: String?, val metacritic: Int?)
 data class SubtitleResult(val id: String, val language: String, val release: String)
