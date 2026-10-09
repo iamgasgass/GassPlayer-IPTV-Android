@@ -402,7 +402,7 @@ private fun HomeScreen(vm: MainViewModel, catalog: CatalogState?, fav: FavoriteS
                             }
                         }
                         "sourceCard" -> {
-                            val activeName = activeSource?.name ?: sources.firstOrNull { it.id == activeSource?.id }?.name
+                            val activeName = sources.firstOrNull { it.id == activeSource }?.name
                             LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius = 22.dp, contentPadding = 18.dp) {
                                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                                     Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -429,7 +429,7 @@ private fun HomeScreen(vm: MainViewModel, catalog: CatalogState?, fav: FavoriteS
                                                         DropdownMenuItem(
                                                             text = { Text(source.name) },
                                                             leadingIcon = { Icon(Icons.Default.Storage, null) },
-                                                            trailingIcon = { if (source.id == activeSource?.id) Icon(Icons.Default.Check, null) },
+                                                            trailingIcon = { if (source.id == activeSource) Icon(Icons.Default.Check, null) },
                                                             onClick = { vm.setActive(source.id); sourceMenuOpen = false }
                                                         )
                                                     }
@@ -644,7 +644,12 @@ private fun MediaCard(item: MediaItem, favorite: Boolean, onClick: () -> Unit, o
         modifier = Modifier.width(w)
             .graphicsLayer { scaleX = scale; scaleY = scale }
             .onFocusChanged { focused = it.isFocused }
-            .combinedClickable(onClick = onClick, onToggleFavorite = onLongClick),
+            .combinedClickable(
+                interactionSource = null,
+                indication = androidx.compose.foundation.LocalIndication.current,
+                onClick = onClick,
+                onLongClick = { onToggleFavorite?.invoke() }
+            ),
         shape = RoundedCornerShape(18.dp),
         color = Color.Transparent,
         border = BorderStroke(if (focused) 1.25.dp else .55.dp, glassForeground(if (focused) .42f else .15f))
