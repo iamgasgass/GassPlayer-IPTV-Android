@@ -73,6 +73,7 @@ fun MovieDetailScreen(
 ) {
     val settings by app.prefs.settingsFlow.collectAsStateWithLifecycle(AppSettings())
     val watch by app.watch.flow.collectAsStateWithLifecycle(emptyList())
+    val sourceConfigs by app.sources.sources.collectAsStateWithLifecycle(emptyList())
     val currentWatch = watch.firstOrNull { it.contentId == item.id }
     val scope = rememberCoroutineScope()
     val scrollState = rememberLazyListState()
@@ -84,7 +85,12 @@ fun MovieDetailScreen(
     var actionMessage by remember(item.id) { mutableStateOf<String?>(null) }
     var downloadWorkId by remember(item.id) { mutableStateOf<String?>(null) }
     val downloadInfo = rememberDownloadWorkInfo(app, downloadWorkId)
-    val alternates = remember(allItems, item.id) { allItems.sameTitleAs(item).filter { it.kind == MediaKind.MOVIE } }
+    val alternates = remember(allItems, item.id, item.sourceId) {
+        allItems.sameTitleAs(item).filter { it.kind == MediaKind.MOVIE && it.sourceId != item.sourceId }
+    }
+    val canSearchAlternates = remember(sourceConfigs, item.sourceId) {
+        sourceConfigs.any { it.isEnabled && it.type == SourceType.XTREAM && it.id != item.sourceId }
+    }
     val topProgress = detailTopProgress(scrollState)
 
     LaunchedEffect(item.id, settings.tmdbApiKey, settings.omdbApiKey, settings.traktClientId) {
@@ -168,7 +174,7 @@ fun MovieDetailScreen(
                             icon = Icons.Default.Search,
                             label = "Altre fonti",
                             modifier = Modifier.weight(1f),
-                            enabled = alternates.isNotEmpty()
+                            enabled = canSearchAlternates
                         ) { showAlternates = true }
                     }
                     actionMessage?.let { Text(it, color = DetailAccent, fontSize = 12.sp) }
@@ -222,32 +228,14 @@ fun MovieDetailScreen(
     }
 
     if (showAlternates) {
-        AlertDialog(
-            onDismissRequest = { showAlternates = false },
-            title = { Text("Altre fonti") },
-            text = {
-                LazyColumn(Modifier.heightIn(max = 420.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                    items(alternates, key = { it.id }) { alt ->
-                        Surface(
-                            onClick = { showAlternates = false; onPlay(alt, 0L) },
-                            color = Color.Transparent,
-                            shape = RoundedCornerShape(14.dp),
-                            modifier = Modifier.fillMaxWidth().focusable()
-                        ) {
-                            LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius = 14.dp, contentPadding = 12.dp) {
-                                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                    Text(alt.title, color = glassForeground(), fontWeight = FontWeight.SemiBold)
-                                    Text(alt.sourceId, color = glassForeground(.62f), fontSize = 12.sp)
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = { TextButton(onClick = { showAlternates = false }) { Text("Chiudi") } },
-            containerColor = Color(0xFF111111),
-            titleContentColor = Color.White,
-            textContentColor = Color.White
+        AlternateSourcesView(
+            title = item.title,
+            kind = MediaKind.MOVIE,
+            excludingSourceId = item.sourceId,
+            candidates = allItems,
+            configuredSources = sourceConfigs,
+            onDismiss = { showAlternates = false },
+            onSelect = { alternate -> onPlay(alternate, 0L) }
         )
     }
 }
@@ -266,9 +254,12 @@ fun SeriesDetailScreen(
 ) {
     val settings by app.prefs.settingsFlow.collectAsStateWithLifecycle(AppSettings())
     val watch by app.watch.flow.collectAsStateWithLifecycle(emptyList())
+    val sourceConfigs by app.sources.sources.collectAsStateWithLifecycle(emptyList())
     val scope = rememberCoroutineScope()
     val scrollState = rememberLazyListState()
-    var loadedEpisodes by remember(series.id) { mutableStateOf(episodes.filter { it.seriesId == series.id.substringAfterLast(':') }) }
+    // Do not filter the entire disk-backed episode catalogue on the UI thread. The scoped repository
+    // query below reads only this series' cached rows and refreshes that series in the background.
+    var loadedEpisodes by remember(series.id) { mutableStateOf<List<MediaItem>>(emptyList()) }
     var loadingEpisodes by remember(series.id) { mutableStateOf(false) }
     var loadError by remember(series.id) { mutableStateOf<String?>(null) }
     var meta by remember(series.id) { mutableStateOf<MetadataResult?>(null) }
@@ -280,8 +271,11 @@ fun SeriesDetailScreen(
     var season by remember(series.id) { mutableStateOf(0) }
     val seriesKey = series.id.substringAfterLast(':')
     val topProgress = detailTopProgress(scrollState)
-    val alternates = remember(allSeries, series.id, series.title) {
-        allSeries.filter { it.id != series.id && it.kind == MediaKind.SERIES && it.title.normalizedMediaTitle() == series.title.normalizedMediaTitle() }
+    val alternates = remember(allSeries, series.id, series.title, series.sourceId) {
+        allSeries.sameTitleAs(series).filter { it.kind == MediaKind.SERIES && it.sourceId != series.sourceId && it.title.normalizedMediaTitle() == series.title.normalizedMediaTitle() }
+    }
+    val canSearchAlternates = remember(sourceConfigs, series.sourceId) {
+        sourceConfigs.any { it.isEnabled && it.type == SourceType.XTREAM && it.id != series.sourceId }
     }
 
     suspend fun fetchEpisodes() {
@@ -309,11 +303,6 @@ fun SeriesDetailScreen(
         val seasonEpisodes = runCatching { app.tmdb.seasonEpisodes(tvId, season, settings.tmdbApiKey).associateBy { it.episodeNumber } }.getOrDefault(emptyMap())
         tmdbEpisodesBySeason = tmdbEpisodesBySeason + (season to seasonEpisodes)
     }
-    LaunchedEffect(episodes, series.id) {
-        val candidates = episodes.filter { it.seriesId == seriesKey || it.seriesId == series.id }
-        if (candidates.isNotEmpty() && loadedEpisodes.isEmpty()) loadedEpisodes = candidates
-    }
-
     val sortedEpisodes = remember(loadedEpisodes) {
         loadedEpisodes.sortedWith(compareBy({ it.seasonNumber ?: 0 }, { it.episodeNumber ?: 0 }, { it.title.lowercase(Locale.ROOT) }))
     }
@@ -389,7 +378,7 @@ fun SeriesDetailScreen(
                                 }
                             }
                         }
-                        DetailActionButton(Icons.Default.Search, "Altre fonti", modifier = Modifier.weight(1f), enabled = alternates.isNotEmpty()) {
+                        DetailActionButton(Icons.Default.Search, "Altre fonti", modifier = Modifier.weight(1f), enabled = canSearchAlternates) {
                             showAlternates = true
                         }
                     }
@@ -469,25 +458,14 @@ fun SeriesDetailScreen(
     }
 
     if (showAlternates) {
-        AlertDialog(
-            onDismissRequest = { showAlternates = false },
-            title = { Text("Altre fonti") },
-            text = {
-                LazyColumn(Modifier.heightIn(max = 420.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                    items(alternates, key = { it.id }) { alt ->
-                        Surface(onClick = { showAlternates = false; onOpenAlternateSeries(alt) }, modifier = Modifier.fillMaxWidth().focusable(), color = Color.Transparent, shape = RoundedCornerShape(14.dp)) {
-                            LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius = 14.dp, contentPadding = 12.dp) {
-                                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                    Text(alt.title, color = glassForeground(), fontWeight = FontWeight.SemiBold)
-                                    Text(alt.sourceId, color = glassForeground(.62f), fontSize = 12.sp)
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = { TextButton(onClick = { showAlternates = false }) { Text("Chiudi") } },
-            containerColor = Color(0xFF111111), titleContentColor = Color.White, textContentColor = Color.White
+        AlternateSourcesView(
+            title = series.title,
+            kind = MediaKind.SERIES,
+            excludingSourceId = series.sourceId,
+            candidates = allSeries,
+            configuredSources = sourceConfigs,
+            onDismiss = { showAlternates = false },
+            onSelect = { alternate -> onOpenAlternateSeries(alternate) }
         )
     }
 }

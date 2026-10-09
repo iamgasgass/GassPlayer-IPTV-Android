@@ -45,7 +45,9 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gassplayer.android.GassPlayerApplication
 import com.gassplayer.android.data.*
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -53,6 +55,19 @@ import java.util.Locale
 private val SourcesMuted = Color(0xFFB5BBC9)
 private val SourcesBlue = Color(0xFF9ABEFF)
 private val SourcesGreen = Color(0xFF63D995)
+
+private data class SourceItemCounts(
+    val live: Int = 0,
+    val movies: Int = 0,
+    val series: Int = 0,
+    val episodes: Int = 0
+) { val total: Int get() = live + movies + series + episodes }
+
+private data class SourceFavoriteCounts(
+    val live: Int = 0,
+    val movies: Int = 0,
+    val series: Int = 0
+)
 
 /** Android/Android TV translation of SourcesView.swift: source aggregation, sort/search,
  * merge playlists, favourites, backup/import and batch verification remain actionable. */
@@ -385,7 +400,49 @@ private fun SourceManageView(app: GassPlayerApplication, vm: MainViewModel, sour
     var mergedSourceName by remember(current.id) { mutableStateOf("${current.name} + altra sorgente") }
     var selectedMergeSources by remember(current.id) { mutableStateOf(setOf(current.id)) }
     var sourceExportJson by remember { mutableStateOf<String?>(null) }
-    val sourceItems = remember(catalog, current.id) { catalog?.allItems?.filter { it.sourceId == current.id }.orEmpty() }
+    var sourceItemCounts by remember(current.id) { mutableStateOf(SourceItemCounts()) }
+    var sourceFavoriteCounts by remember(current.id) { mutableStateOf(SourceFavoriteCounts()) }
+
+    // Source management must not decode every item on the UI thread just to show counts.
+    LaunchedEffect(current.id, catalog?.updatedAt) {
+        val snapshot = catalog
+        sourceItemCounts = withContext(Dispatchers.IO) {
+            val db = snapshot?.store
+            if (db != null) {
+                val counts = db.sourceKindCounts(current.id)
+                SourceItemCounts(
+                    live = counts[MediaKind.LIVE] ?: 0,
+                    movies = counts[MediaKind.MOVIE] ?: 0,
+                    series = counts[MediaKind.SERIES] ?: 0,
+                    episodes = counts[MediaKind.EPISODE] ?: 0
+                )
+            } else {
+                val counts = snapshot?.allItems?.asSequence()?.filter { it.sourceId == current.id }?.groupingBy { it.kind }?.eachCount().orEmpty()
+                SourceItemCounts(counts[MediaKind.LIVE] ?: 0, counts[MediaKind.MOVIE] ?: 0, counts[MediaKind.SERIES] ?: 0, counts[MediaKind.EPISODE] ?: 0)
+            }
+        }
+    }
+    LaunchedEffect(current.id, catalog?.updatedAt, favorites.live, favorites.movies, favorites.series) {
+        val snapshot = catalog
+        val liveIds = favorites.live
+        val movieIds = favorites.movies
+        val seriesIds = favorites.series
+        sourceFavoriteCounts = withContext(Dispatchers.IO) {
+            val db = snapshot?.store
+            if (db != null) SourceFavoriteCounts(
+                live = db.countIdsOfSource(current.id, MediaKind.LIVE, liveIds),
+                movies = db.countIdsOfSource(current.id, MediaKind.MOVIE, movieIds),
+                series = db.countIdsOfSource(current.id, MediaKind.SERIES, seriesIds)
+            ) else {
+                val matching = snapshot?.allItems?.asSequence()?.filter { it.sourceId == current.id }?.toList().orEmpty()
+                SourceFavoriteCounts(
+                    live = matching.count { it.kind == MediaKind.LIVE && it.id in liveIds },
+                    movies = matching.count { it.kind == MediaKind.MOVIE && it.id in movieIds },
+                    series = matching.count { it.kind == MediaKind.SERIES && it.id in seriesIds }
+                )
+            }
+        }
+    }
     val expirationText = account?.expDate?.let { exp ->
         if (exp <= 0L) "Senza scadenza" else SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(if (exp < 1_000_000_000_000L) exp * 1000 else exp))
     } ?: "—"
@@ -434,7 +491,7 @@ private fun SourceManageView(app: GassPlayerApplication, vm: MainViewModel, sour
             }
         }
         SourceActionRow(Icons.Default.Edit, "Modifica dettagli", "Nome, server e credenziali", Color(0xFF9DABFF)) { editDialog = true }
-        SourceActionRow(Icons.Default.Settings, "Gestisci contenuto", "${sourceItems.size} elementi nel catalogo · Live TV, film, serie ed episodi", Color(0xFF9DABFF)) { contentDialog = true }
+        SourceActionRow(Icons.Default.Settings, "Gestisci contenuto", "${sourceItemCounts.total} elementi nel catalogo · Live TV, film, serie ed episodi", Color(0xFF9DABFF)) { contentDialog = true }
         SourceActionRow(Icons.Default.Tv, "Gestisci EPG", "Configura e verifica la guida TV", Color(0xFFB59AFF)) { onRoute("epg-manage") }
         SourceActionRow(Icons.Default.Delete, "Cancella", "Rimuove la sorgente e le credenziali salvate", Color(0xFFFF8791)) { deleteDialog = true }
         Spacer(Modifier.height(12.dp))
@@ -442,13 +499,13 @@ private fun SourceManageView(app: GassPlayerApplication, vm: MainViewModel, sour
 
     if (editDialog) SourceEditDialog(current, onDismiss = { editDialog = false }) { updated -> scope.launch { app.sources.addOrUpdate(updated); vm.refresh(false); editDialog = false } }
     if (contentDialog) {
-        val live = sourceItems.count { it.kind == MediaKind.LIVE }
-        val movies = sourceItems.count { it.kind == MediaKind.MOVIE }
-        val series = sourceItems.count { it.kind == MediaKind.SERIES }
-        val episodes = sourceItems.count { it.kind == MediaKind.EPISODE }
-        val liveFavorites = sourceItems.count { it.kind == MediaKind.LIVE && it.id in favorites.live }
-        val movieFavorites = sourceItems.count { it.kind == MediaKind.MOVIE && it.id in favorites.movies }
-        val seriesFavorites = sourceItems.count { it.kind == MediaKind.SERIES && it.id in favorites.series }
+        val live = sourceItemCounts.live
+        val movies = sourceItemCounts.movies
+        val series = sourceItemCounts.series
+        val episodes = sourceItemCounts.episodes
+        val liveFavorites = sourceFavoriteCounts.live
+        val movieFavorites = sourceFavoriteCounts.movies
+        val seriesFavorites = sourceFavoriteCounts.series
         AlertDialog(
             onDismissRequest = { contentDialog = false },
             title = { Text("Contenuto di ${current.name}") },

@@ -181,6 +181,34 @@ class CatalogDb(context: Context) : SQLiteOpenHelper(context.applicationContext,
 
     fun cachedSourceCount(): Int = readableDatabase.rawQuery("SELECT COUNT(*) FROM meta", null).use { if (it.moveToFirst()) it.getInt(0) else 0 }
 
+    /** Counts a source's item kinds using SQLite aggregation; never decodes playlist JSON. */
+    fun sourceKindCounts(sourceId: String): Map<MediaKind, Int> =
+        readableDatabase.rawQuery(
+            "SELECT kind, COUNT(*) FROM items WHERE src=? GROUP BY kind",
+            arrayOf(sourceId)
+        ).use { cursor ->
+            buildMap {
+                while (cursor.moveToNext()) {
+                    val ordinal = cursor.getInt(0)
+                    MediaKind.entries.getOrNull(ordinal)?.let { put(it, cursor.getInt(1)) }
+                }
+            }
+        }
+
+    /** Counts favourites from this source without materialising or decoding the full catalog. */
+    fun countIdsOfSource(sourceId: String, kind: MediaKind, ids: Set<String>): Int {
+        if (ids.isEmpty()) return 0
+        var total = 0
+        for (chunk in ids.chunked(400)) {
+            val marks = chunk.joinToString(",") { "?" }
+            total += scalar(
+                "SELECT COUNT(*) FROM items WHERE src=? AND kind=? AND id IN ($marks)",
+                arrayOf(sourceId, kind.ordinal.toString()) + chunk.toTypedArray()
+            )
+        }
+        return total
+    }
+
     fun findById(id: String): MediaItem? = readableDatabase.rawQuery("SELECT json FROM items WHERE id=? LIMIT 1", arrayOf(id)).use { c ->
         if (c.moveToFirst()) decode(c.getString(0)) else null
     }
@@ -195,6 +223,30 @@ class CatalogDb(context: Context) : SQLiteOpenHelper(context.applicationContext,
         val sql = "SELECT json FROM items WHERE kind=? AND src=? AND pk $op (SELECT pk FROM items WHERE id=? AND src=? AND kind=? LIMIT 1) ORDER BY pk $order LIMIT 1"
         val live = MediaKind.LIVE.ordinal.toString()
         return query(sql, arrayOf(live, src, id, src, live)).firstOrNull()
+    }
+
+
+    /** Resolves watched episode IDs to stable series item IDs without scanning the entire episode list. */
+    fun parentSeriesItemIdsForEpisodes(episodeIds: Set<String>, sources: List<String>): Set<String> {
+        if (episodeIds.isEmpty() || sources.isEmpty()) return emptySet()
+        val out = LinkedHashSet<String>()
+        val sourceMarks = sources.joinToString(",") { "?" }
+        for (chunk in episodeIds.chunked(350)) {
+            if (chunk.isEmpty()) continue
+            val marks = chunk.joinToString(",") { "?" }
+            val args = arrayOf(MediaKind.EPISODE.ordinal.toString()) + chunk + sources
+            readableDatabase.rawQuery(
+                "SELECT src, sid FROM items WHERE kind=? AND id IN ($marks) AND src IN ($sourceMarks) AND sid IS NOT NULL",
+                args
+            ).use { cursor ->
+                while (cursor.moveToNext()) {
+                    val sourceId = cursor.getString(0)
+                    val seriesId = cursor.getString(1)
+                    if (sourceId.isNotBlank() && seriesId.isNotBlank()) out += "$sourceId:series:$seriesId"
+                }
+            }
+        }
+        return out
     }
 
     fun byIds(kind: MediaKind, ids: Set<String>, sources: List<String>): List<MediaItem> {
@@ -249,8 +301,8 @@ class CatalogDb(context: Context) : SQLiteOpenHelper(context.applicationContext,
 }
 
 /**
- * A read-only List<MediaItem> whose elements are fetched from [CatalogDb] page by page (200 rows,
- * 8 pages cached). It is a normal `List`, so Compose lazy grids and the existing screens work
+ * A read-only List<MediaItem> whose elements are fetched from [CatalogDb] in small 64-row pages,
+ * with up to 12 pages cached. It is a normal `List`, so Compose lazy grids and the existing screens work
  * unchanged, but memory stays flat however big the playlist is.
  */
 class DbList internal constructor(
@@ -259,7 +311,9 @@ class DbList internal constructor(
     internal val sources: List<String>,
     internal val category: String? = null,
     private val generation: Long = db.generation,
-    internal val excluded: Set<String> = emptySet()
+    internal val excluded: Set<String> = emptySet(),
+    internal val searchText: String? = null,
+    internal val searchTitleOnly: Boolean = false
 ) : java.util.AbstractList<MediaItem>(), RandomAccess {
 
     private val pages = object : LinkedHashMap<Int, List<MediaItem>>(16, 0.75f, true) {
@@ -272,6 +326,10 @@ class DbList internal constructor(
         when (category) { null -> {}; CATEGORY_NONE -> sb.append(" AND cat IS NULL"); else -> sb.append(" AND cat=?") }
         // Parental-locked ids are excluded in SQL (quoted literals): filtering in Kotlin would pull the whole catalog into RAM.
         if (excluded.isNotEmpty()) sb.append(" AND id NOT IN (").append(excluded.joinToString(",") { "'" + it.replace("'", "''") + "'" }).append(")")
+        if (!searchText.isNullOrBlank()) {
+            if (searchTitleOnly) sb.append(" AND title LIKE ? ESCAPE '\\'")
+            else sb.append(" AND (title LIKE ? ESCAPE '\\' OR COALESCE(cat,'') LIKE ? ESCAPE '\\')")
+        }
         return sb.toString()
     }
 
@@ -279,14 +337,42 @@ class DbList internal constructor(
         val args = ArrayList<String>()
         args += kind.ordinal.toString(); args += sources
         if (category != null && category != CATEGORY_NONE) args += category
+        if (!searchText.isNullOrBlank()) {
+            val escaped = searchText.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            args += "%$escaped%"
+            if (!searchTitleOnly) args += "%$escaped%"
+        }
         return args.toTypedArray()
     }
 
     /** Same list restricted to one category ([CATEGORY_NONE] = uncategorised, null = all). */
-    fun withCategory(cat: String?): DbList = DbList(db, kind, sources, cat, generation, excluded)
+    fun withCategory(cat: String?): DbList = DbList(db, kind, sources, cat, generation, excluded, searchText, searchTitleOnly)
 
     /** Same list without the given ids (e.g. parental locks). */
-    fun excluding(ids: Set<String>): DbList = if (ids.isEmpty()) this else DbList(db, kind, sources, category, generation, excluded + ids)
+    fun excluding(ids: Set<String>): DbList = if (ids.isEmpty()) this else DbList(db, kind, sources, category, generation, excluded + ids, searchText, searchTitleOnly)
+
+    /** Applies text filtering in SQLite, never by iterating a potentially huge playlist on the UI thread. */
+    fun matching(text: String?): DbList = when {
+        text.isNullOrBlank() -> if (searchText == null && !searchTitleOnly) this else DbList(db, kind, sources, category, generation, excluded)
+        text.trim() == searchText && !searchTitleOnly -> this
+        else -> DbList(db, kind, sources, category, generation, excluded, text.trim(), false)
+    }
+
+    /** Title-only search used by EPG channel search to avoid scanning a large catalog. */
+    fun matchingTitle(text: String?): DbList = when {
+        text.isNullOrBlank() -> if (searchText == null) this else DbList(db, kind, sources, category, generation, excluded)
+        text.trim() == searchText && searchTitleOnly -> this
+        else -> DbList(db, kind, sources, category, generation, excluded, text.trim(), true)
+    }
+
+    /** Restricts the same query to a subset of configured sources; used by AlternateSourcesView. */
+    fun fromSources(sourceIds: List<String>): DbList {
+        val allowed = sourceIds.filter { it in sources }.distinct()
+        return if (allowed == sources) this else DbList(db, kind, allowed, category, generation, excluded, searchText, searchTitleOnly)
+    }
+
+    /** Query view containing every enabled source except the currently-open source. */
+    fun excludingSource(sourceId: String): DbList = fromSources(sources.filterNot { it == sourceId })
 
     override val size: Int get() = cachedSize
 
@@ -304,12 +390,13 @@ class DbList internal constructor(
     // Cheap identity: without this, Compose `remember(items)` would compare two lists element by
     // element (= load the entire catalog) every time a new CatalogState is published.
     override fun equals(other: Any?): Boolean =
-        other is DbList && other.db === db && other.kind == kind && other.category == category && other.sources == sources && other.generation == generation && other.excluded == excluded
-    override fun hashCode(): Int = ((kind.ordinal * 31 + (category?.hashCode() ?: 0)) * 31 + sources.hashCode()) * 31 + generation.hashCode() + excluded.hashCode()
+        other is DbList && other.db === db && other.kind == kind && other.category == category && other.sources == sources && other.generation == generation && other.excluded == excluded && other.searchText == searchText && other.searchTitleOnly == searchTitleOnly
+    override fun hashCode(): Int = ((kind.ordinal * 31 + (category?.hashCode() ?: 0)) * 31 + sources.hashCode()) * 31 + generation.hashCode() + excluded.hashCode() * 31 + (searchText?.hashCode() ?: 0) * 31 + searchTitleOnly.hashCode()
 
     private companion object {
-        const val PAGE = 200
-        const val MAX_PAGES = 8
+        // Keep each UI-thread page decode small; the visible grid/row usually needs fewer than 40 items.
+        const val PAGE = 32
+        const val MAX_PAGES = 12
         val PLACEHOLDER = MediaItem(id = "", sourceId = "", kind = MediaKind.LIVE, title = "", streamUrl = "")
     }
 }
@@ -344,8 +431,33 @@ fun List<MediaItem>.categoryCounts(): Map<String?, Int> =
 fun List<MediaItem>.withoutIds(ids: Set<String>): List<MediaItem> =
     if (ids.isEmpty()) this else if (this is DbList) excluding(ids) else filterNot { it.id in ids }
 
+/** Text search that keeps disk-backed playlists lazy and SQL-filtered. */
+fun List<MediaItem>.matchingText(text: String?): List<MediaItem> =
+    if (this is DbList) matching(text)
+    else if (text.isNullOrBlank()) this
+    else filter { item -> item.title.contains(text.trim(), ignoreCase = true) || item.group.orEmpty().contains(text.trim(), ignoreCase = true) }
+
+/** Title-only variant for EPG search, preserving the iOS channel-name matching behaviour. */
+fun List<MediaItem>.matchingTitle(text: String?): List<MediaItem> =
+    if (this is DbList) matchingTitle(text)
+    else if (text.isNullOrBlank()) this
+    else filter { it.title.contains(text.trim(), ignoreCase = true) }
+
+/** Excludes a source without materialising the list when it is backed by SQLite. */
+fun List<MediaItem>.excludingSource(sourceId: String): List<MediaItem> =
+    if (this is DbList) excludingSource(sourceId) else filterNot { it.sourceId == sourceId }
+
+/** Restricts candidates to the selected sources using SQL for disk-backed catalogues. */
+fun List<MediaItem>.fromSourceIds(sourceIds: List<String>): List<MediaItem> =
+    if (this is DbList) fromSources(sourceIds) else filter { it.sourceId in sourceIds }
+
 fun List<MediaItem>.onlyIds(ids: Set<String>): List<MediaItem> =
     if (this is DbList) db.byIds(kind, ids, sources) else filter { it.id in ids }
+
+/** Uses the episode index in SQLite to find parent series in very large disk-backed catalogs. */
+fun List<MediaItem>.seriesItemIdsForEpisodeIds(episodeIds: Set<String>): Set<String> =
+    if (this is DbList) db.parentSeriesItemIdsForEpisodes(episodeIds, sources)
+    else filter { it.id in episodeIds }.mapNotNullTo(LinkedHashSet()) { item -> item.seriesId?.let { "${item.sourceId}:series:$it" } }
 
 fun List<MediaItem>.sourceIds(): Set<String> =
     if (this is DbList) sources.toSet() else mapTo(HashSet()) { it.sourceId }

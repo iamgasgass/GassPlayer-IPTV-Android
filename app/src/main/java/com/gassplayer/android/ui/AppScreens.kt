@@ -744,14 +744,17 @@ private fun CatalogScreen(
         } else emptyList()
     }
 
-    val filtered = remember(items, filter, parental.lockedIds, searchQuery) {
-        items.inCategory(filter)
-            .withoutIds(parental.lockedIds)
-            .filter { searchQuery.isBlank() || it.title.contains(searchQuery.trim(), ignoreCase = true) || it.group.orEmpty().contains(searchQuery.trim(), ignoreCase = true) }
+    // Keep disk-backed catalogs lazy: applying Kotlin .filter to DbList here used to
+    // decode/scan every item on the main thread whenever Live/Film changed route.
+    val baseFiltered = remember(items, filter, parental.lockedIds) {
+        items.inCategory(filter).withoutIds(parental.lockedIds)
+    }
+    val filtered = remember(baseFiltered, searchQuery) {
+        baseFiltered.matchingText(searchQuery)
     }
     val watchedIds = remember(watch) { watch.filter { it.kind == MediaKind.MOVIE }.associateBy { it.contentId } }
     val continueItems = remember(items, watch, detail) {
-        if (!detail) emptyList() else items.filter { it.id in watchedIds.keys }
+        if (!detail) emptyList() else items.onlyIds(watchedIds.keys)
             .sortedByDescending { watchedIds[it.id]?.lastWatchedMs ?: 0L }
     }
 
@@ -870,16 +873,22 @@ private fun SeriesScreen(
         } else emptyList()
     }
 
-    val filtered = remember(series, filter, parental.lockedIds, searchQuery) {
+    // Apply category, parental and text predicates in SQLite for large playlist catalogs.
+    val baseFiltered = remember(series, filter, parental.lockedIds) {
         series.inCategory(filter).withoutIds(parental.lockedIds)
-            .filter { searchQuery.isBlank() || it.title.contains(searchQuery.trim(), ignoreCase = true) || it.group.orEmpty().contains(searchQuery.trim(), ignoreCase = true) }
+    }
+    val filtered = remember(baseFiltered, searchQuery) {
+        baseFiltered.matchingText(searchQuery)
     }
     val watchedById = remember(watch) { watch.filter { it.kind == MediaKind.EPISODE || it.kind == MediaKind.SERIES }.associateBy { it.contentId } }
-    val watchedSeriesIds = remember(watch, episodes) {
-        watch.filter { it.kind == MediaKind.EPISODE }.mapNotNull { entry -> episodes.firstOrNull { it.id == entry.contentId }?.seriesId }.toSet()
+    val continueSectionVisible = "continueWatching" in visibleSections
+    val watchedSeriesIds = remember(watch, episodes, continueSectionVisible) {
+        if (!continueSectionVisible) emptySet()
+        else episodes.seriesItemIdsForEpisodeIds(watch.filter { it.kind == MediaKind.EPISODE }.mapTo(HashSet()) { it.contentId })
     }
-    val continueItems = remember(series, watchedById, watchedSeriesIds) {
-        series.filter { it.id in watchedById.keys || it.id in watchedSeriesIds || it.seriesId in watchedSeriesIds }
+    val continueItems = remember(series, watchedById, watchedSeriesIds, continueSectionVisible) {
+        if (!continueSectionVisible) emptyList()
+        else series.onlyIds(watchedById.keys + watchedSeriesIds)
             .sortedByDescending { watchedById[it.id]?.lastWatchedMs ?: 0L }
     }
 

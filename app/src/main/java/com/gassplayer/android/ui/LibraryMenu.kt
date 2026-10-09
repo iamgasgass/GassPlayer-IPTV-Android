@@ -87,10 +87,11 @@ internal fun LibraryHeader(
             }
             Spacer(Modifier.weight(1f))
         } else {
+            // The scrollable playlist groups use the same neutral glass capsule as Home → Personalizza.
             LazyRow(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                item { FilterChip(filter == null, { onFilter(null) }, label = { Text("Tutto") }) }
-                if (uncategorized > 0) item { FilterChip(filter == GROUP_NONE, { onFilter(GROUP_NONE) }, label = { Text("Senza categoria") }) }
-                items(ordered, key = { it.id }) { c -> FilterChip(filter == c.id, { onFilter(c.id) }, label = { Text(c.name) }) }
+                item(key = "group-all") { PlaylistGroupGlassPill("Tutto", filter == null) { onFilter(null) } }
+                if (uncategorized > 0) item(key = "group-none") { PlaylistGroupGlassPill("Senza categoria", filter == GROUP_NONE) { onFilter(GROUP_NONE) } }
+                items(ordered, key = { it.id }) { c -> PlaylistGroupGlassPill(c.name, filter == c.id) { onFilter(c.id) } }
             }
         }
         Box {
@@ -118,6 +119,29 @@ internal fun LibraryHeader(
                     }
                 }
             }
+        }
+    }
+}
+
+
+@Composable
+private fun PlaylistGroupGlassPill(label: String, selected: Boolean, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(50),
+        color = Color.Transparent,
+        contentColor = glassForeground()
+    ) {
+        LiquidGlassPill(selected = selected) {
+            Text(
+                label,
+                color = if (selected) Color.White else glassForeground().copy(.86f),
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                fontSize = 13.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 190.dp)
+            )
         }
     }
 }

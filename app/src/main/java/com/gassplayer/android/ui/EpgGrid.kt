@@ -222,7 +222,7 @@ fun EpgGridScreen(
             }
         } else live.inCategory(groupId)
         if (normalizedSearch.isEmpty()) grouped
-        else grouped.filter { it.title.contains(normalizedSearch, ignoreCase = true) }
+        else grouped.matchingTitle(normalizedSearch)
     }
     LaunchedEffect(groupId, favoritesOnly, normalizedSearch, dayOffset) { renderLimit = PAGE }
     val visible = channels.take(minOf(renderLimit, HARD_CAP))

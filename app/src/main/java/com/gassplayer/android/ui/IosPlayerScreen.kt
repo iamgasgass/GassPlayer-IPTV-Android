@@ -381,12 +381,20 @@ fun IosPlayerScreen(
         if (renderPlayerSurface) {
         AndroidView(
             factory = {
-                (if (localSettings.panorama360) android.view.LayoutInflater.from(context).inflate(com.gassplayer.android.R.layout.gass_player_view_spherical, null) as PlayerView else PlayerView(context)).apply {
+                val isTelevision = (context.resources.configuration.uiMode and Configuration.UI_MODE_TYPE_MASK) == Configuration.UI_MODE_TYPE_TELEVISION
+                val inflater = android.view.LayoutInflater.from(context)
+                val playerView = when {
+                    localSettings.panorama360 -> inflater.inflate(com.gassplayer.android.R.layout.gass_player_view_spherical, null, false) as PlayerView
+                    isTelevision == false -> inflater.inflate(com.gassplayer.android.R.layout.gass_player_view_texture, null, false) as PlayerView
+                    else -> PlayerView(context) // SurfaceView remains the lower-cost default on Android TV.
+                }
+                playerView.apply {
                     useController = false
                     player = app.playback.player
                     keepScreenOn = true
                     setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
                     setShutterBackgroundColor(android.graphics.Color.BLACK)
+                    setKeepContentOnPlayerReset(true)
                     resizeMode = resizeModeForAspect(aspect)
                 }
             },
