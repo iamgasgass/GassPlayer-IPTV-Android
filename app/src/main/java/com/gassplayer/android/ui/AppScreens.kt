@@ -64,6 +64,8 @@ private val Dark = Color(0xFF050609)
 fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
     var route by remember { mutableStateOf("home") }
     var playerItem by remember { mutableStateOf<MediaItem?>(null) }
+    var managerSourceId by remember { mutableStateOf<String?>(null) }
+    var epgManageReturnRoute by remember { mutableStateOf("settings") }
     val catalog by vm.catalog.collectAsStateWithLifecycle()
     val settings by vm.settings.collectAsStateWithLifecycle()
     val favorite by vm.favorites.collectAsStateWithLifecycle()
@@ -81,7 +83,7 @@ fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
     val loading by vm.loading.collectAsStateWithLifecycle()
     val message by vm.message.collectAsStateWithLifecycle()
     AdaptiveShell(route, tv, loading, message, onRetry = { vm.refresh(true) }, onRoute = { route = it }, title = when(route) {
-        "home" -> "GassPlayer"; "live" -> "Live TV"; "movies" -> "Film"; "series" -> "Serie"; "epg" -> "Guida TV"; "search" -> "Cerca"; "sources" -> "Sorgenti"; "downloads" -> "Download"; "settings" -> "Impostazioni"; "home-customize" -> "Personalizza Home"; "vpn" -> "VPN"; "parental" -> "Controllo genitori"; "diagnostics" -> "Diagnostica"; "backup" -> "Backup e migrazione"; "epg-manage" -> "Fonti EPG"; "merged" -> "Playlist unificate"; else -> "GassPlayer"
+        "home" -> "GassPlayer"; "live" -> "Live TV"; "movies" -> "Film"; "series" -> "Serie"; "epg" -> "Guida TV"; "search" -> "Cerca"; "sources" -> "Sorgenti"; "source-manager" -> "Gestisci sorgenti"; "downloads" -> "Download"; "settings" -> "Impostazioni"; "home-customize" -> "Personalizza Home"; "vpn" -> "VPN"; "parental" -> "Controllo genitori"; "diagnostics" -> "Diagnostica"; "backup" -> "Backup e migrazione"; "epg-manage" -> "Fonti EPG"; "merged" -> "Playlist unificate"; else -> "GassPlayer"
     }) {
         when (route) {
             "home" -> HomeScreen(vm, catalog, favorite, watch, sources, onRoute = { route = it }, onPlay = { playerItem = it })
@@ -89,14 +91,23 @@ fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
             "movies" -> CatalogScreen("Film", catalog?.movies.orEmpty(), catalog?.vodCategories.orEmpty(), favorite, parental, vm, onPlay = { playerItem = it }, detail = true)
             "series" -> SeriesScreen(catalog?.series.orEmpty(), catalog?.episodes.orEmpty(), catalog?.seriesCategories.orEmpty(), favorite, parental, vm, onPlay = { playerItem = it })
             "epg" -> EpgGridScreen(app, vm, catalog?.live.orEmpty(), catalog?.liveCategories.orEmpty(), favorite, settings, onPlay = { playerItem = it })
-            "epg-manage" -> ExternalEpgManageScreen(app)
+            "epg-manage" -> ExternalEpgManageScreen(app, onBack = { route = epgManageReturnRoute })
             "merged" -> MergedPlaylistScreen(app)
             "home-customize" -> HomeCustomizationScreen(vm)
             "trakt" -> TraktScreen(app, settings, vm)
             "search" -> SearchScreen(app, catalog, onPlay = { playerItem = it }, onRoute = { route = it })
-            "sources" -> SourcesScreen(app, vm)
+            "sources" -> SourcesView(app, vm, onRoute = { route = it }, onManage = { managerSourceId = it.id; route = "source-manager" })
+            "source-manager" -> SourceManagerView(app, vm, initialSourceId = managerSourceId, onBack = { managerSourceId = null; route = "sources" }, onRoute = { next ->
+                if (next == "epg-manage") {
+                    epgManageReturnRoute = "source-manager"
+                    route = next
+                } else {
+                    managerSourceId = null
+                    route = next
+                }
+            })
             "downloads" -> DownloadsScreen(app)
-            "settings" -> SettingsHub(app, settings, vm, onOpen = { route = it })
+            "settings" -> SettingsHub(app, settings, vm, onOpen = { next -> if (next == "epg-manage") epgManageReturnRoute = "settings"; route = next })
             "vpn" -> VpnScreen(app)
             "parental" -> ParentalScreen(vm, parental)
             "diagnostics" -> DiagnosticsScreen(app)
@@ -230,7 +241,7 @@ private fun HomeScreen(vm: MainViewModel, catalog: CatalogState?, fav: FavoriteS
         val detail = selectedDetail!!
         when (detail.kind) {
             MediaKind.MOVIE -> MovieDetailScreen(vm.app, detail, catalog?.movies.orEmpty(), fav, onBack = { selectedDetail = null }, onPlay = { item, pos -> onPlayWithPosition(onPlay, item, pos) })
-            MediaKind.SERIES -> SeriesDetailScreen(vm.app, detail, catalog?.episodes.orEmpty(), fav, onBack = { selectedDetail = null }, onPlay = { item, pos -> onPlayWithPosition(onPlay, item, pos) })
+            MediaKind.SERIES -> SeriesDetailScreen(vm.app, detail, catalog?.episodes.orEmpty(), fav, onBack = { selectedDetail = null }, onPlay = { item, pos -> onPlayWithPosition(onPlay, item, pos) }, allSeries = catalog?.series.orEmpty(), onOpenAlternateSeries = { selectedDetail = it })
             else -> onPlay(detail)
         }
         return
@@ -711,7 +722,7 @@ private fun onPlayWithPosition(onPlay: (MediaItem) -> Unit, item: MediaItem, pos
 
 @Composable private fun SeriesScreen(series: List<MediaItem>, episodes: List<MediaItem>, categories: List<Category>, favorite: FavoriteState, parental: ParentalState, vm: MainViewModel, onPlay: (MediaItem) -> Unit) {
     var selected by remember { mutableStateOf<MediaItem?>(null) }; var filter by remember { mutableStateOf<String?>(null) }
-    if (selected != null) { SeriesDetailScreen(vm.app, selected!!, episodes, favorite, onBack = { selected = null }, onPlay = { i, pos -> onPlayWithPosition(onPlay, i, pos) }); return }
+    if (selected != null) { SeriesDetailScreen(vm.app, selected!!, episodes, favorite, onBack = { selected = null }, onPlay = { i, pos -> onPlayWithPosition(onPlay, i, pos) }, allSeries = series, onOpenAlternateSeries = { selected = it }); return }
     val libSettings by vm.settings.collectAsStateWithLifecycle()
     val filtered = remember(series, filter, parental.lockedIds) { series.inCategory(filter).let { v -> v.withoutIds(parental.lockedIds) } }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -745,13 +756,16 @@ private fun SearchScreen(app: GassPlayerApplication, catalog: CatalogState?, onP
 }
 
 @Composable
-private fun ExternalEpgManageScreen(app: GassPlayerApplication) {
+private fun ExternalEpgManageScreen(app: GassPlayerApplication, onBack: () -> Unit) {
     val sources by app.externalEpg.flow.collectAsStateWithLifecycle(emptyList())
     val scope = rememberCoroutineScope()
     var name by remember { mutableStateOf("") }
     var url by remember { mutableStateOf("") }
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("Fonti XMLTV esterne", color = glassForeground(), fontSize = 20.sp, fontWeight = FontWeight.Bold)
+    Column(Modifier.fillMaxSize().padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = onBack, modifier = Modifier.focusable()) { Icon(Icons.Default.ArrowBack, null); Spacer(Modifier.width(4.dp)); Text("Indietro") }
+            Text("Fonti XMLTV esterne", color = glassForeground(), fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        }
         OutlinedTextField(name, { name = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Nome fonte") })
         OutlinedTextField(url, { url = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("URL XMLTV") })
         Button({ scope.launch { if (app.externalEpg.add(name, url)) { name = ""; url = "" } } }) { Text("Aggiungi fonte EPG") }
@@ -767,7 +781,7 @@ private fun ExternalEpgManageScreen(app: GassPlayerApplication) {
     }
 }
 
-@Composable private fun SourcesScreen(app: GassPlayerApplication, vm: MainViewModel) {
+@Composable private fun LegacySourcesScreen(app: GassPlayerApplication, vm: MainViewModel) {
     val sources by vm.sources.collectAsStateWithLifecycle()
     var showAdd by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -879,7 +893,7 @@ private fun RenameSourceDialog(current: String, onDismiss: () -> Unit, onSave: (
 }
 
 @Composable
-private fun AddSourceDialog(app: GassPlayerApplication, vm: MainViewModel, onDismiss: () -> Unit) {
+fun AddSourceDialog(app: GassPlayerApplication, vm: MainViewModel, onDismiss: () -> Unit) {
     var name by remember { mutableStateOf("") }
     var host by remember { mutableStateOf("") }
     var user by remember { mutableStateOf("") }

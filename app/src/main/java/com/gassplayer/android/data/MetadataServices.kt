@@ -15,9 +15,43 @@ class TmdbService(private val api: NetworkApi) {
         val root = api.getJson("https://api.themoviedb.org/3/trending/$path/$period?api_key=${enc(apiKey)}&language=it-IT")
         root.jsonObject["results"]?.jsonArray?.mapNotNull { it.jsonObject.toMeta() } ?: emptyList()
     }
-    suspend fun details(id: String, apiKey: String, series: Boolean): MetadataResult? = withContext(Dispatchers.IO) { if (apiKey.isBlank()) return@withContext null; val path = if (series) "tv" else "movie"; api.getJson("https://api.themoviedb.org/3/$path/$id?api_key=${enc(apiKey)}&language=it-IT&append_to_response=credits,external_ids,images").jsonObject.toMeta() }
+    /** Type-specific title search used by detail screens to avoid selecting a same-title film/series/person. */
+    suspend fun searchMovies(query: String, apiKey: String): List<MetadataResult> = searchByType(query, apiKey, "movie")
+    suspend fun searchSeries(query: String, apiKey: String): List<MetadataResult> = searchByType(query, apiKey, "tv")
+    private suspend fun searchByType(query: String, apiKey: String, type: String): List<MetadataResult> = withContext(Dispatchers.IO) {
+        if (apiKey.isBlank() || query.isBlank()) return@withContext emptyList()
+        val root = api.getJson("https://api.themoviedb.org/3/search/$type?api_key=${enc(apiKey)}&query=${enc(query)}&language=it-IT")
+        root.jsonObject["results"]?.jsonArray?.mapNotNull { it.jsonObject.toMeta() } ?: emptyList()
+    }
+    suspend fun details(id: String, apiKey: String, series: Boolean): MetadataResult? = withContext(Dispatchers.IO) {
+        if (apiKey.isBlank()) return@withContext null
+        val path = if (series) "tv" else "movie"
+        api.getJson("https://api.themoviedb.org/3/$path/$id?api_key=${enc(apiKey)}&language=it-IT&append_to_response=credits,external_ids,images&include_image_language=it,en,null").jsonObject.toMeta()
+    }
+    /** Episode metadata fallback mirroring SeriesEpisodesView.swift (TMDB fills missing provider synopsis/stills). */
+    suspend fun seasonEpisodes(tvId: String, season: Int, apiKey: String): List<TmdbEpisodeResult> = withContext(Dispatchers.IO) {
+        if (apiKey.isBlank() || tvId.isBlank() || season < 0) return@withContext emptyList()
+        val root = api.getJson("https://api.themoviedb.org/3/tv/${enc(tvId)}/season/$season?api_key=${enc(apiKey)}&language=it-IT")
+        root.jsonObject["episodes"]?.jsonArray?.mapNotNull { element ->
+            val obj = element.jsonObject
+            val number = obj["episode_number"]?.jsonPrimitive?.intOrNull ?: return@mapNotNull null
+            TmdbEpisodeResult(
+                seasonNumber = obj["season_number"]?.jsonPrimitive?.intOrNull ?: season,
+                episodeNumber = number,
+                title = obj["name"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+                overview = obj["overview"]?.jsonPrimitive?.contentOrNull,
+                stillUrl = obj["still_path"]?.jsonPrimitive?.contentOrNull?.let { "https://image.tmdb.org/t/p/w780$it" },
+                airDate = obj["air_date"]?.jsonPrimitive?.contentOrNull,
+                runtimeMinutes = obj["runtime"]?.jsonPrimitive?.intOrNull
+            )
+        } ?: emptyList()
+    }
     private fun JsonObject.toMeta(): MetadataResult? {
         val id = stringOrNull("id") ?: return null
+        val logos = this["images"]?.jsonObject?.get("logos")?.jsonArray.orEmpty()
+        val logo = logos.mapNotNull { it.jsonObject }.sortedBy { image ->
+            when (image["iso_639_1"]?.jsonPrimitive?.contentOrNull) { "it" -> 0; "en" -> 1; null -> 2; else -> 3 }
+        }.firstOrNull()
         return MetadataResult(
             id = id,
             title = stringOrNull("title") ?: stringOrNull("name") ?: "",
@@ -26,9 +60,19 @@ class TmdbService(private val api: NetworkApi) {
             backdropUrl = stringOrNull("backdrop_path")?.let { "https://image.tmdb.org/t/p/w1280$it" },
             overview = stringOrNull("overview"),
             genres = this["genres"]?.jsonArray?.mapNotNull { it.jsonObject["name"]?.jsonPrimitive?.contentOrNull } ?: emptyList(),
-            cast = this["credits"]?.jsonObject?.get("cast")?.jsonArray?.take(8)?.mapNotNull { it.jsonObject["name"]?.jsonPrimitive?.contentOrNull } ?: emptyList(),
+            cast = this["credits"]?.jsonObject?.get("cast")?.jsonArray?.take(12)?.mapNotNull { it.jsonObject["name"]?.jsonPrimitive?.contentOrNull } ?: emptyList(),
+            castMembers = this["credits"]?.jsonObject?.get("cast")?.jsonArray?.take(12)?.mapNotNull { element ->
+                val person = element.jsonObject
+                val name = person["name"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+                MetadataCastMember(
+                    name = name,
+                    character = person["character"]?.jsonPrimitive?.contentOrNull,
+                    profileUrl = person["profile_path"]?.jsonPrimitive?.contentOrNull?.let { "https://image.tmdb.org/t/p/w185$it" }
+                )
+            } ?: emptyList(),
             externalId = this["external_ids"]?.jsonObject?.get("imdb_id")?.jsonPrimitive?.contentOrNull,
-            originalTitle = stringOrNull("original_title") ?: stringOrNull("original_name")
+            originalTitle = stringOrNull("original_title") ?: stringOrNull("original_name"),
+            logoUrl = logo?.get("file_path")?.jsonPrimitive?.contentOrNull?.let { "https://image.tmdb.org/t/p/w500$it" }
         )
     }
     private fun JsonObject.stringOrNull(k: String)=this[k]?.jsonPrimitive?.contentOrNull
@@ -64,8 +108,27 @@ data class MetadataResult(
     val overview: String? = null,
     val genres: List<String> = emptyList(),
     val cast: List<String> = emptyList(),
+    val castMembers: List<MetadataCastMember> = emptyList(),
     val externalId: String? = null,
-    val originalTitle: String? = null
+    val originalTitle: String? = null,
+    val logoUrl: String? = null
+)
+
+@kotlinx.serialization.Serializable
+data class MetadataCastMember(
+    val name: String,
+    val character: String? = null,
+    val profileUrl: String? = null
+)
+
+data class TmdbEpisodeResult(
+    val seasonNumber: Int,
+    val episodeNumber: Int,
+    val title: String,
+    val overview: String? = null,
+    val stillUrl: String? = null,
+    val airDate: String? = null,
+    val runtimeMinutes: Int? = null
 )
 
 data class Ratings(val imdb: Double?, val rottenTomatoes: String?, val metacritic: Int?)

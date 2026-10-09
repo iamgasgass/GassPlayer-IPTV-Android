@@ -8,7 +8,8 @@ import java.util.Date
 import java.util.Locale
 
 class BackupService(private val context: Context, private val prefs: AppPreferences) {
-    suspend fun exportSources(): String = JsonStore.json.encodeToString(SourceBackup(sources = prefs.sourcesFlow.first()))
+    suspend fun exportSources(selectedSources: List<MediaSourceConfig>? = null): String =
+        JsonStore.json.encodeToString(SourceBackup(sources = selectedSources ?: prefs.sourcesFlow.first()))
     suspend fun exportPreferences(): String = JsonStore.json.encodeToString(PreferencesBackup(settings = prefs.settingsFlow.first()))
     suspend fun importSources(json: String) { val p = JsonStore.json.decodeFromString<SourceBackup>(json); prefs.saveSources(p.sources) }
     suspend fun importPreferences(json: String) { val p = JsonStore.json.decodeFromString<PreferencesBackup>(json); prefs.saveSettings(p.settings) }

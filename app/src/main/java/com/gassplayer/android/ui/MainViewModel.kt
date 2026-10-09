@@ -60,8 +60,14 @@ class MainViewModel(val app: GassPlayerApplication) : ViewModel() {
     }
 
     fun deleteSource(id: String) = viewModelScope.launch {
+        // Capture the list before deletion, then select a surviving enabled source.
+        val before = app.sources.sources.first()
         app.sources.delete(id)
-        if (activeSource.value == id) app.sources.setActive(sources.value.firstOrNull()?.id)
+        if (activeSource.value == id) {
+            val next = before.filterNot { it.id == id }.firstOrNull { it.isEnabled }
+                ?: before.firstOrNull { it.id != id }
+            app.sources.setActive(next?.id)
+        }
         refresh(true)
     }
 

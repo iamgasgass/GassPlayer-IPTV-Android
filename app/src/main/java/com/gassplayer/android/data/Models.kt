@@ -136,7 +136,9 @@ data class AppSettings(
     val homeSectionOrder: List<String> = defaultHomeSections,
     val hiddenHomeSections: Set<String> = emptySet(),
     /** Home → Continua a guardare: null = tutti i tipi. */
-    val homeContinueKind: String? = null
+    val homeContinueKind: String? = null,
+    /** Preference shared with iOS detail-screen preview mute control. */
+    val detailTrailerMuted: Boolean = true
 )
 
 val defaultHomeSections = listOf("heading", "search", "continueWatching", "sourceCard", "sources", "liveTV", "guidaTV", "onDemand", "favoriteChannels", "favoriteSeries", "favoriteMovies", "trendingSeries", "trendingMovies")
