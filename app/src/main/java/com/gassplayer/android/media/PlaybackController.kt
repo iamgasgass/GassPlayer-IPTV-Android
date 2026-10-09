@@ -414,6 +414,11 @@ class PlaybackController(
                     override fun onPlaybackStateChanged(playbackState: Int) {
                         if (playbackState == Player.STATE_READY) {
                             networkRetries = 0
+                            // READY ends the initial load/rebuffer/recovery overlay. Do this
+                            // outside markStarted(), which intentionally returns early after the
+                            // first successful start (e.g. a later live-stream rebuffer).
+                            _status.value = null
+                            isRecovering = false
                             markStarted()
                         }
                     }

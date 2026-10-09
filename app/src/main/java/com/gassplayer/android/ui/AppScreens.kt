@@ -58,7 +58,7 @@ import kotlinx.coroutines.launch
 import java.util.UUID
 
 private val Blue = Color(0xFF3478F6)
-private val Dark = Color(0xFF050609)
+private val Dark = Color.Black
 
 @Composable
 fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
@@ -613,7 +613,7 @@ private fun TrendingCard(item: MetadataResult, isSeries: Boolean, onClick: () ->
     Surface(onClick = onClick, modifier = Modifier.width(156.dp).height(270.dp), color = Color.Transparent, shape = RoundedCornerShape(18.dp)) {
         LiquidGlassSurface(modifier = Modifier.fillMaxSize(), cornerRadius = 18.dp, contentPadding = 0.dp) {
             Column(Modifier.fillMaxSize()) {
-                Box(Modifier.fillMaxWidth().height(205.dp).background(Color(0xFF10141D))) {
+                Box(Modifier.fillMaxWidth().height(205.dp).background(Color(0xFF101010))) {
                     val artwork = item.posterUrl ?: item.backdropUrl
                     if (artwork != null) AsyncImage(artwork, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                     Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(.30f)))))
@@ -667,7 +667,7 @@ private fun MediaCard(item: MediaItem, favorite: Boolean, onClick: () -> Unit, o
     ) {
         LiquidGlassSurface(modifier = Modifier.fillMaxWidth(), cornerRadius = 18.dp, contentPadding = 0.dp, highlighted = focused) {
             Column {
-                Box(Modifier.fillMaxWidth().height(h).background(Color(0xFF0C0E13))) {
+                Box(Modifier.fillMaxWidth().height(h).background(Color(0xFF0C0C0C))) {
                     item.backdropUrl?.takeIf { item.kind != MediaKind.LIVE }?.let { AsyncImage(it, null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
                     if (item.posterUrl != null && item.kind != MediaKind.LIVE) AsyncImage(item.posterUrl, null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                     Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(.30f)))))

@@ -123,7 +123,7 @@ fun MovieDetailScreen(
                         onClick = { onPlay(item, currentWatch?.positionMs ?: 0L) },
                         modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp).focusable(),
                         shape = RoundedCornerShape(28.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(.95f), contentColor = Color(0xFF111521))
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(.95f), contentColor = Color(0xFF111111))
                     ) {
                         Icon(Icons.Default.PlayArrow, null)
                         Spacer(Modifier.width(7.dp))
@@ -245,7 +245,7 @@ fun MovieDetailScreen(
                 }
             },
             confirmButton = { TextButton(onClick = { showAlternates = false }) { Text("Chiudi") } },
-            containerColor = Color(0xFF121722),
+            containerColor = Color(0xFF111111),
             titleContentColor = Color.White,
             textContentColor = Color.White
         )
@@ -348,7 +348,7 @@ fun SeriesDetailScreen(
                         },
                         modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp).focusable(),
                         shape = RoundedCornerShape(28.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(.95f), contentColor = Color(0xFF111521))
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(.95f), contentColor = Color(0xFF111111))
                     ) {
                         Icon(Icons.Default.PlayArrow, null)
                         Spacer(Modifier.width(7.dp))
@@ -487,14 +487,14 @@ fun SeriesDetailScreen(
                 }
             },
             confirmButton = { TextButton(onClick = { showAlternates = false }) { Text("Chiudi") } },
-            containerColor = Color(0xFF121722), titleContentColor = Color.White, textContentColor = Color.White
+            containerColor = Color(0xFF111111), titleContentColor = Color.White, textContentColor = Color.White
         )
     }
 }
 
 @Composable
 private fun MediaDetailHero(item: MediaItem, meta: MetadataResult?, height: androidx.compose.ui.unit.Dp = DetailHeroHeight) {
-    val screenBackground = Color(0xFF070910)
+    val screenBackground = Color.Black
     Box(Modifier.fillMaxWidth().height(height).background(screenBackground)) {
         val image = meta?.backdropUrl ?: item.backdropUrl ?: item.posterUrl
         if (!image.isNullOrBlank()) AsyncImage(image, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
@@ -639,7 +639,7 @@ private fun MediaDetailCast(
             LazyRow(horizontalArrangement = Arrangement.spacedBy(18.dp), contentPadding = PaddingValues(horizontal = 20.dp, vertical = 2.dp)) {
                 items(cast, key = { it.name }) { person ->
                     Row(Modifier.width(210.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Box(Modifier.size(68.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFF3D5278), Color(0xFF19243A)))), contentAlignment = Alignment.Center) {
+                        Box(Modifier.size(68.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFF333333), Color(0xFF171717)))), contentAlignment = Alignment.Center) {
                             if (!person.profileUrl.isNullOrBlank()) {
                                 AsyncImage(person.profileUrl, contentDescription = person.name, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                             } else {
@@ -689,12 +689,12 @@ private fun EpisodeDetailRow(
     ) {
         LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius = 17.dp, contentPadding = 0.dp) {
             Column(Modifier.fillMaxWidth()) {
-                Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(topStart = 17.dp, topEnd = 17.dp)).background(Color(0xFF111723))) {
+                Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(topStart = 17.dp, topEnd = 17.dp)).background(Color(0xFF111111))) {
                     val image = episode.backdropUrl ?: episode.posterUrl
                     if (!image.isNullOrBlank()) {
                         AsyncImage(image, contentDescription = episode.title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                     } else {
-                        Box(Modifier.fillMaxSize().background(Brush.linearGradient(listOf(Color(0xFF263247), Color(0xFF10141D)))), contentAlignment = Alignment.Center) {
+                        Box(Modifier.fillMaxSize().background(Brush.linearGradient(listOf(Color(0xFF222222), Color(0xFF080808)))), contentAlignment = Alignment.Center) {
                             Icon(Icons.Default.PlayArrow, null, tint = Color.White.copy(.7f), modifier = Modifier.size(34.dp))
                         }
                     }
@@ -751,9 +751,9 @@ private fun MediaDetailScrollTopBar(title: String, progress: Float, onClose: () 
             Modifier.fillMaxWidth().height(safeTop + rowHeight + tailHeight).graphicsLayer { this.alpha = alpha }.background(
                 Brush.verticalGradient(
                     colorStops = arrayOf(
-                        0f to Color(0xFF090C14).copy(.88f),
-                        .62f to Color(0xFF090C14).copy(.72f),
-                        1f to Color(0xFF090C14).copy(.02f)
+                        0f to Color.Black.copy(.88f),
+                        .62f to Color.Black.copy(.72f),
+                        1f to Color.Black.copy(.02f)
                     )
                 )
             )

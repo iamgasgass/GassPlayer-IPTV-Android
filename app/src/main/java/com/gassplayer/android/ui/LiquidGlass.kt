@@ -39,12 +39,13 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun LiquidGlassBackdrop(modifier: Modifier = Modifier, content: @Composable BoxScope.() -> Unit = {}) {
     val light = MaterialTheme.colorScheme.background.luminance() > .5f
-    val base = if (light) Color(0xFFE9EFF8) else Color(0xFF070910)
+    val base = if (light) Color(0xFFE9EFF8) else Color.Black
     Box(modifier.background(base)) {
         Box(
             Modifier.fillMaxSize().background(
                 Brush.radialGradient(
-                    colors = listOf(Color(0xFF7198E2).copy(alpha = if (light) .18f else .38f), Color(0xFF526A9B).copy(alpha = if (light) .08f else .17f), Color.Transparent),
+                    colors = if (light) listOf(Color(0xFF7198E2).copy(alpha = .18f), Color(0xFF526A9B).copy(alpha = .08f), Color.Transparent)
+                    else listOf(Color.Black, Color.Black, Color.Black),
                     radius = 1250f
                 )
             )
@@ -52,7 +53,8 @@ fun LiquidGlassBackdrop(modifier: Modifier = Modifier, content: @Composable BoxS
         Box(
             Modifier.align(Alignment.TopEnd).fillMaxSize(.78f).background(
                 Brush.radialGradient(
-                    colors = listOf(Color(0xFF79A7D9).copy(alpha = if (light) .12f else .18f), Color.Transparent),
+                    colors = if (light) listOf(Color(0xFF79A7D9).copy(alpha = .12f), Color.Transparent)
+                    else listOf(Color.Black, Color.Black),
                     radius = 850f
                 )
             )
@@ -61,7 +63,7 @@ fun LiquidGlassBackdrop(modifier: Modifier = Modifier, content: @Composable BoxS
             Modifier.fillMaxSize().background(
                 Brush.verticalGradient(
                     if (light) listOf(Color.White.copy(.18f), Color(0xFFE9EFF8).copy(.28f), Color(0xFFE2E9F4).copy(.65f))
-                    else listOf(Color(0xFF090C14).copy(.12f), Color(0xFF070910).copy(.52f), Color(0xFF050609))
+                    else listOf(Color.Black, Color.Black, Color.Black)
                 )
             )
         )
@@ -82,7 +84,7 @@ fun LiquidGlassSurface(
     val light = MaterialTheme.colorScheme.background.luminance() > .5f
     val borderAlpha = if (highlighted) .42f else .20f
     val glassStops = if (light) listOf(Color.White.copy(alpha = if (highlighted) .94f else .82f), Color(0xFFF5F8FD).copy(alpha = .88f), Color(0xFFDDE6F3).copy(alpha = .78f))
-        else listOf(Color.White.copy(alpha = if (highlighted) .17f else .115f), Color(0xFF1A2130).copy(alpha = .76f), Color(0xFF0A0D14).copy(alpha = .91f))
+        else listOf(Color.White.copy(alpha = if (highlighted) .17f else .115f), Color(0xFF171717).copy(alpha = .76f), Color(0xFF050505).copy(alpha = .94f))
     Box(
         modifier = modifier
             .clip(shape)
@@ -92,13 +94,13 @@ fun LiquidGlassSurface(
                     if (highlighted) 1.2.dp else .7.dp,
                     Brush.verticalGradient(
                         if (light) listOf(Color(0xFF52647F).copy(alpha = borderAlpha * .8f), Color.White.copy(alpha = .78f), Color(0xFF6C91C9).copy(alpha = .18f))
-                        else listOf(Color.White.copy(alpha = borderAlpha), Color.White.copy(alpha = .07f), Color(0xFF9DBAFF).copy(alpha = .12f))
+                        else listOf(Color.White.copy(alpha = borderAlpha), Color.White.copy(alpha = .07f), Color.White.copy(alpha = .04f))
                     )
                 ),
                 shape
             )
             .drawBehind {
-                // A narrow specular rim and faint lower blue reflection.
+                // A narrow neutral specular rim (no blue cast in dark mode).
                 drawRect(
                     brush = Brush.horizontalGradient(
                         listOf(Color.Transparent, Color.White.copy(alpha = if (highlighted) .20f else .09f), Color.Transparent)

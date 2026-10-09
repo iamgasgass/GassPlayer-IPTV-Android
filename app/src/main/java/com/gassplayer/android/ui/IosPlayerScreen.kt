@@ -178,7 +178,7 @@ fun IosPlayerScreen(
             val nextSnapshot = PlayerSnapshot(
                 duration = p.duration.coerceAtLeast(0L),
                 isPlaying = p.isPlaying,
-                isBuffering = p.isLoading,
+                isBuffering = p.playbackState == Player.STATE_BUFFERING && p.playWhenReady,
                 state = p.playbackState,
                 videoWidth = video?.width ?: 0,
                 videoHeight = video?.height ?: 0,
@@ -1047,7 +1047,7 @@ private fun ResumeOverlay(position: Long, title: String, onResume: () -> Unit, o
     ) {
         Surface(
             modifier = Modifier.widthIn(min = 300.dp, max = 520.dp),
-            color = Color(0xFF17191F).copy(.96f),
+            color = Color(0xFF151515).copy(.96f),
             shape = RoundedCornerShape(28.dp),
             border = BorderStroke(1.dp, Color.White.copy(.14f))
         ) {

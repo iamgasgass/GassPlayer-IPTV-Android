@@ -14,12 +14,14 @@ import androidx.compose.ui.unit.dp
 fun GassPlayerTheme(theme: String = "system", content: @Composable () -> Unit) {
     val systemDark = isSystemInDarkTheme()
     val dark = when (theme) { "dark" -> true; "light" -> false; else -> systemDark }
+    // True black (AMOLED-style) background; keep accents blue but remove blue tint
+    // from the dark canvas and neutral surfaces.
     val darkScheme = darkColorScheme(
-        primary = Color(0xFF78A9FF), onPrimary = Color(0xFF06152F),
-        secondary = Color(0xFFB8C7E6), onSecondary = Color(0xFF17243A),
-        background = Color(0xFF080A0F), onBackground = Color(0xFFF4F6FC),
-        surface = Color(0xFF11141B), onSurface = Color(0xFFF4F6FC),
-        surfaceVariant = Color(0xFF202531), onSurfaceVariant = Color(0xFFD0D6E2),
+        primary = Color(0xFF78A9FF), onPrimary = Color.Black,
+        secondary = Color(0xFFD0D0D0), onSecondary = Color(0xFF171717),
+        background = Color.Black, onBackground = Color(0xFFF4F4F4),
+        surface = Color.Black, onSurface = Color(0xFFF4F4F4),
+        surfaceVariant = Color(0xFF121212), onSurfaceVariant = Color(0xFFD0D0D0),
         outline = Color.White.copy(alpha = .18f)
     )
     val lightScheme = lightColorScheme(

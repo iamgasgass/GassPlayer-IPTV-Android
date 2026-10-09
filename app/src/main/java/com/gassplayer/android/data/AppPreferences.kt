@@ -30,7 +30,19 @@ class AppPreferences(private val context: Context) {
         val sleepTimer = intPreferencesKey("sleep_timer")
     }
 
-    val settingsFlow: Flow<AppSettings> = context.gassDataStore.data.map { it[Keys.json]?.let { s -> reveal(s)?.let { decoded -> runCatching { JsonStore.json.decodeFromString<AppSettings>(decoded) }.getOrNull() } } ?: AppSettings() }
+    val settingsFlow: Flow<AppSettings> = context.gassDataStore.data.map { prefs ->
+        val stored = prefs[Keys.json]?.let { encoded ->
+            reveal(encoded)?.let { decoded ->
+                runCatching { JsonStore.json.decodeFromString<AppSettings>(decoded) }.getOrNull()
+            }
+        }
+        val value = stored ?: AppSettings()
+        // The previous app release shipped 15/90 seconds as factory defaults.
+        // Migrate that exact old default pair so upgrades also receive the new 3/30 defaults.
+        if (stored != null && stored.minBufferSec == 15 && stored.maxBufferSec == 90) {
+            stored.copy(minBufferSec = 3, maxBufferSec = 30)
+        } else value
+    }
     val sourcesFlow: Flow<List<MediaSourceConfig>> = context.gassDataStore.data.map { it[Keys.sourcesJson]?.let { s -> reveal(s)?.let { decoded -> runCatching { JsonStore.json.decodeFromString<List<MediaSourceConfig>>(decoded) }.getOrNull() } } ?: emptyList() }
     val favoritesFlow: Flow<FavoriteState> = context.gassDataStore.data.map { it[Keys.favoritesJson]?.let { s -> runCatching { JsonStore.json.decodeFromString<FavoriteState>(s) }.getOrNull() } ?: FavoriteState() }
     val watchFlow: Flow<List<WatchEntry>> = context.gassDataStore.data.map { it[Keys.historyJson]?.let { s -> runCatching { JsonStore.json.decodeFromString<List<WatchEntry>>(s) }.getOrNull() } ?: emptyList() }
