@@ -14,6 +14,8 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -37,6 +39,7 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.platform.LocalConfiguration
@@ -50,7 +53,6 @@ import coil3.compose.AsyncImage
 import com.gassplayer.android.GassPlayerApplication
 import com.gassplayer.android.data.*
 import kotlinx.coroutines.launch
-import kotlin.math.roundToInt
 import java.util.UUID
 
 private val Blue = Color(0xFF3478F6)
@@ -102,12 +104,38 @@ fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 private fun AdaptiveShell(route: String, tv: Boolean, loading: Boolean, message: String?, onRetry: () -> Unit, onRoute: (String) -> Unit, title: String, content: @Composable () -> Unit) {
     val destinations = listOf("home" to "Home", "live" to "Live TV", "movies" to "Film", "series" to "Serie", "epg" to "Guida", "search" to "Cerca", "sources" to "Sorgenti", "settings" to "Impostazioni")
+    val railScrollState = rememberScrollState()
+    val railScope = rememberCoroutineScope()
     Row(Modifier.fillMaxSize().background(Dark)) {
-        NavigationRail(modifier = Modifier.fillMaxHeight().width(if (tv) 132.dp else 92.dp), containerColor = Color(0xFF0E1016)) {
-            Spacer(Modifier.height(12.dp)); destinations.forEach { (id, label) ->
-                NavigationRailItem(selected = route == id, onClick = { onRoute(id) }, icon = { Icon(navIcon(id), null) }, label = { Text(label, maxLines = 1) }, modifier = Modifier)
+        // Keep the entire left navigation reachable on short windows and Android TV.
+        // The bring-into-view request is particularly important with a D-pad when the
+        // focused destination is below the currently visible part of the rail.
+        NavigationRail(
+            modifier = Modifier
+                .fillMaxHeight()
+                .width(if (tv) 132.dp else 92.dp)
+                .verticalScroll(railScrollState),
+            containerColor = Color(0xFF0E1016)
+        ) {
+            Spacer(Modifier.height(12.dp))
+            destinations.forEach { (id, label) ->
+                val bringIntoView = remember(id) { BringIntoViewRequester() }
+                NavigationRailItem(
+                    selected = route == id,
+                    onClick = { onRoute(id) },
+                    icon = { Icon(navIcon(id), null) },
+                    label = { Text(label, maxLines = 1) },
+                    modifier = Modifier
+                        .bringIntoViewRequester(bringIntoView)
+                        .onFocusChanged { focusState ->
+                            if (focusState.isFocused) {
+                                railScope.launch { runCatching { bringIntoView.bringIntoView() } }
+                            }
+                        }
+                )
             }
         }
         Column(Modifier.fillMaxSize().padding(horizontal = if (tv) 28.dp else 16.dp, vertical = 18.dp)) {
@@ -500,7 +528,7 @@ private fun AddSourceDialog(app: GassPlayerApplication, vm: MainViewModel, onDis
     }
 }
 
-@Composable internal fun SettingInt(label:String, value:Int, range:IntRange, step:Int=1, onChange:(Int)->Unit){ val safeValue = value.coerceIn(range.first, range.last); Column(Modifier.fillMaxWidth()){ Text("$label: $safeValue",color=Color.White); Slider(value=safeValue.toFloat(),onValueChange={ raw -> val snapped = (range.first + ((raw.toInt() - range.first).toFloat() / step).roundToInt() * step).coerceIn(range.first, range.last); onChange(snapped) },valueRange=range.first.toFloat()..range.last.toFloat(),steps=((range.last-range.first)/step-1).coerceAtLeast(0)) } }
+@Composable internal fun SettingInt(label:String, value:Int, range:IntRange, step:Int=1, onChange:(Int)->Unit){ Column(Modifier.fillMaxWidth()){ Text("$label: $value",color=Color.White); Slider(value=value.toFloat(),onValueChange={onChange(it.toInt())},valueRange=range.first.toFloat()..range.last.toFloat(),steps=((range.last-range.first)/step-1).coerceAtLeast(0)) } }
 @Composable private fun SettingToggle(label:String, value:Boolean, onChange:(Boolean)->Unit){ Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){ Text(label,color=Color.White); Switch(value,onChange) } }
 @Composable private fun SettingRow(label:String, value:String, choices:List<String>, onChange:(String)->Unit){ var expanded by remember{mutableStateOf(false)}; Box{ OutlinedButton({expanded=true},Modifier.fillMaxWidth()){ Text("$label: $value") }; DropdownMenu(expanded,{expanded=false}){choices.forEach{DropdownMenuItem({Text(it)},onClick={onChange(it);expanded=false})}} } }
 

@@ -47,11 +47,7 @@ internal fun SettingsHub(app: GassPlayerApplication, settings: AppSettings, vm: 
     }
 
     if (page == null) {
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-            contentPadding = PaddingValues(bottom = 48.dp)
-        ) {
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 48.dp)) {
             item { HubSection("Playlist", "Sorgenti e sorgente attiva", Icons.Default.PlaylistPlay) {
                 HubRow("Sorgenti", "${sources.size} configurate", Icons.Default.Storage) { onOpen("sources") }
                 if (sources.size > 1) HubChoice("Sorgente attiva", sources.firstOrNull { it.id == active }?.name ?: "Nessuna", sources.map { it.name }) { name ->
@@ -89,14 +85,10 @@ internal fun SettingsHub(app: GassPlayerApplication, settings: AppSettings, vm: 
         return
     }
 
-    Column(Modifier.fillMaxSize()) {
+    Column {
         TextButton({ page = null }) { Icon(Icons.Default.ArrowBack, null); Spacer(Modifier.width(6.dp)); Text("Impostazioni") }
         toast?.let { Text(it, color = Color(0xFF30D158), fontSize = 13.sp, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) }
-        LazyColumn(
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-            contentPadding = PaddingValues(bottom = 48.dp)
-        ) {
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 48.dp)) {
             when (page) {
                 "general" -> {
                     item { PageTitle("Impostazioni generali") }
@@ -159,9 +151,8 @@ internal fun SettingsHub(app: GassPlayerApplication, settings: AppSettings, vm: 
                         HubToggle("Seek accurato", null, local.accurateSeek) { save(local.copy(accurateSeek = it)) }
                         HubChoice("Adattamento video predefinito", aspectLabel(local.aspectRatio), listOf("Adatta", "Riempi", "Stira")) { save(local.copy(aspectRatio = when (it) { "Riempi" -> "fill"; "Stira" -> "stretch"; else -> "fit" })) }
                         HubRow("Ripristina impostazioni predefinite del player", "Buffer, decodifica, seek, risoluzione e adattamento video", Icons.Default.RestartAlt, destructive = true) {
-                            confirm = "Le opzioni tecniche del player torneranno ai valori di fabbrica. Autoplay, ripresa e velocità predefinita non vengono toccati." to {
-                                val d = AppSettings()
-                                save(local.copy(
+                            confirm = "Buffer, decodifica, qualità, cache, seek, A/V delay, sottotitoli immagine e opzioni 360° torneranno ai valori di fabbrica. Autoplay del prossimo episodio e ripresa della visione non vengono modificati." to {
+                                val d = AppSettings(); save(local.copy(
                                     minBufferSec = d.minBufferSec,
                                     maxBufferSec = d.maxBufferSec,
                                     playerStartBufferSec = d.playerStartBufferSec,
@@ -171,17 +162,17 @@ internal fun SettingsHub(app: GassPlayerApplication, settings: AppSettings, vm: 
                                     accurateSeek = d.accurateSeek,
                                     deinterlace = d.deinterlace,
                                     aspectRatio = d.aspectRatio,
-                                    ffmpegLowResolution = d.ffmpegLowResolution,
-                                    videoDelayMs = d.videoDelayMs,
+                                    preferredPlaybackSpeed = d.preferredPlaybackSpeed,
                                     adaptiveBitrate = d.adaptiveBitrate,
                                     httpCache = d.httpCache,
                                     audioOnly = d.audioOnly,
                                     preserveImageSubtitles = d.preserveImageSubtitles,
                                     panorama360 = d.panorama360,
                                     autoRotate360 = d.autoRotate360,
-                                    loopPlayback = d.loopPlayback
-                                ))
-                                toast = "Player ripristinato"
+                                    loopPlayback = d.loopPlayback,
+                                    videoDelayMs = d.videoDelayMs,
+                                    ffmpegLowResolution = d.ffmpegLowResolution
+                                )); toast = "Player ripristinato"
                             }
                         }
                     } }
@@ -193,7 +184,7 @@ internal fun SettingsHub(app: GassPlayerApplication, settings: AppSettings, vm: 
                         HubToggle("Panorama 360°", null, local.panorama360) { save(local.copy(panorama360 = it)) }
                         HubToggle("Rotazione automatica 360°", null, local.autoRotate360) { save(local.copy(autoRotate360 = it)) }
                         HubToggle("Loop riproduzione", null, local.loopPlayback) { save(local.copy(loopPlayback = it)) }
-                        SettingInt("A/V delay (ms)", local.videoDelayMs, -500..500, step = 10) { save(local.copy(videoDelayMs = it)) }
+                        SettingDelayCommit("A/V delay (ms)", local.videoDelayMs, -2_000..2_000, step = 50) { save(local.copy(videoDelayMs = it)) }
                         HubChoice("Risoluzione massima", when (local.ffmpegLowResolution) { "half" -> "Ridotta (max 720p)"; "quarter" -> "Bassa (max 480p)"; else -> "Originale" }, listOf("Originale", "Ridotta (max 720p)", "Bassa (max 480p)")) { save(local.copy(ffmpegLowResolution = when (it) { "Ridotta (max 720p)" -> "half"; "Bassa (max 480p)" -> "quarter"; else -> "full" })) }
                     } }
                 }
@@ -287,5 +278,27 @@ private fun HubChoice(title: String, current: String, choices: List<String>, onP
             }
         }
         DropdownMenu(open, { open = false }) { choices.forEach { c -> CheckItem(c, c == current) { onPick(c); open = false } } }
+    }
+}
+
+
+@Composable
+private fun SettingDelayCommit(
+    title: String,
+    value: Int,
+    range: IntRange,
+    step: Int,
+    onChange: (Int) -> Unit
+) {
+    var draft by remember(value) { mutableFloatStateOf(value.toFloat()) }
+    Column(Modifier.fillMaxWidth()) {
+        Text("$title: ${draft.toInt()}", color = MaterialTheme.colorScheme.onSurface)
+        Slider(
+            value = draft.coerceIn(range.first.toFloat(), range.last.toFloat()),
+            onValueChange = { draft = it },
+            valueRange = range.first.toFloat()..range.last.toFloat(),
+            steps = ((range.last - range.first) / step - 1).coerceAtLeast(0),
+            onValueChangeFinished = { onChange(draft.toInt().coerceIn(range.first, range.last)) }
+        )
     }
 }

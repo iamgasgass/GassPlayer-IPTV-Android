@@ -140,6 +140,9 @@ class PlaybackController(
 
         scope.launch {
             trackSelector.parameters = buildTrackParameters(value)
+            // Apply subtitle policy immediately when its preference changes; waiting for a
+            // future onTracksChanged event left an already-open player using stale subtitles.
+            playerInstance?.let { existing -> enforceSubtitlePolicy(existing.currentTracks) }
 
             val rebuildRequired = previous.minBufferSec != value.minBufferSec ||
                 previous.maxBufferSec != value.maxBufferSec ||
@@ -167,9 +170,9 @@ class PlaybackController(
                 player.setSeekParameters(
                     if (value.accurateSeek) SeekParameters.EXACT else SeekParameters.CLOSEST_SYNC
                 )
-                if (player.playbackState != Player.STATE_IDLE) {
-                    player.setPlaybackSpeed(value.preferredPlaybackSpeed.coerceIn(0.25f, 3f))
-                }
+                // Playback speed can be applied even while the player is idle/buffering;
+                // delaying it until STATE_READY could leave the current item on the old speed.
+                player.setPlaybackSpeed(value.preferredPlaybackSpeed.coerceIn(0.25f, 3f))
             }
 
             val signature = loadControlSignature(value)
@@ -457,15 +460,16 @@ class PlaybackController(
             // "Solo audio" is now a real player behavior: Media3 is instructed
             // not to select any video track instead of merely storing the switch.
             .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, value.audioOnly)
-            .setMaxVideoSize(maxVideoWidthFor(value), maxVideoHeightFor(value))
-            // The preference must affect the track selector, not just be persisted.
-            // When disabled, prefer the highest supported rendition inside the selected resolution ceiling.
+            // When adaptive bitrate is disabled, choose the highest supported bitrate once;
+            // the independent resolution limit below continues to cap the selected video size.
             .setForceHighestSupportedBitrate(!value.adaptiveBitrate)
-            .setAllowVideoMixedMimeTypeAdaptiveness(value.adaptiveBitrate)
-            .setAllowVideoNonSeamlessAdaptiveness(value.adaptiveBitrate)
+            .setMaxVideoSize(maxVideoWidthFor(value), maxVideoHeightFor(value))
+            // Faster/smoother adaptive switching between HLS/DASH renditions.
+            .setAllowVideoMixedMimeTypeAdaptiveness(true)
+            .setAllowVideoNonSeamlessAdaptiveness(true)
             .build()
 
-    /** "Risoluzione ridotta" (half = max 720p, quarter = max 480p). Adaptive bitrate is configured separately. */
+    /** Independent maximum-resolution preference (full / 720p / 480p). */
     private fun maxVideoHeightFor(value: AppSettings): Int =
         when (value.ffmpegLowResolution) { "quarter" -> 480; "half" -> 720; else -> Int.MAX_VALUE }
 
@@ -929,7 +933,7 @@ class PlaybackController(
     /** Decoder policy: honours the hardware/software/async settings (they used to be dead switches). */
     private fun createRenderersFactory(): androidx.media3.exoplayer.DefaultRenderersFactory {
         val s = settings.value
-        val delayMs = s.videoDelayMs.coerceIn(-500, 500)
+        val delayMs = s.videoDelayMs.coerceIn(-2_000, 2_000)
         val factory = object : androidx.media3.exoplayer.DefaultRenderersFactory(context) {
             // "A/V delay": a real audio-timeline shift instead of a dead number in the settings.
             override fun buildAudioSink(context: Context, enableFloatOutput: Boolean, enableAudioTrackPlaybackParams: Boolean): androidx.media3.exoplayer.audio.AudioSink? =

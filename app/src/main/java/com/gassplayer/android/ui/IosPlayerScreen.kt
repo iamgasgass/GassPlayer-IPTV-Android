@@ -2,6 +2,8 @@ package com.gassplayer.android.ui
 
 import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
+import android.media.AudioManager
 import android.content.res.Configuration
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -9,6 +11,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -26,6 +29,14 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusable
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -54,9 +65,7 @@ private enum class IosPlayerDialog {
 }
 
 private data class PlayerSnapshot(
-    val position: Long = 0L,
     val duration: Long = 0L,
-    val buffered: Long = 0L,
     val isPlaying: Boolean = false,
     val isBuffering: Boolean = false,
     val state: Int = Player.STATE_IDLE,
@@ -64,6 +73,12 @@ private data class PlayerSnapshot(
     val videoHeight: Int = 0,
     val frameRate: Float = 0f,
     val audioChannels: Int = 0
+)
+
+/** Fast-changing timeline state is isolated from the player metadata so progress ticks
+ * recompose only the controls that render the timeline, not the whole video surface. */
+private data class PlaybackProgress(
+    val position: Long = 0L
 )
 
 private data class PlayerTrackChoice(
@@ -103,8 +118,21 @@ fun IosPlayerScreen(
     var resumePosition by remember(item.id) { mutableStateOf<Long?>(null) }
     var explicitResume by remember(item.id) { mutableStateOf(false) }
     var snapshot by remember(item.id) { mutableStateOf(PlayerSnapshot()) }
+    val progressState = remember(item.id) { mutableStateOf(PlaybackProgress()) }
     var currentLiveProgram by remember(item.id) { mutableStateOf<EpgProgram?>(null) }
     var localSettings by remember(settings) { mutableStateOf(settings) }
+    var showBrightnessHud by remember(item.id) { mutableStateOf(false) }
+    var showVolumeHud by remember(item.id) { mutableStateOf(false) }
+    val brightnessLevel = remember(item.id) { mutableFloatStateOf(0.5f) }
+    val volumeLevel = remember(item.id) { mutableFloatStateOf(0.5f) }
+    // Keep the host activity brightness intact after leaving the player.
+    val originalWindowBrightness = remember { context.findActivity()?.window?.attributes?.screenBrightness ?: -1f }
+    var hudTimerKey by remember(item.id) { mutableIntStateOf(0) }
+    val playerFocusRequester = remember(item.id) { FocusRequester() }
+
+    LaunchedEffect(item.id) {
+        runCatching { playerFocusRequester.requestFocus() }
+    }
 
     val source = remember(sources, item.sourceId) {
         sources.firstOrNull { it.id == item.sourceId }
@@ -143,25 +171,42 @@ fun IosPlayerScreen(
         if (savedResume != null) app.playback.pause()
     }
 
-    LaunchedEffect(item.id) {
+    LaunchedEffect(item.id, showControls, nextItem?.id, item.kind, localSettings.autoplayNextEpisode) {
         while (true) {
             val p = app.playback.player
             val video = selectedVideoFormat(p)
-            val audioChannels = selectedAudioChannels(p)
-            snapshot = PlayerSnapshot(
-                position = p.currentPosition.coerceAtLeast(0L),
+            val nextSnapshot = PlayerSnapshot(
                 duration = p.duration.coerceAtLeast(0L),
-                buffered = p.bufferedPosition.coerceAtLeast(0L),
                 isPlaying = p.isPlaying,
                 isBuffering = p.isLoading,
                 state = p.playbackState,
                 videoWidth = video?.width ?: 0,
                 videoHeight = video?.height ?: 0,
                 frameRate = video?.frameRate ?: 0f,
-                audioChannels = audioChannels
+                audioChannels = selectedAudioChannels(p)
             )
-            delay(500L)
+            // Metadata changes infrequently; don't invalidate the whole player every 500 ms.
+            if (snapshot != nextSnapshot) snapshot = nextSnapshot
+
+            // The timeline is only sampled at interactive rate while visible. When hidden,
+            // keep a slower clock only if we need the next-episode affordance/autoplay timing.
+            val needsHiddenProgress = item.kind == MediaKind.EPISODE &&
+                nextItem != null && localSettings.autoplayNextEpisode
+            if (showControls || needsHiddenProgress) {
+                val nextProgress = PlaybackProgress(
+                    position = p.currentPosition.coerceAtLeast(0L)
+                )
+                if (progressState.value != nextProgress) progressState.value = nextProgress
+            }
+            delay(if (showControls) 250L else 1_200L)
         }
+    }
+
+    LaunchedEffect(hudTimerKey) {
+        if (hudTimerKey == 0) return@LaunchedEffect
+        delay(900L)
+        showBrightnessHud = false
+        showVolumeHud = false
     }
 
     LaunchedEffect(showControls, dialog, locked, snapshot.isBuffering) {
@@ -226,6 +271,15 @@ fun IosPlayerScreen(
                     )
                 )
             }
+            // Brightness changes are window-scoped on Android; restore the value that
+            // was active before playback so the gesture does not leak into other screens.
+            context.findActivity()?.window?.let { window ->
+                val params = window.attributes
+                if (params.screenBrightness != originalWindowBrightness) {
+                    params.screenBrightness = originalWindowBrightness
+                    window.attributes = params
+                }
+            }
             app.playback.stop()
         }
     }
@@ -237,7 +291,62 @@ fun IosPlayerScreen(
         app.playback.setSettings(updated)
     }
 
-    Box(Modifier.fillMaxSize().background(Color.Black)) {
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .focusRequester(playerFocusRequester)
+            .focusable()
+            .onPreviewKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown || locked || dialog != null) return@onPreviewKeyEvent false
+                when (event.key) {
+                    Key.MediaPlayPause, Key.Spacebar -> {
+                        app.playback.togglePlayPause()
+                        showControls = true
+                        true
+                    }
+                    Key.DirectionCenter, Key.Enter -> {
+                        if (!showControls) {
+                            showControls = true
+                            true
+                        } else false
+                    }
+                    Key.DirectionLeft -> {
+                        if (showControls) false else {
+                            showControls = true
+                            if (item.kind != MediaKind.LIVE) app.playback.skipBack(10_000L)
+                            true
+                        }
+                    }
+                    Key.DirectionRight -> {
+                        if (showControls) false else {
+                            showControls = true
+                            if (item.kind != MediaKind.LIVE) app.playback.skipForward(10_000L)
+                            true
+                        }
+                    }
+                    Key.DirectionUp -> {
+                        if (showControls) false else if (item.kind == MediaKind.LIVE && nextItem != null) {
+                            onNavigateToItem(nextItem)
+                            true
+                        } else {
+                            showControls = true
+                            true
+                        }
+                    }
+                    Key.DirectionDown -> {
+                        if (showControls) false else if (item.kind == MediaKind.LIVE && previousItem != null) {
+                            onNavigateToItem(previousItem)
+                            true
+                        } else {
+                            showControls = true
+                            true
+                        }
+                    }
+                    else -> false
+                }
+            }
+    ) {
         // Recreated when "Panorama 360°" changes, because the surface type is fixed at inflation.
         key(localSettings.panorama360) {
         AndroidView(
@@ -253,9 +362,11 @@ fun IosPlayerScreen(
             },
             update = {
                 // playerEpoch changes whenever the ExoPlayer is recreated (decoder fallback, settings): re-bind.
-                if (playerEpoch >= 0) it.player = app.playback.player
-                it.keepScreenOn = true
-                it.resizeMode = resizeModeForAspect(aspect)
+                val activePlayer = app.playback.player
+                if (playerEpoch >= 0 && it.player !== activePlayer) it.player = activePlayer
+                if (!it.keepScreenOn) it.keepScreenOn = true
+                val requestedResizeMode = resizeModeForAspect(aspect)
+                if (it.resizeMode != requestedResizeMode) it.resizeMode = requestedResizeMode
                 // "Rotazione automatica 360°": follow the device orientation sensor on spherical video.
                 (it.videoSurfaceView as? androidx.media3.exoplayer.video.spherical.SphericalGLSurfaceView)
                     ?.setUseSensorRotation(localSettings.autoRotate360)
@@ -274,6 +385,74 @@ fun IosPlayerScreen(
                         },
                         onTap = {
                             if (!locked) showControls = !showControls
+                        }
+                    )
+                }
+                // Port of iOS PlayerView's vertical gesture: left half = brightness,
+                // right half = media volume. Horizontal swipes remain available to controls.
+                .pointerInput(item.id, locked) {
+                    if (locked) return@pointerInput
+                    var baseValue = 0f
+                    var adjustBrightness = true
+                    var totalX = 0f
+                    var totalY = 0f
+                    detectDragGestures(
+                        onDragStart = { offset ->
+                            adjustBrightness = offset.x < size.width / 2f
+                            totalX = 0f
+                            totalY = 0f
+                            if (adjustBrightness) {
+                                val activity = context.findActivity()
+                                val windowBrightness = activity?.window?.attributes?.screenBrightness ?: -1f
+                                baseValue = if (windowBrightness >= 0f) windowBrightness else runCatching {
+                                    android.provider.Settings.System.getInt(
+                                        context.contentResolver,
+                                        android.provider.Settings.System.SCREEN_BRIGHTNESS,
+                                        128
+                                    ) / 255f
+                                }.getOrDefault(0.5f).coerceIn(0f, 1f)
+                                brightnessLevel.floatValue = baseValue
+                                showBrightnessHud = true
+                                showVolumeHud = false
+                            } else {
+                                val audio = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                                val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+                                baseValue = audio.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / max
+                                volumeLevel.floatValue = baseValue
+                                showVolumeHud = true
+                                showBrightnessHud = false
+                            }
+                            hudTimerKey++
+                        },
+                        onDragEnd = { hudTimerKey++ },
+                        onDragCancel = { hudTimerKey++ },
+                        onDrag = { change, dragAmount ->
+                            totalX += dragAmount.x
+                            totalY += dragAmount.y
+                            if (kotlin.math.abs(totalY) <= kotlin.math.abs(totalX)) return@detectDragGestures
+                            change.consume()
+                            val value = (baseValue - totalY / (size.height * 0.35f).coerceAtLeast(1f)).coerceIn(0f, 1f)
+                            if (adjustBrightness) {
+                                brightnessLevel.floatValue = value
+                                showBrightnessHud = true
+                                showVolumeHud = false
+                                context.findActivity()?.window?.let { window ->
+                                    val params = window.attributes
+                                    if (params.screenBrightness < 0f || kotlin.math.abs(params.screenBrightness - value) >= 0.01f) {
+                                        params.screenBrightness = value
+                                        window.attributes = params
+                                    }
+                                }
+                            } else {
+                                volumeLevel.floatValue = value
+                                showVolumeHud = true
+                                showBrightnessHud = false
+                                runCatching {
+                                    val audio = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                                    val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+                                    audio.setStreamVolume(AudioManager.STREAM_MUSIC, (value * max).roundToInt().coerceIn(0, max), 0)
+                                }
+                            }
                         }
                     )
                 }
@@ -356,8 +535,10 @@ fun IosPlayerScreen(
                 PlayerControlsOverlay(
                     app = app,
                     item = item,
+                    sourceName = source?.name,
                     settings = localSettings,
                     snapshot = snapshot,
+                    progressState = progressState,
                     currentLiveProgram = currentLiveProgram,
                     currentSpeed = currentSpeed,
                     previousItem = previousItem,
@@ -367,6 +548,12 @@ fun IosPlayerScreen(
                     supportsPip = supportsPip,
                     onExternal = { app.playback.handoffExternal(context, item.streamUrl) },
                     onShowDialog = { dialog = it },
+                    onToggleDecoder = {
+                        val wasHardware = localSettings.hardwareDecode
+                        applySettings(localSettings.copy(hardwareDecode = !wasHardware, softwareDecode = wasHardware))
+                        toast = if (wasHardware) "Decodifica software" else "Decodifica hardware"
+                        showControls = true
+                    },
                     onLock = { locked = true },
                     onSeek = { app.playback.seekTo(it) },
                     onPlayPause = { app.playback.togglePlayPause() },
@@ -403,29 +590,19 @@ fun IosPlayerScreen(
             }
         }
 
-        app.playback.error.collectAsStateWithLifecycle().value?.let { error ->
-            Surface(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth(.82f)
-                    .padding(bottom = 96.dp),
-                shape = RoundedCornerShape(22.dp),
-                color = Color.Black.copy(.82f),
-                border = BorderStroke(1.dp, Color.White.copy(.13f))
-            ) {
-                Row(
-                    Modifier.padding(14.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Riproduzione non riuscita", color = Color.White, fontWeight = FontWeight.Bold)
-                        Text(error, color = Color.White.copy(.72f), fontSize = 12.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                    }
-                    TextButton({ app.playback.retry() }) { Text("Riprova") }
-                    TextButton({ app.playback.handoffExternal(context, item.streamUrl) }) { Text("Esterno") }
-                }
-            }
+        AnimatedVisibility(
+            visible = showBrightnessHud,
+            enter = fadeIn(), exit = fadeOut(),
+            modifier = Modifier.align(Alignment.CenterStart).padding(start = 24.dp)
+        ) {
+            PlayerLevelHud(Icons.Default.Brightness6, brightnessLevel, "Luminosità")
+        }
+        AnimatedVisibility(
+            visible = showVolumeHud,
+            enter = fadeIn(), exit = fadeOut(),
+            modifier = Modifier.align(Alignment.CenterEnd).padding(end = 24.dp)
+        ) {
+            PlayerLevelHud(Icons.Default.VolumeUp, volumeLevel, "Volume")
         }
 
         toast?.let { message ->
@@ -469,28 +646,12 @@ fun IosPlayerScreen(
             )
         }
 
-        if (!explicitResume && nextItem != null && localSettings.autoplayNextEpisode &&
-            snapshot.duration > 0L &&
-            snapshot.duration - snapshot.position <= 60_000L
-        ) {
-            Surface(
-                onClick = {
-                    nextItem?.let(onNavigateToItem)
-                },
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(end = 24.dp, bottom = 104.dp),
-                color = Color.Black.copy(.75f),
-                shape = RoundedCornerShape(18.dp),
-                border = BorderStroke(1.dp, Color.White.copy(.14f))
-            ) {
-                Text(
-                    "Prossimo episodio  ›",
-                    color = Color.White,
-                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp),
-                    fontWeight = FontWeight.SemiBold
-                )
-            }
+        if (!explicitResume && nextItem != null && localSettings.autoplayNextEpisode && snapshot.duration > 0L) {
+            NextEpisodePrompt(
+                duration = snapshot.duration,
+                progressState = progressState,
+                onClick = { nextItem?.let(onNavigateToItem) }
+            )
         }
     }
 
@@ -597,8 +758,10 @@ fun IosPlayerScreen(
 private fun PlayerControlsOverlay(
     app: GassPlayerApplication,
     item: MediaItem,
+    sourceName: String?,
     settings: AppSettings,
     snapshot: PlayerSnapshot,
+    progressState: State<PlaybackProgress>,
     currentLiveProgram: EpgProgram?,
     currentSpeed: Float,
     previousItem: MediaItem?,
@@ -608,6 +771,7 @@ private fun PlayerControlsOverlay(
     supportsPip: Boolean,
     onExternal: () -> Unit,
     onShowDialog: (IosPlayerDialog) -> Unit,
+    onToggleDecoder: () -> Unit,
     onLock: () -> Unit,
     onSeek: (Long) -> Unit,
     onPlayPause: () -> Unit,
@@ -618,6 +782,7 @@ private fun PlayerControlsOverlay(
     onCloseWithoutSave: () -> Unit,
     onRequestDialog: (IosPlayerDialog) -> Unit
 ) {
+    val progress = progressState.value
     Box(Modifier.fillMaxSize()) {
         Box(
             Modifier
@@ -643,6 +808,11 @@ private fun PlayerControlsOverlay(
                 PlayerGlassButton(Icons.Default.PictureInPictureAlt, "PiP", onClick = onPip)
             }
             PlayerGlassButton(Icons.Default.OpenInNew, "Esterno", onClick = onExternal)
+            PlayerGlassButton(
+                Icons.Default.Memory,
+                if (settings.hardwareDecode) "Decodifica hardware" else "Decodifica software",
+                onClick = onToggleDecoder
+            )
             PlayerGlassButton(Icons.Default.Lock, "Blocca", onClick = onLock)
             PlayerGlassButton(Icons.Default.MoreVert, "Opzioni") {
                 onRequestDialog(IosPlayerDialog.OPTIONS)
@@ -728,7 +898,8 @@ private fun PlayerControlsOverlay(
             val audio = audioLabel(snapshot.audioChannels)
             val badgeItems = buildList {
                 add("Media3")
-                item.sourceId.takeIf { it.isNotBlank() }?.let { add(it.take(18)) }
+                (sourceName?.takeIf { it.isNotBlank() } ?: item.sourceId.takeIf { it.isNotBlank() })
+                    ?.let { add(it.take(18)) }
                 resolution?.let(::add)
                 fps?.let(::add)
                 audio?.let(::add)
@@ -759,7 +930,7 @@ private fun PlayerControlsOverlay(
         ) {
             if (snapshot.duration > 0L) {
                 Slider(
-                    value = snapshot.position.coerceIn(0L, snapshot.duration).toFloat(),
+                    value = progress.position.coerceIn(0L, snapshot.duration).toFloat(),
                     onValueChange = { onSeek(it.toLong()) },
                     valueRange = 0f..snapshot.duration.toFloat(),
                     modifier = Modifier.fillMaxWidth()
@@ -780,7 +951,7 @@ private fun PlayerControlsOverlay(
                 Spacer(Modifier.weight(1f))
                 Text(
                     if (snapshot.duration > 0L) {
-                        "${formatTime(snapshot.position)} / ${formatTime(snapshot.duration)}"
+                        "${formatTime(progress.position)} / ${formatTime(snapshot.duration)}"
                     } else {
                         "LIVE"
                     },
@@ -788,6 +959,63 @@ private fun PlayerControlsOverlay(
                     fontSize = 13.sp
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun NextEpisodePrompt(
+    duration: Long,
+    progressState: State<PlaybackProgress>,
+    onClick: () -> Unit
+) {
+    val progress = progressState.value
+    if (duration - progress.position > 60_000L) return
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomEnd) {
+        Surface(
+            onClick = onClick,
+            modifier = Modifier.padding(end = 24.dp, bottom = 104.dp),
+            color = Color.Black.copy(.75f),
+            shape = RoundedCornerShape(18.dp),
+            border = BorderStroke(1.dp, Color.White.copy(.14f))
+        ) {
+            Text(
+                "Prossimo episodio  ›",
+                color = Color.White,
+                modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp),
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+    }
+}
+
+@Composable
+private fun PlayerLevelHud(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    valueState: State<Float>,
+    label: String
+) {
+    val value = valueState.value
+    Surface(
+        color = Color.Black.copy(.72f),
+        shape = RoundedCornerShape(24.dp),
+        border = BorderStroke(1.dp, Color.White.copy(.16f))
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 16.dp).width(42.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Icon(icon, contentDescription = label, tint = Color.White)
+            androidx.compose.foundation.layout.Box(
+                Modifier.height(120.dp).width(5.dp).background(Color.White.copy(.22f), RoundedCornerShape(50))
+            ) {
+                androidx.compose.foundation.layout.Box(
+                    Modifier.fillMaxWidth().fillMaxHeight(value.coerceIn(0f, 1f))
+                        .align(Alignment.BottomCenter).background(Color.White, RoundedCornerShape(50))
+                )
+            }
+            Text("${(value.coerceIn(0f, 1f) * 100).roundToInt()}%", color = Color.White, fontSize = 11.sp)
         }
     }
 }
@@ -1076,10 +1304,11 @@ private fun AdvancedDialog(
     onChange: (AppSettings) -> Unit
 ) {
     PlayerDialogFrame("Impostazioni avanzate", onDismiss) {
+        // PlayerDialogFrame owns the only verticalScroll modifier. A second scroll container
+        // here nested the same content in two unbounded vertical scrollers and crashed the
+        // player dialog on opening on some devices.
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState()),
+            modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             SettingStepper("Buffer minimo", settings.minBufferSec, listOf(1, 3, 5, 10, 15, 20, 30, 60)) {
@@ -1103,6 +1332,27 @@ private fun AdvancedDialog(
             SettingSwitch("Solo audio", settings.audioOnly) {
                 onChange(settings.copy(audioOnly = it))
             }
+            SettingSwitch("Decodifica hardware", settings.hardwareDecode) {
+                onChange(settings.copy(hardwareDecode = it, softwareDecode = !it))
+            }
+            SettingSwitch("Decodifica software", settings.softwareDecode) {
+                onChange(settings.copy(softwareDecode = it, hardwareDecode = !it))
+            }
+            SettingSwitch("Decodifica asincrona", settings.asyncDecode) {
+                onChange(settings.copy(asyncDecode = it))
+            }
+            SettingSwitch("Mantieni sottotitoli immagine", settings.preserveImageSubtitles) {
+                onChange(settings.copy(preserveImageSubtitles = it))
+            }
+            SettingSwitch("Deinterlacciamento", settings.deinterlace) {
+                onChange(settings.copy(deinterlace = it))
+            }
+            SettingSwitch("Panorama 360°", settings.panorama360) {
+                onChange(settings.copy(panorama360 = it))
+            }
+            SettingSwitch("Rotazione automatica 360°", settings.autoRotate360) {
+                onChange(settings.copy(autoRotate360 = it))
+            }
             SettingSwitch("Prossimo episodio automatico", settings.autoplayNextEpisode) {
                 onChange(settings.copy(autoplayNextEpisode = it))
             }
@@ -1111,6 +1361,91 @@ private fun AdvancedDialog(
             }
             SettingSwitch("Ripetizione", settings.loopPlayback) {
                 onChange(settings.copy(loopPlayback = it))
+            }
+            SettingDelay("Ritardo A/V (ms)", settings.videoDelayMs, -2_000..2_000, step = 50) {
+                onChange(settings.copy(videoDelayMs = it.coerceIn(-2_000, 2_000)))
+            }
+            SettingOption(
+                title = "Risoluzione massima",
+                current = when (settings.ffmpegLowResolution) {
+                    "half" -> "Ridotta (max 720p)"
+                    "quarter" -> "Bassa (max 480p)"
+                    else -> "Originale"
+                },
+                options = listOf("Originale", "Ridotta (max 720p)", "Bassa (max 480p)"),
+                onSelected = { selected ->
+                    onChange(settings.copy(ffmpegLowResolution = when (selected) {
+                        "Ridotta (max 720p)" -> "half"
+                        "Bassa (max 480p)" -> "quarter"
+                        else -> "full"
+                    }))
+                }
+            )
+        }
+    }
+}
+
+/** Slider that commits on release. Changing A/V delay rebuilds the renderers, so
+ * saving each intermediate drag value would repeatedly destroy/recreate ExoPlayer. */
+@Composable
+private fun SettingDelay(
+    title: String,
+    value: Int,
+    range: IntRange,
+    step: Int,
+    onChange: (Int) -> Unit
+) {
+    var draft by remember(value) { mutableFloatStateOf(value.toFloat()) }
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(.60f),
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(.20f))
+    ) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
+            Text("$title: ${draft.roundToInt()}", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
+            Slider(
+                value = draft.coerceIn(range.first.toFloat(), range.last.toFloat()),
+                onValueChange = { draft = it },
+                valueRange = range.first.toFloat()..range.last.toFloat(),
+                steps = ((range.last - range.first) / step - 1).coerceAtLeast(0),
+                onValueChangeFinished = { onChange(draft.roundToInt().coerceIn(range.first, range.last)) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun SettingOption(
+    title: String,
+    current: String,
+    options: List<String>,
+    onSelected: (String) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        Surface(
+            onClick = { expanded = true },
+            modifier = Modifier.fillMaxWidth(),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(.60f),
+            shape = RoundedCornerShape(14.dp),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(.20f))
+        ) {
+            Row(
+                Modifier.padding(horizontal = 12.dp, vertical = 13.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(title, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
+                Text(current, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                Icon(Icons.Default.ExpandMore, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            options.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(option) },
+                    onClick = { expanded = false; onSelected(option) },
+                    trailingIcon = { if (option == current) Icon(Icons.Default.Check, null) }
+                )
             }
         }
     }
@@ -1239,6 +1574,15 @@ private fun CatalogState.neighborOf(item: MediaItem, forward: Boolean): MediaIte
     }
     val index = sequence.indexOfFirst { it.id == item.id }
     return if (forward) sequence.getOrNull(index + 1) else if (index > 0) sequence[index - 1] else null
+}
+
+private fun Context.findActivity(): Activity? {
+    var current: Context = this
+    while (current is ContextWrapper) {
+        if (current is Activity) return current
+        current = current.baseContext
+    }
+    return current as? Activity
 }
 
 private fun selectedVideoFormat(player: Player): Format? =
