@@ -192,7 +192,7 @@ fun EpgGridScreen(
     // trailing segment. Keep that width discrete (rather than shrinking/growing each minute)
     // so the horizontal scroll range and all row offsets match the SwiftUI grid.
     val halfHourTickCount = ((windowEnd - gridOrigin) / (30 * 60_000L)).toInt() + 1
-    val canvasW = maxOf(halfHourTickCount * 160.dp, 500.dp)
+    val canvasW = maxOf(160.dp * halfHourTickCount.toFloat(), 500.dp)
     val liveAxisX = xFor(windowCenter)
 
     // --- group filter -----------------------------------------------------------------------
