@@ -83,6 +83,27 @@ class PlaybackController(
     private var zapJob: Job? = null
     private var networkRetries = 0
 
+    // --- Recovery state (port of KSPlaybackController.swift) ---
+    private val _status = MutableStateFlow<String?>(null)
+    /** Text shown under the spinner while the provider is being checked or an alternative format is tried. */
+    val recoveryStatus: StateFlow<String?> = _status
+    private val _playerEpoch = MutableStateFlow(0)
+    /** Bumped every time the ExoPlayer instance is recreated, so the UI can re-bind its PlayerView. */
+    val playerEpoch: StateFlow<Int> = _playerEpoch
+    private var isRecovering = false
+    private var recoveryRounds = 0
+    private var triedKeys = mutableSetOf<String>()
+    private var loadGeneration = 0
+    private var hasEverStarted = false
+    private var didSoftwareFallback = false
+    private var forceSoftware = false
+    private var watchdogJob: Job? = null
+    private var recoveryJob: Job? = null
+    private var requestedUrl = ""
+    private var lastStartPosition = 0L
+    /** Movies/episodes get longer timeouts (the server often has to seek the file first), like iOS (30 s vs 15 s). */
+    @Volatile private var vodMode = false
+
     val player: ExoPlayer
         get() = ensurePlayer()
 
@@ -97,6 +118,13 @@ class PlaybackController(
 
     init {
         trackSelector.parameters = buildTrackParameters(settings.value)
+        PlaybackProfileStore.init(context)
+        StreamDiagnostics.hasInternet = {
+            runCatching {
+                val cm = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+                cm.activeNetwork != null
+            }.getOrDefault(true)
+        }
     }
 
     /**
@@ -108,6 +136,7 @@ class PlaybackController(
         val previous = settings.value
         settings.value = value
         AppDns.server = value.preferredDns
+        StreamUserAgents.custom = value.customUserAgent.trim().ifBlank { null }
 
         scope.launch {
             trackSelector.parameters = buildTrackParameters(value)
@@ -157,7 +186,10 @@ class PlaybackController(
     fun play(item: MediaItem, startPosition: Long = 0L, autoPlay: Boolean = true) {
         val previousKind = currentItem?.kind
         zapJob?.cancel()
+        cancelRecovery()
         networkRetries = 0
+        loadGeneration++
+        if (forceSoftware) { forceSoftware = false; releasePlayerOnly() } // new item: back to the user's decoder choice
         stopCurrentForNewItem()
         _error.value = null
         _current.value = item
@@ -171,25 +203,43 @@ class PlaybackController(
 
         val playlistUserAgent = streamHeaders["User-Agent"]
             ?: streamHeaders["user-agent"]
+        // The UA that already worked for this host goes first (learned from earlier playbacks), then the
+        // playlist's own, the user's custom one and the VLC-first ladder.
         userAgents = buildList {
+            PlaybackProfileStore.userAgent(item.streamUrl)?.let(::add)
             playlistUserAgent?.trim()?.takeIf { it.isNotBlank() }?.let(::add)
             settings.value.customUserAgent.trim()
                 .takeIf { it.isNotBlank() }
                 ?.let(::add)
-            addAll(StreamUrlCandidates.userAgentLadder)
+            addAll(StreamUserAgents.ladder)
         }.distinct()
         userAgentIndex = 0
 
+        requestedUrl = item.streamUrl
+        lastStartPosition = positiveStart
+        recoveryRounds = 0
+        hasEverStarted = false
+        didSoftwareFallback = false
+        isRecovering = false
+        _status.value = null
+        val xKind = StreamDiagnostics.xtreamKind(item.streamUrl)
+        val isHttp = item.streamUrl.startsWith("http", ignoreCase = true)
+        val xtreamVod = xKind == "movie" || xKind == "series"
+        vodMode = xtreamVod || item.kind == MediaKind.MOVIE || item.kind == MediaKind.EPISODE
+        // Recently verified resolution: starts immediately with the proven URL/UA, no probe.
+        val cached = if (xtreamVod) ResolutionCache.fresh(item.streamUrl) else null
+        if (cached != null) applyResolution(cached)
+        else triedKeys = mutableSetOf(key(urlCandidates.firstOrNull() ?: item.streamUrl, userAgents.first()))
+
         ensurePlayer()
-        if (item.kind == MediaKind.LIVE && previousKind == MediaKind.LIVE) {
+        if (cached == null && isHttp && xtreamVod) {
+            // Movies/episodes: check what the provider really serves BEFORE opening the player (an open
+            // connection would occupy one of the 1-2 slots most panels allow). Live is never probed.
+            beginPreflight(positiveStart)
+        } else {
             // Channel surfing: collapse rapid zaps into the one the viewer stops on, so we never
             // stack prepares (and codec re-inits) on a low-end box.
-            zapJob = scope.launch {
-                delay(ZAP_DEBOUNCE_MS)
-                setCurrentUrlAndPrepare(positiveStart)
-            }
-        } else {
-            setCurrentUrlAndPrepare(positiveStart)
+            startPlayback(positiveStart, debounce = item.kind == MediaKind.LIVE && previousKind == MediaKind.LIVE)
         }
 
         runCatching {
@@ -201,7 +251,8 @@ class PlaybackController(
     }
 
     fun retry() {
-        currentItem?.let { play(it, player.currentPosition, autoPlay = true) }
+        // Clean restart: the cached resolution may be exactly the one that stopped working.
+        currentItem?.let { ResolutionCache.invalidate(it.streamUrl); play(it, player.currentPosition, autoPlay = true) }
     }
 
     fun pause() = player.pause()
@@ -300,6 +351,8 @@ class PlaybackController(
 
     fun stop() {
         zapJob?.cancel()
+        cancelRecovery()
+        _status.value = null
         sleepJob?.cancel()
         sleepJob = null
         sleepTimerAt = null
@@ -314,6 +367,7 @@ class PlaybackController(
 
     fun release() {
         zapJob?.cancel()
+        cancelRecovery()
         scope.cancel()
         cancelSleepTimer()
         _current.value = null
@@ -355,7 +409,10 @@ class PlaybackController(
                 setPlaybackSpeed(settings.value.preferredPlaybackSpeed.coerceIn(0.25f, 3f))
                 addListener(object : Player.Listener {
                     override fun onPlaybackStateChanged(playbackState: Int) {
-                        if (playbackState == Player.STATE_READY) networkRetries = 0
+                        if (playbackState == Player.STATE_READY) {
+                            networkRetries = 0
+                            markStarted()
+                        }
                     }
 
                     override fun onTracksChanged(tracks: Tracks) {
@@ -364,13 +421,15 @@ class PlaybackController(
 
                     override fun onPlayerError(error: PlaybackException) {
                         if (tryResolvePlaybackError(error)) return
-                        diagnostics.log("ERROR", "player", error.toString())
-                        _error.value = describeError(error)
+                        // Quick local fixes exhausted: probe the provider to find the REAL cause and retry
+                        // with another format / User-Agent / decoder (or show the verified cause).
+                        handlePlaybackFailure(describeError(error))
                     }
                 })
             }
 
         playerInstance = created
+        _playerEpoch.value++
         lastLoadControlSignature = loadControlSignature(settings.value)
         return created
     }
@@ -444,7 +503,9 @@ class PlaybackController(
 
     private fun newStreamingClient(
         protocols: List<okhttp3.Protocol>,
-        legacyTls: Boolean = false
+        legacyTls: Boolean = false,
+        connectSec: Long = 8,
+        readSec: Long = 15
     ): OkHttpClient =
         OkHttpClient.Builder()
             .retryOnConnectionFailure(true)
@@ -452,8 +513,8 @@ class PlaybackController(
             .followRedirects(true)
             .followSslRedirects(true)
             // A dead live connection must surface in seconds (so we reconnect), not after 2 minutes.
-            .connectTimeout(8, TimeUnit.SECONDS)
-            .readTimeout(20, TimeUnit.SECONDS)
+            .connectTimeout(connectSec, TimeUnit.SECONDS)
+            .readTimeout(readSec, TimeUnit.SECONDS)
             .callTimeout(0, TimeUnit.MILLISECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
             .connectionPool(okhttp3.ConnectionPool(8, 5, TimeUnit.MINUTES))
@@ -471,27 +532,28 @@ class PlaybackController(
             .protocols(protocols)
             .build()
 
-    private fun makeHttpFactories(): List<OkHttpDataSource.Factory> = listOf(
-        OkHttpDataSource.Factory(
-            newStreamingClient(
-                listOf(okhttp3.Protocol.HTTP_2, okhttp3.Protocol.HTTP_1_1)
-            )
-        ),
-        OkHttpDataSource.Factory(
-            newStreamingClient(listOf(okhttp3.Protocol.HTTP_1_1))
-        ),
-        OkHttpDataSource.Factory(
-            newStreamingClient(
-                listOf(okhttp3.Protocol.HTTP_1_1),
-                legacyTls = true
-            )
+    /**
+     * Three transports (HTTP/2+1.1, HTTP/1.1, legacy TLS), each with a live client (15 s timeouts) and a VOD
+     * client (30 s, as on iOS: the server often has to seek the file / moov atom before answering). The
+     * right one is picked per request through [vodMode].
+     */
+    private fun makeHttpFactories(): List<OkHttpDataSource.Factory> {
+        fun factoryFor(protocols: List<okhttp3.Protocol>, legacyTls: Boolean): OkHttpDataSource.Factory {
+            val live = newStreamingClient(protocols, legacyTls, connectSec = 8, readSec = 15)
+            val vod = newStreamingClient(protocols, legacyTls, connectSec = 15, readSec = 30)
+            return OkHttpDataSource.Factory(okhttp3.Call.Factory { request -> (if (vodMode) vod else live).newCall(request) })
+        }
+        return listOf(
+            factoryFor(listOf(okhttp3.Protocol.HTTP_2, okhttp3.Protocol.HTTP_1_1), false),
+            factoryFor(listOf(okhttp3.Protocol.HTTP_1_1), false),
+            factoryFor(listOf(okhttp3.Protocol.HTTP_1_1), true)
         )
-    )
+    }
 
     private fun effectiveUserAgent(): String =
         userAgents.getOrNull(userAgentIndex)?.takeIf { it.isNotBlank() }
             ?: settings.value.customUserAgent.trim().takeIf { it.isNotBlank() }
-            ?: StreamUrlCandidates.userAgentLadder.first()
+            ?: StreamUserAgents.vlc
 
     private fun configureFactories(factories: List<OkHttpDataSource.Factory>) {
         val headers = linkedMapOf<String, String>().apply {
@@ -555,6 +617,192 @@ class PlaybackController(
             path.endsWith(".mp3") -> MimeTypes.AUDIO_MPEG
             path.endsWith(".aac") -> MimeTypes.AUDIO_AAC
             else -> null
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Recovery engine — port of KSPlaybackController.swift (preflight, watchdog, diagnosis, fallback)
+    // ---------------------------------------------------------------------------------------------
+
+    private fun key(url: String, userAgent: String) = "$url|$userAgent"
+
+    private fun cancelRecovery() {
+        recoveryJob?.cancel(); recoveryJob = null
+        watchdogJob?.cancel(); watchdogJob = null
+        isRecovering = false
+    }
+
+    /** Points the player-level ladders at a verified URL/User-Agent pair. */
+    private fun applyResolution(res: StreamResolution) {
+        urlCandidates = (listOf(res.playUrl) + StreamUrlCandidates.ordered(res.playUrl)).distinct()
+        urlIndex = 0
+        userAgents = (listOf(res.userAgent) + userAgents).distinct()
+        userAgentIndex = 0
+        triedKeys = mutableSetOf(key(res.playUrl, res.userAgent))
+    }
+
+    private fun beginPreflight(startPosition: Long) {
+        val generation = ++loadGeneration
+        val requested = requestedUrl
+        val userAgent = effectiveUserAgent()
+        val headers = streamHeaders
+        // Never keep a connection open while verifying.
+        playerInstance?.apply { stop(); clearMediaItems() }
+        watchdogJob?.cancel()
+        isRecovering = true
+        _status.value = "Verifico il provider…"
+        recoveryJob?.cancel()
+        recoveryJob = scope.launch {
+            val diagnosis = StreamDiagnostics.diagnose(requested, userAgent, headers, useCache = true)
+            // Let the provider register the probe connection closing before the player opens its own.
+            if (diagnosis is StreamDiagnosis.Playable) delay(150)
+            if (generation != loadGeneration || currentItem == null) return@launch
+            isRecovering = false
+            _status.value = null
+            when (diagnosis) {
+                is StreamDiagnosis.Playable -> { applyResolution(diagnosis.resolution); startPlayback(startPosition) }
+                is StreamDiagnosis.Inconclusive -> {
+                    // The probe cannot decide: try the engine anyway.
+                    diagnostics.log("WARN", "player", "Verifica inconcludente (${diagnosis.message}), avvio diretto")
+                    startPlayback(startPosition)
+                }
+                is StreamDiagnosis.Unplayable -> {
+                    diagnostics.log("ERROR", "player", "Verifica provider fallita: ${diagnosis.message}")
+                    _error.value = diagnosis.message
+                }
+            }
+        }
+    }
+
+    private fun startPlayback(position: Long, debounce: Boolean = false) {
+        val generation = ++loadGeneration
+        hasEverStarted = false
+        if (debounce) {
+            zapJob = scope.launch {
+                delay(ZAP_DEBOUNCE_MS)
+                if (generation == loadGeneration && currentItem != null) { setCurrentUrlAndPrepare(position); startWatchdog() }
+            }
+        } else {
+            setCurrentUrlAndPrepare(position)
+            startWatchdog()
+        }
+    }
+
+    private fun markStarted() {
+        if (hasEverStarted) return
+        hasEverStarted = true
+        watchdogJob?.cancel()
+        _status.value = null
+        recoveryRounds = 0
+        val ua = effectiveUserAgent()
+        val active = urlCandidates.getOrElse(urlIndex) { requestedUrl }
+        triedKeys = mutableSetOf(key(active, ua))
+        PlaybackProfileStore.rememberUserAgent(ua, requestedUrl)
+        // The engine really played it: the next opening of this movie skips the verification.
+        if (StreamDiagnostics.xtreamKind(requestedUrl).let { it == "movie" || it == "series" }) {
+            ResolutionCache.store(StreamResolution(requestedUrl, active, ua), requestedUrl)
+        }
+    }
+
+    /** After 7 s without playback: kick prepare/play; after 25 s total: treat as failed and diagnose. */
+    private fun startWatchdog() {
+        watchdogJob?.cancel()
+        val generation = loadGeneration
+        watchdogJob = scope.launch {
+            delay(7_000)
+            if (!watchdogStillRelevant(generation)) return@launch
+            diagnostics.log("WARN", "player", "Nessuna riproduzione dopo 7s: ciclo pausa->play")
+            playerInstance?.let { p ->
+                if (p.playbackState == Player.STATE_IDLE) p.prepare()
+                else { p.playWhenReady = false; p.playWhenReady = true }
+            }
+            delay(18_000)
+            if (!watchdogStillRelevant(generation)) return@launch
+            handlePlaybackFailure("Timeout: nessun dato valido ricevuto dal provider entro 25 secondi.")
+        }
+    }
+
+    private fun watchdogStillRelevant(generation: Int) =
+        generation == loadGeneration && !hasEverStarted && !isRecovering && _error.value == null && currentItem != null && requestedAutoplay
+
+    /**
+     * Engine error: close the stream (frees the provider's connection slot), probe the provider to learn the
+     * real cause, then retry with a different URL/UA/decoder or show the verified cause.
+     */
+    private fun handlePlaybackFailure(description: String) {
+        if (isRecovering || currentItem == null) return
+        diagnostics.log("ERROR", "player", "Errore riproduzione: $description")
+
+        recoveryRounds++
+        if (recoveryRounds > MAX_RECOVERY_ROUNDS || !requestedUrl.startsWith("http", ignoreCase = true)) {
+            _status.value = null
+            _error.value = description
+            return
+        }
+
+        val failedMidstream = hasEverStarted
+        val live = currentItem?.kind == MediaKind.LIVE
+        val position = if (failedMidstream && !live) (playerInstance?.currentPosition ?: 0L).coerceAtLeast(0L) else lastStartPosition
+        isRecovering = true
+        _status.value = "Il flusso non parte: controllo cosa risponde il provider…"
+        watchdogJob?.cancel()
+        val generation = loadGeneration
+        val requested = requestedUrl
+        val userAgent = effectiveUserAgent()
+        val headers = streamHeaders
+        playerInstance?.apply { stop(); clearMediaItems() }
+
+        recoveryJob?.cancel()
+        recoveryJob = scope.launch {
+            // Give the provider time to release the connection slot.
+            delay(700)
+            ResolutionCache.invalidate(requested)
+            val diagnosis = StreamDiagnostics.diagnose(requested, userAgent, headers)
+            if (generation != loadGeneration || currentItem == null) return@launch
+            applyDiagnosis(diagnosis, description, failedMidstream, position)
+        }
+    }
+
+    private fun applyDiagnosis(diagnosis: StreamDiagnosis, engineError: String, failedMidstream: Boolean, position: Long) {
+        isRecovering = false
+        when (diagnosis) {
+            is StreamDiagnosis.Unplayable, is StreamDiagnosis.Inconclusive -> {
+                val message = (diagnosis as? StreamDiagnosis.Unplayable)?.message ?: (diagnosis as StreamDiagnosis.Inconclusive).message
+                diagnostics.log("ERROR", "player", "Diagnosi provider: $message")
+                _status.value = null
+                _error.value = message
+            }
+
+            is StreamDiagnosis.Playable -> {
+                val res = diagnosis.resolution
+                val resolutionKey = key(res.playUrl, res.userAgent)
+                val s = settings.value
+                when {
+                    resolutionKey !in triedKeys || failedMidstream -> {
+                        triedKeys.add(resolutionKey)
+                        val ext = StreamDiagnostics.extensionOf(res.playUrl)
+                        _status.value = if (ext != StreamDiagnostics.extensionOf(requestedUrl)) "Provo il formato ${ext.uppercase()}…" else "Riprovo la connessione…"
+                        diagnostics.log("WARN", "player", "Ritento con ${res.playUrl} (UA: ${res.userAgent})")
+                        applyResolution(res)
+                        startPlayback(position)
+                    }
+
+                    s.hardwareDecode && !s.softwareDecode && !didSoftwareFallback -> {
+                        // The provider serves the file: the problem is the hardware decoder.
+                        didSoftwareFallback = true
+                        forceSoftware = true
+                        _status.value = "Passo alla decodifica software…"
+                        releasePlayerOnly()
+                        ensurePlayer()
+                        startPlayback(position)
+                    }
+
+                    else -> {
+                        _status.value = null
+                        _error.value = "Il provider serve il file correttamente ma il player non riesce a decodificarlo.\n\nDettaglio: $engineError\n\nProva «Apri con un altro player»."
+                    }
+                }
+            }
         }
     }
 
@@ -694,7 +942,7 @@ class PlaybackController(
             // If the preferred decoder fails to initialise, try the next one instead of erroring out.
             .setEnableDecoderFallback(true)
         if (s.asyncDecode) factory.forceEnableMediaCodecAsynchronousQueueing()
-        if (s.softwareDecode && !s.hardwareDecode) {
+        if ((s.softwareDecode && !s.hardwareDecode) || forceSoftware) {
             factory.setMediaCodecSelector(androidx.media3.exoplayer.mediacodec.MediaCodecSelector { mime, secure, tunneling ->
                 androidx.media3.exoplayer.mediacodec.MediaCodecSelector.DEFAULT
                     .getDecoderInfos(mime, secure, tunneling)
@@ -763,6 +1011,7 @@ class PlaybackController(
 
     private companion object {
         const val ZAP_DEBOUNCE_MS = 250L
+        const val MAX_RECOVERY_ROUNDS = 3
         const val FAST_START_MS = 1_500
         const val REBUFFER_MS = 2_000
         const val MAX_LOAD_RETRIES = 5

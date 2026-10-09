@@ -60,13 +60,14 @@ class GassPlayerApplication : Application() {
         subtitles = OpenSubtitlesService(network)
         cloud = AndroidCloudSync(this, prefs)
         reminders = ReminderScheduler(this)
+        com.gassplayer.android.data.EmptyCategoryStore.init(this)
         playback = PlaybackController(this, diagnostics)
         mergedPlaylists = MergedPlaylistRepository(prefs)
         externalEpg = ExternalEpgRepository(prefs)
 
         appScope.launch {
             prefs.settingsFlow.collectLatest { settings ->
-                network.userAgent = settings.customUserAgent.trim().ifBlank { "GassPlayer/Android/1.0" }
+                network.userAgent = settings.customUserAgent.trim().ifBlank { com.gassplayer.android.media.StreamUserAgents.DEFAULT_VLC }
                 CatalogRefreshScheduler.sync(this@GassPlayerApplication, prefs, settings)
                 playback.setSettings(settings)
             }

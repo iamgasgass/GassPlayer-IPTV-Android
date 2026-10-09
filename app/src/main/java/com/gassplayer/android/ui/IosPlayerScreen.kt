@@ -91,6 +91,8 @@ fun IosPlayerScreen(
     val watch by app.watch.flow.collectAsStateWithLifecycle(emptyList())
     val sources by app.sources.sources.collectAsStateWithLifecycle(emptyList())
     val playbackError by app.playback.error.collectAsStateWithLifecycle()
+    val recoveryStatus by app.playback.recoveryStatus.collectAsStateWithLifecycle()
+    val playerEpoch by app.playback.playerEpoch.collectAsStateWithLifecycle()
 
     var showControls by remember(item.id) { mutableStateOf(true) }
     var locked by remember(item.id) { mutableStateOf(false) }
@@ -250,7 +252,8 @@ fun IosPlayerScreen(
                 }
             },
             update = {
-                it.player = app.playback.player
+                // playerEpoch changes whenever the ExoPlayer is recreated (decoder fallback, settings): re-bind.
+                if (playerEpoch >= 0) it.player = app.playback.player
                 it.keepScreenOn = true
                 it.resizeMode = resizeModeForAspect(aspect)
                 // "Rotazione automatica 360°": follow the device orientation sensor on spherical video.
@@ -278,7 +281,7 @@ fun IosPlayerScreen(
         }
 
         AnimatedVisibility(
-            visible = snapshot.isBuffering && playbackError == null,
+            visible = (snapshot.isBuffering || recoveryStatus != null) && playbackError == null,
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier.align(Alignment.Center)
@@ -289,7 +292,7 @@ fun IosPlayerScreen(
             ) {
                 CircularProgressIndicator(color = Color.White)
                 Text(
-                    text = "Caricamento…",
+                    text = recoveryStatus ?: "Caricamento…",
                     color = Color.White.copy(.85f),
                     fontSize = 13.sp
                 )

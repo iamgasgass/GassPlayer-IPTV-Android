@@ -15,6 +15,11 @@ object StreamUrlCandidates {
         "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124.0 Mobile Safari/537.36"
     )
 
+    /** Xtream VOD containers, ordered by probability of success on a panel (from the iOS app). */
+    val VOD_EXTENSIONS = listOf("mp4", "mkv", "avi", "m3u8", "ts", "mov", "m4v", "webm", "flv", "wmv", "mpg")
+    val LIVE_EXTENSIONS = listOf("m3u8", "ts")
+    const val MAX_ALTERNATIVES = 6
+
     fun ordered(url: String): List<String> {
         val baseCandidates = NetworkApi.candidateUrls(url)
         val result = LinkedHashSet<String>()
@@ -36,9 +41,10 @@ object StreamUrlCandidates {
             val hasExtension = dot > path.lastIndexOf('/')
             val currentExt = if (hasExtension) path.substring(dot + 1).lowercase() else ""
             val replacements = when {
-                "/live/" in lower -> listOf("m3u8", "ts")
-                "/series/" in lower -> listOf("mp4", "mkv", "ts", "m3u8")
-                "/movie/" in lower -> listOf("mp4", "mkv", "avi", "ts", "m3u8")
+                // Same extension orders and cap as the iOS app (StreamURLCandidates): the catalog's
+                // container_extension is often wrong/obsolete, so other containers are tried by likelihood.
+                "/live/" in lower -> LIVE_EXTENSIONS
+                "/series/" in lower || "/movie/" in lower -> VOD_EXTENSIONS.filter { it != currentExt }.take(MAX_ALTERNATIVES)
                 !hasExtension && ("m3u8" in raw.lowercase() || "hls" in raw.lowercase() || "manifest" in raw.lowercase()) -> listOf("m3u8", "ts")
                 !hasExtension -> listOf("m3u8", "ts", "mp4", "mkv")
                 else -> emptyList()

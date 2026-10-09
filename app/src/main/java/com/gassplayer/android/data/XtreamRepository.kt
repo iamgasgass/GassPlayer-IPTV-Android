@@ -40,17 +40,21 @@ class XtreamRepository(private val api: NetworkApi) {
         val liveCatD = async { runCatching { categories(creds, "get_live_categories", source) } }
         val vodCatD = async { runCatching { categories(creds, "get_vod_categories", source) } }
         val serCatD = async { runCatching { categories(creds, "get_series_categories", source) } }
-        val liveD = async { runCatching { api.getJsonObjects(playerApi(creds, mapOf("action" to "get_live_streams"))) { it.toLiveOrNull(source, creds) } } }
-        val vodD = async { runCatching { api.getJsonObjects(playerApi(creds, mapOf("action" to "get_vod_streams"))) { it.toVodOrNull(source, creds) } } }
-        val serD = async { runCatching { api.getJsonObjects(playerApi(creds, mapOf("action" to "get_series"))) { it.toSeriesOrNull(source) } } }
+        val liveD = async { runCatching { withRetry { api.getJsonObjects(playerApi(creds, mapOf("action" to "get_live_streams"))) { it.toLiveOrNull(source, creds) } } } }
+        val vodD = async { runCatching { withRetry { api.getJsonObjects(playerApi(creds, mapOf("action" to "get_vod_streams"))) { it.toVodOrNull(source, creds) } } } }
+        val serD = async { runCatching { withRetry { api.getJsonObjects(playerApi(creds, mapOf("action" to "get_series"))) { it.toSeriesOrNull(source) } } } }
 
         val auth = authD.await()
         val liveCategories = liveCatD.await().getOrDefault(emptyList())
         val vodCategories = vodCatD.await().getOrDefault(emptyList())
         val seriesCategories = serCatD.await().getOrDefault(emptyList())
         val liveR = liveD.await(); val vodR = vodD.await(); val serR = serD.await()
-        var live = liveR.getOrDefault(emptyList()).distinctBy { it.id }.mapIndexed { i, m -> if (m.number == null) m.copy(number = i + 1) else m }
-        var movies = vodR.getOrDefault(emptyList()).distinctBy { it.id }
+        // Some panels leave whole categories out of the global list. Like the iOS app, only the categories that are
+        // completely absent are queried directly (typically none), and categories confirmed empty are remembered 12 h.
+        val liveGlobal = liveR.getOrNull()?.let { recoverMissingCategories(source, "get_live_streams", liveCategories, it) { o -> o.toLiveOrNull(source, creds) } } ?: emptyList()
+        val vodGlobal = vodR.getOrNull()?.let { recoverMissingCategories(source, "get_vod_streams", vodCategories, it) { o -> o.toVodOrNull(source, creds) } } ?: emptyList()
+        var live = liveGlobal.distinctBy { it.id }.mapIndexed { i, m -> if (m.number == null) m.copy(number = i + 1) else m }
+        var movies = vodGlobal.distinctBy { it.id }
         var series = serR.getOrDefault(emptyList()).distinctBy { it.id }
 
         // A subset of panels expose get_series (or even all lists) but return an empty/error
@@ -80,6 +84,67 @@ class XtreamRepository(private val api: NetworkApi) {
             )
         }
         CatalogBundle(liveCategories, vodCategories, seriesCategories, live, movies, series, fallbackEpisodes)
+    }
+
+    /** iOS RetryPolicy: 3 attempts, 0.5 s doubling, only for transient backend errors (5xx/408/429). */
+    private suspend fun <T> withRetry(maxAttempts: Int = 3, initialDelayMs: Long = 500, block: suspend () -> T): T {
+        var attempt = 0
+        var wait = initialDelayMs
+        while (true) {
+            try {
+                return block()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                attempt++
+                val transient = e is NetworkApi.HttpStatusException && (e.code in 500..599 || e.code == 408 || e.code == 429)
+                if (attempt >= maxAttempts || !transient) throw e
+                kotlinx.coroutines.delay(wait)
+                wait *= 2
+            }
+        }
+    }
+
+    /**
+     * Port of `fetchAllStreamsReportingEmpty`: the global response is authoritative; only categories that are
+     * completely absent from it are queried (batches of 6 in parallel). Known-empty categories are skipped when the
+     * global list is not empty; a failed request is never treated as "empty".
+     */
+    private suspend fun recoverMissingCategories(
+        source: MediaSourceConfig,
+        action: String,
+        categories: List<Category>,
+        global: List<MediaItem>,
+        map: (JsonObject) -> MediaItem?
+    ): List<MediaItem> {
+        if (categories.isEmpty()) return global
+        val creds = XtreamCredentials(serverBase(source.host), source.username.orEmpty(), source.password.orEmpty())
+        val globalIds = global.mapNotNull { it.categoryId?.trim()?.takeIf { id -> id.isNotEmpty() } }.toSet()
+        val allIds = categories.map { it.id.trim() }.filter { it.isNotEmpty() }.toSet()
+        val absent = allIds - globalIds
+        val storeKey = "${source.id}|$action"
+        val known = EmptyCategoryStore.load(storeKey)
+        val skipped = if (global.isEmpty()) emptySet() else absent.intersect(known.ids)
+        val missing = (absent - skipped).toList()
+        if (missing.isEmpty()) {
+            EmptyCategoryStore.save(storeKey, skipped, known)
+            return global
+        }
+        val collected = ArrayList<MediaItem>()
+        val confirmedEmpty = HashSet(skipped)
+        for (batch in missing.chunked(CATEGORY_BATCH_SIZE)) {
+            val results = coroutineScope {
+                batch.map { id ->
+                    async { id to runCatching { api.getJsonObjects(playerApi(creds, mapOf("action" to action, "category_id" to id))) { o -> map(o) } }.getOrNull() }
+                }.map { it.await() }
+            }
+            for ((id, items) in results) {
+                if (items == null) continue // request failed: NOT empty
+                if (items.isEmpty()) confirmedEmpty += id else collected += items
+            }
+        }
+        EmptyCategoryStore.save(storeKey, confirmedEmpty, known)
+        return (global + collected).distinctBy { it.id }
     }
 
     /**
@@ -427,3 +492,31 @@ private fun normalizeSeriesMatch(title: String): String {
 }
 
 private fun durationTextToSeconds(s: String?): Long? = s?.split(":")?.let { parts -> if (parts.size in 2..3) parts.fold(0L) { a, p -> a * 60 + (p.toLongOrNull() ?: 0) } else null }
+
+private const val CATEGORY_BATCH_SIZE = 6
+
+/** Categories confirmed empty by the provider, remembered 12 h per source+list (iOS: `emptyCategories` defaults). */
+object EmptyCategoryStore {
+    private const val TTL_MS = 12 * 3600_000L
+    class Known(val ids: Set<String>, val savedAt: Long?)
+
+    private var prefs: android.content.SharedPreferences? = null
+    fun init(context: android.content.Context) {
+        if (prefs == null) prefs = context.applicationContext.getSharedPreferences("gassplayer_empty_categories", android.content.Context.MODE_PRIVATE)
+    }
+
+    fun load(key: String): Known {
+        val raw = prefs?.getString(key, null) ?: return Known(emptySet(), null)
+        val savedAt = raw.substringBefore('|').toLongOrNull() ?: return Known(emptySet(), null)
+        if (System.currentTimeMillis() - savedAt >= TTL_MS) return Known(emptySet(), null)
+        return Known(raw.substringAfter('|', "").split(',').filter { it.isNotEmpty() }.toSet(), savedAt)
+    }
+
+    fun save(key: String, ids: Set<String>, previous: Known) {
+        val editor = prefs?.edit() ?: return
+        if (ids.isEmpty()) { editor.remove(key).apply(); return }
+        // No new verification (all already known): keep the original date so the 12 h expiry does not slide.
+        val savedAt = (if (ids == previous.ids) previous.savedAt else null) ?: System.currentTimeMillis()
+        editor.putString(key, "$savedAt|${ids.joinToString(",")}").apply()
+    }
+}

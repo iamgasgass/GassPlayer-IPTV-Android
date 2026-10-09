@@ -207,6 +207,43 @@ class NetworkApi {
         headers: Map<String, String>,
         defaultAccept: String,
         block: (okhttp3.Response, String) -> R
+    ): R {
+        val host = runCatching { java.net.URI(url).host?.lowercase() }.getOrNull()
+        val first = host?.let { agentByHost[it] } ?: userAgent
+        try {
+            return executeWithAgent(url, headers, defaultAccept, first, block)
+        } catch (e: HttpStatusException) {
+            // Parity with the iOS app: many panels refuse unknown User-Agents (403/406/451) while accepting
+            // classic players. Walk the ladder — but never for the Xtream JSON API (403 there means wrong
+            // credentials) and never when the caller pinned a User-Agent explicitly.
+            val explicit = headers.keys.any { it.equals("User-Agent", true) } ||
+                splitInlineHeaders(url).second.keys.any { it.equals("User-Agent", true) }
+            if (e.code !in intArrayOf(403, 406, 451) || explicit || url.contains("player_api.php")) throw e
+            var last: HttpStatusException = e
+            for (ua in com.gassplayer.android.media.StreamUserAgents.ladder) {
+                if (ua == first) continue
+                try {
+                    val result = executeWithAgent(url, headers, defaultAccept, ua, block)
+                    if (host != null) agentByHost[host] = ua // remembered: next requests start from the working UA
+                    return result
+                } catch (e2: HttpStatusException) {
+                    last = e2
+                    if (e2.code !in intArrayOf(403, 406, 451)) throw e2
+                }
+            }
+            throw last
+        }
+    }
+
+    /** User-Agent that worked per host after a refusal (catalog/playlist downloads). */
+    private val agentByHost = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    private suspend fun <R> executeWithAgent(
+        url: String,
+        headers: Map<String, String>,
+        defaultAccept: String,
+        agent: String,
+        block: (okhttp3.Response, String) -> R
     ): R = withContext(Dispatchers.IO) {
         val (requestUrl, inlineHeaders) = splitInlineHeaders(url)
         val requestHeaders = linkedMapOf<String, String>().apply { putAll(inlineHeaders); putAll(headers) }
@@ -221,7 +258,7 @@ class NetworkApi {
             try {
                 val builder = Request.Builder()
                     .url(candidate)
-                    .header("User-Agent", requestHeaders["User-Agent"] ?: requestHeaders["user-agent"] ?: userAgent)
+                    .header("User-Agent", requestHeaders["User-Agent"] ?: requestHeaders["user-agent"] ?: agent)
                     .header("Accept", requestHeaders["Accept"] ?: defaultAccept)
                 requestHeaders.forEach { (k, v) ->
                     if (!k.equals("User-Agent", true) && !k.equals("Accept", true)) builder.header(k, v)
