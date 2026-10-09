@@ -138,10 +138,20 @@ data class AppSettings(
     /** Home → Continua a guardare: null = tutti i tipi. */
     val homeContinueKind: String? = null,
     /** Preference shared with iOS detail-screen preview mute control. */
-    val detailTrailerMuted: Boolean = true
+    val detailTrailerMuted: Boolean = true,
+    /** Per-section layouts matching iOS ChannelGridView customization sheets. */
+    val liveSectionOrder: List<String> = defaultLiveSections,
+    val hiddenLiveSections: Set<String> = emptySet(),
+    val movieSectionOrder: List<String> = defaultMovieSections,
+    val hiddenMovieSections: Set<String> = emptySet(),
+    val seriesSectionOrder: List<String> = defaultSeriesSections,
+    val hiddenSeriesSections: Set<String> = emptySet()
 )
 
 val defaultHomeSections = listOf("heading", "search", "continueWatching", "sourceCard", "sources", "liveTV", "guidaTV", "onDemand", "favoriteChannels", "favoriteSeries", "favoriteMovies", "trendingSeries", "trendingMovies")
+val defaultLiveSections = listOf("search", "categories")
+val defaultMovieSections = listOf("search", "continueWatching", "trendingMovies", "categories")
+val defaultSeriesSections = listOf("search", "continueWatching", "trendingSeries", "categories")
 
 enum class RefreshInterval(val id: String, val millis: Long?) {
     MANUAL("manual", null), FIFTEEN_MIN("fifteenMinutes", 15 * 60_000L), THIRTY_MIN("thirtyMinutes", 30 * 60_000L), HOUR("oneHour", 60 * 60_000L), THREE_HOURS("threeHours", 3 * 60 * 60_000L), SIX_HOURS("sixHours", 6 * 60 * 60_000L), TWELVE_HOURS("twelveHours", 12 * 60 * 60_000L), DAILY("daily", 24 * 60 * 60_000L);

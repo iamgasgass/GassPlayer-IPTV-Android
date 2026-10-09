@@ -23,6 +23,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
@@ -58,6 +59,7 @@ import com.gassplayer.android.data.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.roundToInt
 
 private enum class IosPlayerDialog {
@@ -121,6 +123,7 @@ fun IosPlayerScreen(
     val progressState = remember(item.id) { mutableStateOf(PlaybackProgress()) }
     var currentLiveProgram by remember(item.id) { mutableStateOf<EpgProgram?>(null) }
     var localSettings by remember(settings) { mutableStateOf(settings) }
+    var renderPlayerSurface by remember(item.id) { mutableStateOf(true) }
     var showBrightnessHud by remember(item.id) { mutableStateOf(false) }
     var showVolumeHud by remember(item.id) { mutableStateOf(false) }
     val brightnessLevel = remember(item.id) { mutableFloatStateOf(0.5f) }
@@ -285,10 +288,36 @@ fun IosPlayerScreen(
     }
 
     val applySettings: (AppSettings) -> Unit = { updated ->
-        localSettings = updated
-        aspect = updated.aspectRatio
-        scope.launch { app.prefs.saveSettings(updated) }
-        app.playback.setSettings(updated)
+        val before = localSettings
+        val rebuildRequired = before.minBufferSec != updated.minBufferSec ||
+            before.maxBufferSec != updated.maxBufferSec ||
+            before.playerStartBufferSec != updated.playerStartBufferSec ||
+            before.httpCache != updated.httpCache ||
+            before.asyncDecode != updated.asyncDecode ||
+            before.hardwareDecode != updated.hardwareDecode ||
+            before.softwareDecode != updated.softwareDecode ||
+            before.videoDelayMs != updated.videoDelayMs ||
+            before.customUserAgent != updated.customUserAgent
+        scope.launch {
+            val epochBefore = app.playback.playerEpoch.value
+            if (rebuildRequired) {
+                // Detach Media3 PlayerView first. Releasing a player while its SurfaceView
+                // is still bound can crash on some Android GPU/decoder combinations.
+                renderPlayerSurface = false
+                withFrameNanos { }
+                withFrameNanos { }
+            }
+            localSettings = updated
+            aspect = updated.aspectRatio
+            app.prefs.saveSettings(updated)
+            app.playback.setSettings(updated)
+            if (rebuildRequired) {
+                // Wait for PlaybackController to create the replacement instance before
+                // mounting a new PlayerView, with a timeout to avoid an infinite blank view.
+                withTimeoutOrNull(10_000L) { app.playback.playerEpoch.first { it > epochBefore } }
+                renderPlayerSurface = true
+            }
+        }
     }
 
     Box(
@@ -347,8 +376,9 @@ fun IosPlayerScreen(
                 }
             }
     ) {
-        // Recreated when "Panorama 360°" changes, because the surface type is fixed at inflation.
-        key(localSettings.panorama360) {
+        // PlayerView is detached before ExoPlayer recreation and keyed to each player instance.
+        key(localSettings.panorama360, playerEpoch) {
+        if (renderPlayerSurface) {
         AndroidView(
             factory = {
                 (if (localSettings.panorama360) android.view.LayoutInflater.from(context).inflate(com.gassplayer.android.R.layout.gass_player_view_spherical, null) as PlayerView else PlayerView(context)).apply {
@@ -370,6 +400,10 @@ fun IosPlayerScreen(
                 // "Rotazione automatica 360°": follow the device orientation sensor on spherical video.
                 (it.videoSurfaceView as? androidx.media3.exoplayer.video.spherical.SphericalGLSurfaceView)
                     ?.setUseSensorRotation(localSettings.autoRotate360)
+            },
+            onRelease = { view ->
+                view.player = null
+                view.keepScreenOn = false
             },
             modifier = Modifier
                 .fillMaxSize()
@@ -457,10 +491,15 @@ fun IosPlayerScreen(
                     )
                 }
         )
+        } else {
+            Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(color = Color.White.copy(.75f))
+            }
+        }
         }
 
         AnimatedVisibility(
-            visible = (snapshot.isBuffering || recoveryStatus != null) && playbackError == null,
+            visible = renderPlayerSurface && (snapshot.isBuffering || recoveryStatus != null) && playbackError == null,
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier.align(Alignment.Center)
@@ -1303,84 +1342,87 @@ private fun AdvancedDialog(
     onDismiss: () -> Unit,
     onChange: (AppSettings) -> Unit
 ) {
+    // Old backups/preferences may contain values from pre-validation releases.
+    // Normalize before any Slider/Stepper receives the settings, so opening the
+    // advanced panel itself can never crash because of an out-of-range value.
+    val safeMin = settings.minBufferSec.coerceIn(3, 30)
+    val safeMax = settings.maxBufferSec.coerceIn(safeMin, 30)
+    var draft by remember(settings) {
+        mutableStateOf(
+            settings.copy(
+                minBufferSec = safeMin,
+                maxBufferSec = safeMax,
+                playerStartBufferSec = settings.playerStartBufferSec.coerceIn(safeMin, safeMax),
+                videoDelayMs = settings.videoDelayMs.coerceIn(-2_000, 2_000)
+            )
+        )
+    }
     PlayerDialogFrame("Impostazioni avanzate", onDismiss) {
-        // PlayerDialogFrame owns the only verticalScroll modifier. A second scroll container
-        // here nested the same content in two unbounded vertical scrollers and crashed the
-        // player dialog on opening on some devices.
+        // The controls edit a draft only. ExoPlayer is never stopped/recreated from a
+        // Slider/Switch callback while this dialog is still attached to the player surface.
         Column(
             modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            SettingStepper("Buffer minimo", settings.minBufferSec, listOf(1, 3, 5, 10, 15, 20, 30, 60)) {
-                onChange(settings.copy(minBufferSec = it.coerceAtMost(settings.maxBufferSec)))
+            SettingStepper("Buffer minimo", draft.minBufferSec, listOf(3, 5, 10, 15, 20, 30)) { selected ->
+                val min = selected.coerceIn(3, draft.maxBufferSec.coerceAtMost(30))
+                draft = draft.copy(minBufferSec = min, playerStartBufferSec = draft.playerStartBufferSec.coerceIn(min, draft.maxBufferSec.coerceAtMost(30)))
             }
-            SettingStepper("Buffer massimo", settings.maxBufferSec, listOf(15, 30, 60, 90, 120)) {
-                onChange(settings.copy(maxBufferSec = it.coerceAtLeast(settings.minBufferSec)))
+            SettingStepper("Buffer massimo", draft.maxBufferSec, listOf(3, 5, 10, 15, 20, 30)) { selected ->
+                val max = selected.coerceIn(draft.minBufferSec.coerceAtLeast(3), 30)
+                draft = draft.copy(maxBufferSec = max, playerStartBufferSec = draft.playerStartBufferSec.coerceIn(draft.minBufferSec, max))
             }
-            SettingStepper("Buffer di partenza", settings.playerStartBufferSec, listOf(1, 3, 5, 8, 15, 30)) {
-                onChange(settings.copy(playerStartBufferSec = it.coerceIn(1, settings.maxBufferSec)))
+            SettingStepper("Buffer di partenza", draft.playerStartBufferSec, listOf(3, 5, 8, 10, 15, 20, 30)) { selected ->
+                draft = draft.copy(playerStartBufferSec = selected.coerceIn(draft.minBufferSec, draft.maxBufferSec))
             }
-            SettingSwitch("Seek accurato", settings.accurateSeek) {
-                onChange(settings.copy(accurateSeek = it))
-            }
-            SettingSwitch("Adaptive bitrate", settings.adaptiveBitrate) {
-                onChange(settings.copy(adaptiveBitrate = it))
-            }
-            SettingSwitch("Cache HTTP", settings.httpCache) {
-                onChange(settings.copy(httpCache = it))
-            }
-            SettingSwitch("Solo audio", settings.audioOnly) {
-                onChange(settings.copy(audioOnly = it))
-            }
-            SettingSwitch("Decodifica hardware", settings.hardwareDecode) {
-                onChange(settings.copy(hardwareDecode = it, softwareDecode = !it))
-            }
-            SettingSwitch("Decodifica software", settings.softwareDecode) {
-                onChange(settings.copy(softwareDecode = it, hardwareDecode = !it))
-            }
-            SettingSwitch("Decodifica asincrona", settings.asyncDecode) {
-                onChange(settings.copy(asyncDecode = it))
-            }
-            SettingSwitch("Mantieni sottotitoli immagine", settings.preserveImageSubtitles) {
-                onChange(settings.copy(preserveImageSubtitles = it))
-            }
-            SettingSwitch("Deinterlacciamento", settings.deinterlace) {
-                onChange(settings.copy(deinterlace = it))
-            }
-            SettingSwitch("Panorama 360°", settings.panorama360) {
-                onChange(settings.copy(panorama360 = it))
-            }
-            SettingSwitch("Rotazione automatica 360°", settings.autoRotate360) {
-                onChange(settings.copy(autoRotate360 = it))
-            }
-            SettingSwitch("Prossimo episodio automatico", settings.autoplayNextEpisode) {
-                onChange(settings.copy(autoplayNextEpisode = it))
-            }
-            SettingSwitch("Riprendi la visione", settings.resumePlayback) {
-                onChange(settings.copy(resumePlayback = it))
-            }
-            SettingSwitch("Ripetizione", settings.loopPlayback) {
-                onChange(settings.copy(loopPlayback = it))
-            }
-            SettingDelay("Ritardo A/V (ms)", settings.videoDelayMs, -2_000..2_000, step = 50) {
-                onChange(settings.copy(videoDelayMs = it.coerceIn(-2_000, 2_000)))
-            }
+            SettingSwitch("Seek accurato", draft.accurateSeek) { draft = draft.copy(accurateSeek = it) }
+            SettingSwitch("Adaptive bitrate", draft.adaptiveBitrate) { draft = draft.copy(adaptiveBitrate = it) }
+            SettingSwitch("Cache HTTP", draft.httpCache) { draft = draft.copy(httpCache = it) }
+            SettingSwitch("Solo audio", draft.audioOnly) { draft = draft.copy(audioOnly = it) }
+            SettingSwitch("Decodifica hardware", draft.hardwareDecode) { draft = draft.copy(hardwareDecode = it, softwareDecode = !it) }
+            SettingSwitch("Decodifica software", draft.softwareDecode) { draft = draft.copy(softwareDecode = it, hardwareDecode = !it) }
+            SettingSwitch("Decodifica asincrona", draft.asyncDecode) { draft = draft.copy(asyncDecode = it) }
+            SettingSwitch("Mantieni sottotitoli immagine", draft.preserveImageSubtitles) { draft = draft.copy(preserveImageSubtitles = it) }
+            SettingSwitch("Deinterlacciamento", draft.deinterlace) { draft = draft.copy(deinterlace = it) }
+            SettingSwitch("Panorama 360°", draft.panorama360) { draft = draft.copy(panorama360 = it) }
+            SettingSwitch("Rotazione automatica 360°", draft.autoRotate360) { draft = draft.copy(autoRotate360 = it) }
+            SettingSwitch("Prossimo episodio automatico", draft.autoplayNextEpisode) { draft = draft.copy(autoplayNextEpisode = it) }
+            SettingSwitch("Riprendi la visione", draft.resumePlayback) { draft = draft.copy(resumePlayback = it) }
+            SettingSwitch("Ripetizione", draft.loopPlayback) { draft = draft.copy(loopPlayback = it) }
+            SettingDelay("Ritardo A/V (ms)", draft.videoDelayMs, -2_000..2_000, step = 50) { draft = draft.copy(videoDelayMs = it.coerceIn(-2_000, 2_000)) }
             SettingOption(
                 title = "Risoluzione massima",
-                current = when (settings.ffmpegLowResolution) {
+                current = when (draft.ffmpegLowResolution) {
                     "half" -> "Ridotta (max 720p)"
                     "quarter" -> "Bassa (max 480p)"
                     else -> "Originale"
                 },
                 options = listOf("Originale", "Ridotta (max 720p)", "Bassa (max 480p)"),
-                onSelected = { selected ->
-                    onChange(settings.copy(ffmpegLowResolution = when (selected) {
-                        "Ridotta (max 720p)" -> "half"
-                        "Bassa (max 480p)" -> "quarter"
-                        else -> "full"
-                    }))
-                }
+                onSelected = { selected -> draft = draft.copy(ffmpegLowResolution = when (selected) {
+                    "Ridotta (max 720p)" -> "half"
+                    "Bassa (max 480p)" -> "quarter"
+                    else -> "full"
+                }) }
             )
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("Annulla") }
+                Button(
+                    onClick = {
+                        val finalMin = draft.minBufferSec.coerceIn(3, 30)
+                        val finalMax = draft.maxBufferSec.coerceIn(finalMin, 30)
+                        onChange(
+                            draft.copy(
+                                minBufferSec = finalMin,
+                                maxBufferSec = finalMax,
+                                playerStartBufferSec = draft.playerStartBufferSec.coerceIn(finalMin, finalMax),
+                                videoDelayMs = draft.videoDelayMs.coerceIn(-2_000, 2_000)
+                            )
+                        )
+                        onDismiss()
+                    },
+                    modifier = Modifier.weight(1f)
+                ) { Text("Applica") }
+            }
         }
     }
 }

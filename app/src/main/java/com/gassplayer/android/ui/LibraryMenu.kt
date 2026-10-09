@@ -52,7 +52,8 @@ internal fun LibraryHeader(
     onFilter: (String?) -> Unit,
     settings: AppSettings,
     vm: MainViewModel,
-    allowPoster: Boolean
+    allowPoster: Boolean,
+    showGroups: Boolean = true
 ) {
     val counts = remember(items) { items.categoryCounts() }
     val ordered = remember(categories, counts) {
@@ -68,7 +69,9 @@ internal fun LibraryHeader(
     val expandable = settings.groupUIStyle == "espansibile"
 
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        if (expandable) {
+        if (!showGroups) {
+            Spacer(Modifier.weight(1f))
+        } else if (expandable) {
             Box {
                 Row(Modifier.clip(RoundedCornerShape(50)).background(MaterialTheme.colorScheme.surfaceVariant.copy(.65f)).combinedClickable(onClick = { groupOpen = true }).padding(horizontal = 16.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.GridView, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(8.dp))

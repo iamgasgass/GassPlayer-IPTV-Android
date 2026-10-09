@@ -4,15 +4,29 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -21,13 +35,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
 
 /**
@@ -78,6 +98,7 @@ fun LiquidGlassSurface(
     cornerRadius: Dp = 20.dp,
     contentPadding: Dp = 16.dp,
     highlighted: Boolean = false,
+    suppressTopHighlight: Boolean = false,
     content: @Composable BoxScope.() -> Unit
 ) {
     val shape = RoundedCornerShape(cornerRadius)
@@ -93,33 +114,23 @@ fun LiquidGlassSurface(
                 BorderStroke(
                     if (highlighted) 1.2.dp else .7.dp,
                     Brush.verticalGradient(
-                        if (light) listOf(Color(0xFF52647F).copy(alpha = borderAlpha * .8f), Color.White.copy(alpha = .78f), Color(0xFF6C91C9).copy(alpha = .18f))
-                        else listOf(Color.White.copy(alpha = borderAlpha), Color.White.copy(alpha = .07f), Color.White.copy(alpha = .04f))
+                        if (light) listOf(
+                            Color(0xFF52647F).copy(alpha = if (suppressTopHighlight) .08f else borderAlpha * .8f),
+                            Color.White.copy(alpha = .60f),
+                            Color(0xFF6C91C9).copy(alpha = .14f)
+                        ) else listOf(
+                            // Do not paint a separate bright specular stripe along the top edge.
+                            // Sidebar navigation opts out of that extra line entirely.
+                            Color.White.copy(alpha = if (suppressTopHighlight) .025f else borderAlpha),
+                            Color.White.copy(alpha = .055f),
+                            Color.White.copy(alpha = .035f)
+                        )
                     )
                 ),
                 shape
             )
-            .drawBehind {
-                // A narrow neutral specular rim (no blue cast in dark mode).
-                drawRect(
-                    brush = Brush.horizontalGradient(
-                        listOf(Color.Transparent, Color.White.copy(alpha = if (highlighted) .20f else .09f), Color.Transparent)
-                    ),
-                    size = androidx.compose.ui.geometry.Size(size.width, 1.dp.toPx())
-                )
-            }
             .padding(contentPadding),
-        content = {
-            Box(Modifier.fillMaxWidth()) {
-                content()
-                Box(
-                    Modifier.align(Alignment.TopCenter)
-                        .fillMaxWidth()
-                        .height(1.dp)
-                        .background(Brush.horizontalGradient(listOf(Color.Transparent, Color.White.copy(alpha = .19f), Color.Transparent)))
-                )
-            }
-        }
+        content = { content() }
     )
 }
 
@@ -163,6 +174,57 @@ fun LiquidGlassPill(modifier: Modifier = Modifier, selected: Boolean = false, co
             .padding(horizontal = 14.dp, vertical = 9.dp),
         content = content
     )
+}
+
+
+/**
+ * Shared search field used throughout the app. Its shape, fill, border, spacing,
+ * typography and clear affordance intentionally match the EPG search bar.
+ */
+@Composable
+fun EpgStyleSearchField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    placeholder: String = "Cerca per nome del programma",
+    onSubmit: (() -> Unit)? = null
+) {
+    Row(
+        modifier = modifier
+            .height(50.dp)
+            .clip(RoundedCornerShape(50))
+            .background(Color.White.copy(.09f))
+            .border(BorderStroke(1.dp, Color.White.copy(.12f)), RoundedCornerShape(50))
+            .padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(Icons.Default.Search, contentDescription = "Cerca", tint = glassForeground().copy(.6f), modifier = Modifier.size(20.dp))
+        Spacer(Modifier.width(10.dp))
+        BasicTextField(
+            value = value,
+            onValueChange = onValueChange,
+            singleLine = true,
+            textStyle = TextStyle(color = glassForeground(), fontSize = 16.sp, fontFamily = FontFamily.SansSerif),
+            cursorBrush = SolidColor(Color.White),
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false, imeAction = if (onSubmit == null) ImeAction.Done else ImeAction.Search),
+            keyboardActions = KeyboardActions(
+                onSearch = { onSubmit?.invoke() },
+                onDone = { onSubmit?.invoke() }
+            ),
+            modifier = Modifier.weight(1f),
+            decorationBox = { inner ->
+                Box {
+                    if (value.isEmpty()) Text(placeholder, color = glassForeground().copy(.55f), fontSize = 16.sp, fontFamily = FontFamily.SansSerif, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    inner()
+                }
+            }
+        )
+        if (value.isNotEmpty()) {
+            IconButton(onClick = { onValueChange("") }, modifier = Modifier.size(32.dp)) {
+                Icon(Icons.Default.Close, contentDescription = "Cancella ricerca", tint = glassForeground().copy(.6f), modifier = Modifier.size(18.dp))
+            }
+        }
+    }
 }
 
 /** Foreground that follows the same theme preference as the iOS app. */

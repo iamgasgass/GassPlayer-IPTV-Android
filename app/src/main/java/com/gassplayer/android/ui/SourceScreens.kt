@@ -127,16 +127,11 @@ fun SourcesView(app: GassPlayerApplication, vm: MainViewModel, onRoute: (String)
                 }
             }
         }
-        OutlinedTextField(
+        EpgStyleSearchField(
             value = query,
             onValueChange = { query = it },
             modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            placeholder = { Text("Cerca sorgenti") },
-            leadingIcon = { Icon(Icons.Default.SettingsInputAntenna, null) },
-            trailingIcon = { if (query.isNotEmpty()) TextButton(onClick = { query = "" }) { Text("Cancella") } },
-            shape = RoundedCornerShape(18.dp),
-            colors = OutlinedTextFieldDefaults.colors(focusedTextColor = glassForeground(), unfocusedTextColor = glassForeground(), focusedBorderColor = SourcesBlue, unfocusedBorderColor = Color.White.copy(.16f))
+            placeholder = "Cerca sorgenti"
         )
         SourceActionRow(Icons.Default.Add, "Aggiungi playlist", "Collega una playlist M3U o un account Xtream", Color(0xFF73A7FF)) { showAdd = true }
         SourceActionRow(Icons.Default.Settings, "Gestisci sorgenti", "Modifica dettagli, contenuto ed EPG di ogni sorgente", Color(0xFF9E9BFF), enabled = sources.isNotEmpty()) { onRoute("source-manager") }

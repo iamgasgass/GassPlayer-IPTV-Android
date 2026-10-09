@@ -583,34 +583,12 @@ private fun EpgSearchHeader(
     compact: Boolean,
     horizontalInset: Dp
 ) {
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = horizontalInset).padding(top = 10.dp, bottom = if (compact) 16.dp else 18.dp)
-            .height(50.dp).clip(RoundedCornerShape(50)).background(Color.White.copy(.09f))
-            .border(BorderStroke(1.dp, Color.White.copy(.12f)), RoundedCornerShape(50)).padding(horizontal = 16.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(Icons.Default.Search, contentDescription = "Cerca", tint = glassForeground().copy(.6f), modifier = Modifier.size(20.dp))
-        Spacer(Modifier.width(10.dp))
-        BasicTextField(
-            value = value,
-            onValueChange = onValueChange,
-            singleLine = true,
-            textStyle = TextStyle(color = glassForeground(), fontSize = 16.sp, fontFamily = FontFamily.SansSerif),
-            cursorBrush = SolidColor(Color.White),
-            modifier = Modifier.weight(1f),
-            decorationBox = { inner ->
-                Box {
-                    if (value.isEmpty()) Text("Cerca per nome del programma", color = glassForeground().copy(.55f), fontSize = 16.sp, fontFamily = FontFamily.SansSerif, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    inner()
-                }
-            }
-        )
-        if (value.isNotEmpty()) {
-            IconButton(onClick = { onValueChange("") }, modifier = Modifier.size(32.dp)) {
-                Icon(Icons.Default.Close, contentDescription = "Cancella ricerca", tint = glassForeground().copy(.6f), modifier = Modifier.size(18.dp))
-            }
-        }
-    }
+    EpgStyleSearchField(
+        value = value,
+        onValueChange = onValueChange,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = horizontalInset).padding(top = 10.dp, bottom = if (compact) 16.dp else 18.dp),
+        placeholder = "Cerca per nome del programma"
+    )
 }
 
 @OptIn(ExperimentalFoundationApi::class)
