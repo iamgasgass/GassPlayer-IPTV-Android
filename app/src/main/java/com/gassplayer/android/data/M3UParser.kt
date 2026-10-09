@@ -51,8 +51,15 @@ object M3UParser {
         reader: java.io.BufferedReader,
         baseUrl: String? = null,
         defaultHeaders: Map<String, String> = emptyMap(),
-        keep: ((MediaItem) -> Boolean)? = null
+        keep: ((MediaItem) -> Boolean)? = null,
+        /**
+         * When set, LIVE and MOVIE entries (the bulk of a big playlist) are handed to this callback as soon
+         * as they are parsed and are NOT kept in the returned list, so memory stays flat. Only series and
+         * episodes (which need post-processing) are returned and must be stored by the caller.
+         */
+        sink: ((MediaItem) -> Unit)? = null
     ): List<MediaItem> {
+        val sunkIds = HashSet<Long>()
         val interned = HashMap<String, String>()
         fun intern(v: String?): String? = if (v == null) null else interned.getOrPut(v) { v }
         val headerPool = HashMap<Map<String, String>, Map<String, String>>()
@@ -201,7 +208,13 @@ object M3UParser {
                         streamMimeType = inferredMime
                     )
                     index++
-                    if (keep == null || keep(item)) result += item
+                    if (keep == null || keep(item)) {
+                        if (sink != null && (kind == MediaKind.LIVE || kind == MediaKind.MOVIE)) {
+                            // ids from this parser are numeric hashes: de-duplicate with primitive-sized keys.
+                            val key = id.toLongOrNull()
+                            if (key == null || sunkIds.add(key)) sink(item)
+                        } else result += item
+                    }
                     pendingAttrs = emptyMap()
                     pendingHeaders = null
                     pendingTitle = ""

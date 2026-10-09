@@ -107,6 +107,7 @@ class PlaybackController(
     fun setSettings(value: AppSettings) {
         val previous = settings.value
         settings.value = value
+        AppDns.server = value.preferredDns
 
         scope.launch {
             trackSelector.parameters = buildTrackParameters(value)
@@ -118,6 +119,7 @@ class PlaybackController(
                 previous.asyncDecode != value.asyncDecode ||
                 previous.hardwareDecode != value.hardwareDecode ||
                 previous.softwareDecode != value.softwareDecode ||
+                previous.videoDelayMs != value.videoDelayMs ||
                 previous.customUserAgent != value.customUserAgent
 
             val existing = playerInstance
@@ -356,6 +358,10 @@ class PlaybackController(
                         if (playbackState == Player.STATE_READY) networkRetries = 0
                     }
 
+                    override fun onTracksChanged(tracks: Tracks) {
+                        enforceSubtitlePolicy(tracks)
+                    }
+
                     override fun onPlayerError(error: PlaybackException) {
                         if (tryResolvePlaybackError(error)) return
                         diagnostics.log("ERROR", "player", error.toString())
@@ -392,14 +398,49 @@ class PlaybackController(
             // "Solo audio" is now a real player behavior: Media3 is instructed
             // not to select any video track instead of merely storing the switch.
             .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, value.audioOnly)
-            .setMaxVideoSize(
-                if (value.adaptiveBitrate) Int.MAX_VALUE else 1280,
-                if (value.adaptiveBitrate) Int.MAX_VALUE else 720
-            )
+            .setMaxVideoSize(maxVideoWidthFor(value), maxVideoHeightFor(value))
+            // Faster/smoother adaptive switching between HLS/DASH renditions.
+            .setAllowVideoMixedMimeTypeAdaptiveness(true)
+            .setAllowVideoNonSeamlessAdaptiveness(true)
             .build()
 
+    /** "Risoluzione ridotta" (half = max 720p, quarter = max 480p) combined with the ABR switch. */
+    private fun maxVideoHeightFor(value: AppSettings): Int {
+        val lowRes = when (value.ffmpegLowResolution) { "quarter" -> 480; "half" -> 720; else -> Int.MAX_VALUE }
+        val abr = if (value.adaptiveBitrate) Int.MAX_VALUE else 720
+        return minOf(lowRes, abr)
+    }
+
+    private fun maxVideoWidthFor(value: AppSettings): Int {
+        val h = maxVideoHeightFor(value)
+        return if (h == Int.MAX_VALUE) Int.MAX_VALUE else h * 16 / 9
+    }
+
+    private val imageSubtitleMimes = setOf(MimeTypes.APPLICATION_PGS, MimeTypes.APPLICATION_DVBSUBS, MimeTypes.APPLICATION_VOBSUB)
+
+    private fun isImageSubtitle(group: Tracks.Group): Boolean =
+        group.length > 0 && group.mediaTrackGroup.getFormat(0).sampleMimeType in imageSubtitleMimes
+
+    /**
+     * "Mantieni sottotitoli immagine" off: if the selector landed on a bitmap track (PGS/DVB/VobSub),
+     * switch to a text track in the preferred language, or turn captions off when only bitmaps exist.
+     */
+    private fun enforceSubtitlePolicy(tracks: Tracks) {
+        val s = settings.value
+        if (s.preserveImageSubtitles || s.subtitleLanguage.isBlank()) return
+        val text = tracks.groups.filter { it.type == C.TRACK_TYPE_TEXT && it.isSupported }
+        if (text.none { it.isSelected && isImageSubtitle(it) }) return
+        val plain = text.filter { !isImageSubtitle(it) }
+        val pick = plain.firstOrNull { it.mediaTrackGroup.getFormat(0).language?.startsWith(s.subtitleLanguage, ignoreCase = true) == true }
+            ?: plain.firstOrNull()
+        trackSelector.parameters = trackSelector.buildUponParameters().apply {
+            if (pick != null) setOverrideForType(TrackSelectionOverride(pick.mediaTrackGroup, 0))
+            else setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+        }.build()
+    }
+
     private fun loadControlSignature(value: AppSettings): String =
-        "${value.minBufferSec}|${value.maxBufferSec}|${value.playerStartBufferSec}|${value.httpCache}|${value.asyncDecode}|${value.hardwareDecode}|${value.softwareDecode}"
+        "${value.minBufferSec}|${value.maxBufferSec}|${value.playerStartBufferSec}|${value.httpCache}|${value.asyncDecode}|${value.hardwareDecode}|${value.softwareDecode}|${value.videoDelayMs}"
 
     private fun newStreamingClient(
         protocols: List<okhttp3.Protocol>,
@@ -407,6 +448,7 @@ class PlaybackController(
     ): OkHttpClient =
         OkHttpClient.Builder()
             .retryOnConnectionFailure(true)
+            .dns(AppDns)
             .followRedirects(true)
             .followSslRedirects(true)
             // A dead live connection must surface in seconds (so we reconnect), not after 2 minutes.
@@ -614,11 +656,11 @@ class PlaybackController(
         val s = settings.value
         val userMinMs = s.minBufferSec.coerceIn(1, 600) * 1000
         val userMaxMs = s.maxBufferSec.coerceIn(1, 600) * 1000
-        // Instant start: the first frame is shown as soon as ~1.5 s of media is queued, whatever the
-        // (deeper) user setting; after a stall we refill to 3 s so playback does not flap.
-        val startMs = minOf(s.playerStartBufferSec.coerceIn(1, 600) * 1000, FAST_START_MS)
+        // "Buffer di partenza" is honoured exactly (1 s = near-instant start). After a stall we refill to
+        // at least 2 s so playback does not flap; "Buffer minimo"/"Buffer massimo" size the reservoir that
+        // rides out twitchy IPTV sources, and are kept consistent with each other and with the start value.
+        val startMs = s.playerStartBufferSec.coerceIn(1, 600) * 1000
         val rebufferMs = maxOf(startMs, REBUFFER_MS)
-        // Behind that fast start we still keep a deep reservoir to ride out twitchy IPTV sources.
         val minMs = maxOf(userMinMs, rebufferMs)
         val maxMs = maxOf(userMaxMs, minMs)
 
@@ -640,7 +682,15 @@ class PlaybackController(
     /** Decoder policy: honours the hardware/software/async settings (they used to be dead switches). */
     private fun createRenderersFactory(): androidx.media3.exoplayer.DefaultRenderersFactory {
         val s = settings.value
-        val factory = androidx.media3.exoplayer.DefaultRenderersFactory(context)
+        val delayMs = s.videoDelayMs.coerceIn(-500, 500)
+        val factory = object : androidx.media3.exoplayer.DefaultRenderersFactory(context) {
+            // "A/V delay": a real audio-timeline shift instead of a dead number in the settings.
+            override fun buildAudioSink(context: Context, enableFloatOutput: Boolean, enableAudioTrackPlaybackParams: Boolean): androidx.media3.exoplayer.audio.AudioSink? =
+                if (delayMs == 0) super.buildAudioSink(context, enableFloatOutput, enableAudioTrackPlaybackParams)
+                else androidx.media3.exoplayer.audio.DefaultAudioSink.Builder(context)
+                    .setAudioProcessors(arrayOf<androidx.media3.common.audio.AudioProcessor>(AudioDelayProcessor(delayMs)))
+                    .build()
+        }
             // If the preferred decoder fails to initialise, try the next one instead of erroring out.
             .setEnableDecoderFallback(true)
         if (s.asyncDecode) factory.forceEnableMediaCodecAsynchronousQueueing()
@@ -714,7 +764,7 @@ class PlaybackController(
     private companion object {
         const val ZAP_DEBOUNCE_MS = 250L
         const val FAST_START_MS = 1_500
-        const val REBUFFER_MS = 3_000
+        const val REBUFFER_MS = 2_000
         const val MAX_LOAD_RETRIES = 5
         const val MAX_NETWORK_RETRIES = 6
         const val LIVE_MIN_OFFSET_MS = 3_000L

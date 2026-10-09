@@ -140,14 +140,14 @@ private fun HomeScreen(vm: MainViewModel, catalog: CatalogState?, fav: FavoriteS
                     FilledTonalButton({ onRoute("epg") }) { Icon(Icons.Default.CalendarMonth, null); Spacer(Modifier.width(8.dp)); Text("Guida TV") }
                     OutlinedButton({ onRoute("home-customize") }) { Icon(Icons.Default.Tune, null); Spacer(Modifier.width(8.dp)); Text("Personalizza") }
                 }
-                "continueWatching" -> if (watch.isNotEmpty()) Section("Continua a guardare", null) { LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) { items(watch.take(settings.historyLimit.coerceIn(1, 100))) { entry -> val media = catalog?.allItems?.firstOrNull { it.id == entry.contentId }; if (media != null) MediaCard(media, false, onClick = { onPlay(media) }) else Text(entry.title, color = Color.White) } } }
+                "continueWatching" -> if (watch.isNotEmpty()) Section("Continua a guardare", null) { LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) { items(watch.take(settings.historyLimit.coerceIn(1, 100))) { entry -> val media = catalog?.findById(entry.contentId); if (media != null) MediaCard(media, false, onClick = { onPlay(media) }) else Text(entry.title, color = Color.White) } } }
                 "sourceCard" -> Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF141720)), border = BorderStroke(1.dp, Color.White.copy(.08f)), modifier = Modifier.fillMaxWidth()) { Row(Modifier.padding(18.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { Column { Text("Sorgenti", color = Color.White, fontWeight = FontWeight.Bold); Text("${sources.size} configurate • ${catalog?.allItems?.size ?: 0} elementi", color = Color.White.copy(.65f)) }; OutlinedButton({ onRoute("sources") }) { Text("Gestisci") } } }
                 "sources" -> Section("Sorgenti", null) { LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { items(sources.take(12)) { s -> AssistChip({ onRoute("sources") }, label = { Text(s.name) }) } } }
-                "liveTV" -> Section("Live preferiti", null) { val list = catalog?.live?.filter { it.id in fav.live }.orEmpty(); if (list.isEmpty()) EmptyHint("Nessun canale preferito") else LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) { items(list.take(12)) { MediaCard(it, true, onClick = { onPlay(it) }) } } }
+                "liveTV" -> Section("Live preferiti", null) { val list = catalog?.byIds(MediaKind.LIVE, fav.live).orEmpty(); if (list.isEmpty()) EmptyHint("Nessun canale preferito") else LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) { items(list.take(12)) { MediaCard(it, true, onClick = { onPlay(it) }) } } }
                 "guidaTV" -> Section("Guida TV", null) { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { Text("EPG e reminder locali", color = Color.White.copy(.7f)); OutlinedButton({ onRoute("epg") }) { Text("Apri guida") } } }
-                "favoriteChannels" -> Section("Canali preferiti", null) { val list = catalog?.live?.filter { it.id in fav.live }.orEmpty(); if (list.isEmpty()) EmptyHint("Nessun canale preferito") else LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) { items(list.take(12)) { MediaCard(it, true, onClick = { onPlay(it) }) } } }
-                "favoriteSeries" -> Section("Serie TV preferite", null) { val list = catalog?.series?.filter { it.id in fav.series }.orEmpty(); if (list.isEmpty()) EmptyHint("Nessuna serie preferita") else LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) { items(list.take(12)) { MediaCard(it, true, onClick = { onPlay(it) }) } } }
-                "favoriteMovies" -> Section("Film preferiti", null) { val list = catalog?.movies?.filter { it.id in fav.movies }.orEmpty(); if (list.isEmpty()) EmptyHint("Nessun film preferito") else LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) { items(list.take(12)) { MediaCard(it, true, onClick = { onPlay(it) }) } } }
+                "favoriteChannels" -> Section("Canali preferiti", null) { val list = catalog?.byIds(MediaKind.LIVE, fav.live).orEmpty(); if (list.isEmpty()) EmptyHint("Nessun canale preferito") else LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) { items(list.take(12)) { MediaCard(it, true, onClick = { onPlay(it) }) } } }
+                "favoriteSeries" -> Section("Serie TV preferite", null) { val list = catalog?.byIds(MediaKind.SERIES, fav.series).orEmpty(); if (list.isEmpty()) EmptyHint("Nessuna serie preferita") else LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) { items(list.take(12)) { MediaCard(it, true, onClick = { onPlay(it) }) } } }
+                "favoriteMovies" -> Section("Film preferiti", null) { val list = catalog?.byIds(MediaKind.MOVIE, fav.movies).orEmpty(); if (list.isEmpty()) EmptyHint("Nessun film preferito") else LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) { items(list.take(12)) { MediaCard(it, true, onClick = { onPlay(it) }) } } }
                 "onDemand" -> Section("On demand", null) { val list = catalog?.movies.orEmpty(); if (list.isEmpty()) EmptyHint("Nessun film disponibile") else LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) { items(list.take(12)) { MediaCard(it, it.id in fav.movies, onClick = { onPlay(it) }) } } }
             }
         }
@@ -172,11 +172,11 @@ private fun CatalogScreen(title: String, items: List<MediaItem>, categories: Lis
     var selected by remember { mutableStateOf<MediaItem?>(null) }
     var filter by remember { mutableStateOf<String?>(null) }
     if (detail && selected != null) {
-        MovieDetailScreen(vm.app, selected!!, vm.catalog.value?.allItems.orEmpty(), favorite, onBack = { selected = null }, onPlay = { i, pos -> onPlayWithPosition(onPlay, i, pos) })
+        MovieDetailScreen(vm.app, selected!!, vm.catalog.value?.movies.orEmpty(), favorite, onBack = { selected = null }, onPlay = { i, pos -> onPlayWithPosition(onPlay, i, pos) })
         return
     }
     val libSettings by vm.settings.collectAsStateWithLifecycle()
-    val filtered = remember(items, filter, parental.lockedIds) { items.filter { matchesGroup(it, filter) }.filterNot { it.id in parental.lockedIds } }
+    val filtered = remember(items, filter, parental.lockedIds) { items.inCategory(filter).let { v -> v.withoutIds(parental.lockedIds) } }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         LibraryHeader(title, categories, items, filter, { filter = it }, libSettings, vm, allowPoster = detail)
         if (filtered.isEmpty()) EmptyHint(if (items.isEmpty()) "Nessun contenuto: controlla la sorgente in Sorgenti e riprova a ricaricare." else "Nessun risultato per questo gruppo.") else LazyVerticalGrid(columns = GridCells.Adaptive(minSize = libraryGridMin(libSettings, !detail)), verticalArrangement = Arrangement.spacedBy(14.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), contentPadding = PaddingValues(bottom = 40.dp)) {
@@ -191,7 +191,7 @@ private fun onPlayWithPosition(onPlay: (MediaItem) -> Unit, item: MediaItem, pos
     var selected by remember { mutableStateOf<MediaItem?>(null) }; var filter by remember { mutableStateOf<String?>(null) }
     if (selected != null) { SeriesDetailScreen(vm.app, selected!!, episodes, favorite, onBack = { selected = null }, onPlay = { i, pos -> onPlayWithPosition(onPlay, i, pos) }); return }
     val libSettings by vm.settings.collectAsStateWithLifecycle()
-    val filtered = remember(series, filter, parental.lockedIds) { series.filterNot { it.id in parental.lockedIds }.filter { matchesGroup(it, filter) } }
+    val filtered = remember(series, filter, parental.lockedIds) { series.inCategory(filter).let { v -> v.withoutIds(parental.lockedIds) } }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         LibraryHeader("Serie", categories, series, filter, { filter = it }, libSettings, vm, allowPoster = true)
         if (filtered.isEmpty()) EmptyHint(if (series.isEmpty()) "Nessuna serie: controlla la sorgente e ricarica." else "Nessun risultato per questo gruppo.") else
@@ -205,7 +205,7 @@ private fun SearchScreen(app: GassPlayerApplication, catalog: CatalogState?, onP
     var submitted by remember { mutableStateOf("") }
     val history by app.search.flow.collectAsStateWithLifecycle(SearchHistory())
     val scope = rememberCoroutineScope()
-    val results = remember(submitted, catalog) { if (submitted.isBlank()) emptyList() else catalog?.allItems.orEmpty().filter { it.title.contains(submitted, true) }.take(100) }
+    val results = remember(submitted, catalog) { if (submitted.isBlank()) emptyList() else catalog?.search(submitted, 100).orEmpty() }
     Column {
         OutlinedTextField(q, { q = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("Cerca live, film, serie") }, trailingIcon = { IconButton({ submitted = q; scope.launch { app.search.add(q) } }) { Icon(Icons.Default.Search, null) } })
         Spacer(Modifier.height(10.dp))

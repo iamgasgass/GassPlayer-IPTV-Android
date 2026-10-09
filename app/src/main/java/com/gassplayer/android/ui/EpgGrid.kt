@@ -178,7 +178,7 @@ fun EpgGridScreen(
 
     // --- group filter -----------------------------------------------------------------------
     fun keyOf(i: MediaItem) = i.categoryId ?: i.group
-    val counts = remember(live) { live.groupingBy { keyOf(it) }.eachCount() }
+    val counts = remember(live) { live.categoryCounts() }
     val groups = remember(categories, live) {
         val present = counts.keys.filterNotNull().toSet()
         categories.filter { it.id in present }.distinctBy { it.id }
@@ -190,10 +190,9 @@ fun EpgGridScreen(
         else -> groups.firstOrNull { it.id == groupId }?.name ?: "Tutti i canali"
     }
     val channels = remember(live, groupId, favoritesOnly, favorites) {
-        live.asSequence()
-            .filter { groupId == null || (groupId == "__none__" && keyOf(it) == null) || keyOf(it) == groupId }
-            .filter { !favoritesOnly || it.id in favorites.live }
-            .toList()
+        // Disk-backed lists answer this with SQL; only the favourites case materialises (a handful of rows).
+        if (favoritesOnly) live.onlyIds(favorites.live).filter { groupId == null || (groupId == "__none__" && keyOf(it) == null) || keyOf(it) == groupId }
+        else live.inCategory(groupId)
     }
     LaunchedEffect(groupId, favoritesOnly) { renderLimit = PAGE }
     val visible = channels.take(minOf(renderLimit, HARD_CAP))
@@ -204,7 +203,7 @@ fun EpgGridScreen(
             val all = ArrayList<EpgProgram>()
             for (e in external.filter { it.isEnabled }) runCatching { app.epg.xmltv(e.urlString, e.id) }.getOrNull()?.let(all::addAll)
             if (all.isEmpty()) {
-                val used = live.map { it.sourceId }.toSet()
+                val used = live.sourceIds()
                 for (s in sources.filter { it.type == SourceType.XTREAM && it.id in used && it.isEnabled }) {
                     runCatching { app.epg.xtreamXmltv(s) }.getOrNull()?.let(all::addAll)
                 }

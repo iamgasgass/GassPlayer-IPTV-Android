@@ -23,6 +23,7 @@ class NetworkApi {
      */
     private val client: OkHttpClient = OkHttpClient.Builder()
         .retryOnConnectionFailure(true)
+        .dns(com.gassplayer.android.media.AppDns)
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)

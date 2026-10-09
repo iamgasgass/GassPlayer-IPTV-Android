@@ -54,7 +54,7 @@ internal fun LibraryHeader(
     vm: MainViewModel,
     allowPoster: Boolean
 ) {
-    val counts = remember(items) { items.groupingBy { (it.categoryId ?: it.group)?.takeIf { k -> k.isNotBlank() } }.eachCount() }
+    val counts = remember(items) { items.categoryCounts() }
     val ordered = remember(categories, counts) {
         val known = categories.distinctBy { it.id }.filter { counts.containsKey(it.id) }
         val knownIds = known.map { it.id }.toSet()

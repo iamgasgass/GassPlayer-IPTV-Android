@@ -236,9 +236,11 @@ fun IosPlayerScreen(
     }
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
+        // Recreated when "Panorama 360°" changes, because the surface type is fixed at inflation.
+        key(localSettings.panorama360) {
         AndroidView(
             factory = {
-                PlayerView(context).apply {
+                (if (localSettings.panorama360) android.view.LayoutInflater.from(context).inflate(com.gassplayer.android.R.layout.gass_player_view_spherical, null) as PlayerView else PlayerView(context)).apply {
                     useController = false
                     player = app.playback.player
                     keepScreenOn = true
@@ -251,6 +253,9 @@ fun IosPlayerScreen(
                 it.player = app.playback.player
                 it.keepScreenOn = true
                 it.resizeMode = resizeModeForAspect(aspect)
+                // "Rotazione automatica 360°": follow the device orientation sensor on spherical video.
+                (it.videoSurfaceView as? androidx.media3.exoplayer.video.spherical.SphericalGLSurfaceView)
+                    ?.setUseSensorRotation(localSettings.autoRotate360)
             },
             modifier = Modifier
                 .fillMaxSize()
@@ -270,6 +275,7 @@ fun IosPlayerScreen(
                     )
                 }
         )
+        }
 
         AnimatedVisibility(
             visible = snapshot.isBuffering && playbackError == null,
@@ -571,7 +577,7 @@ fun IosPlayerScreen(
         )
         IosPlayerDialog.CHANNEL_HISTORY -> ChannelHistoryDialog(
             history = watch.filter { it.kind == MediaKind.LIVE }
-                .mapNotNull { entry -> catalog?.live?.firstOrNull { it.id == entry.contentId } ?: entry.toMediaItemFallback() }
+                .mapNotNull { entry -> catalog?.findById(entry.contentId) ?: entry.toMediaItemFallback() }
                 .distinctBy { it.id }
                 .take(50),
             onDismiss = { dialog = null },
@@ -1207,24 +1213,21 @@ private fun PlayerDialogFrame(title: String, onDismiss: () -> Unit, content: @Co
     }
 }
 
-private fun CatalogState.nextFor(item: MediaItem): MediaItem? {
-    val sequence = when (item.kind) {
-        MediaKind.EPISODE -> episodes
-            .filter { it.seriesId == item.seriesId && it.sourceId == item.sourceId }
-            .sortedWith(compareBy<MediaItem> { it.seasonNumber ?: Int.MAX_VALUE }.thenBy { it.episodeNumber ?: Int.MAX_VALUE }.thenBy { it.title })
-        MediaKind.LIVE -> live
-            .filter { it.sourceId == item.sourceId }
-            .sortedWith(compareBy<MediaItem> { it.number ?: Int.MAX_VALUE }.thenBy { it.title })
-        else -> emptyList()
-    }
-    val index = sequence.indexOfFirst { it.id == item.id }
-    return sequence.getOrNull(index + 1)
-}
+private fun CatalogState.nextFor(item: MediaItem): MediaItem? = neighborOf(item, forward = true)
 
-private fun CatalogState.previousFor(item: MediaItem): MediaItem? {
+private fun CatalogState.previousFor(item: MediaItem): MediaItem? = neighborOf(item, forward = false)
+
+/**
+ * Channel up/down and next/previous episode. Live zapping is an indexed SQL lookup (it used to filter
+ * and sort the entire channel list on the UI thread at every channel change).
+ */
+private fun CatalogState.neighborOf(item: MediaItem, forward: Boolean): MediaItem? {
+    val db = store
+    if (item.kind == MediaKind.LIVE && db != null) return db.liveNeighbor(item.sourceId, item.id, forward)
+    val seriesKey = item.seriesId
     val sequence = when (item.kind) {
-        MediaKind.EPISODE -> episodes
-            .filter { it.seriesId == item.seriesId && it.sourceId == item.sourceId }
+        MediaKind.EPISODE -> (if (db != null && seriesKey != null) db.episodesFor(item.sourceId, seriesKey)
+            else episodes.filter { it.seriesId == item.seriesId && it.sourceId == item.sourceId })
             .sortedWith(compareBy<MediaItem> { it.seasonNumber ?: Int.MAX_VALUE }.thenBy { it.episodeNumber ?: Int.MAX_VALUE }.thenBy { it.title })
         MediaKind.LIVE -> live
             .filter { it.sourceId == item.sourceId }
@@ -1232,7 +1235,7 @@ private fun CatalogState.previousFor(item: MediaItem): MediaItem? {
         else -> emptyList()
     }
     val index = sequence.indexOfFirst { it.id == item.id }
-    return if (index > 0) sequence[index - 1] else null
+    return if (forward) sequence.getOrNull(index + 1) else if (index > 0) sequence[index - 1] else null
 }
 
 private fun selectedVideoFormat(player: Player): Format? =

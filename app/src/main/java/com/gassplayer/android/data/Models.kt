@@ -131,7 +131,7 @@ data class AppSettings(
     val epgChannelCardStyle: String = "griglia",
     val epgTileColor: String = "dynamic",
     val groupUIStyle: String = "scorrevole",
-    val playerStartBufferSec: Int = 3,
+    val playerStartBufferSec: Int = 1,
     val historyLimit: Int = 20,
     val homeSectionOrder: List<String> = defaultHomeSections,
     val hiddenHomeSections: Set<String> = emptySet()

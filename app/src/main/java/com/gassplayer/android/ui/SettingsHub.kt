@@ -145,13 +145,13 @@ internal fun SettingsHub(app: GassPlayerApplication, settings: AppSettings, vm: 
                         HubChoice("Velocità predefinita", "${local.preferredPlaybackSpeed}×", listOf("1.0×", "1.25×", "1.5×", "2.0×")) { save(local.copy(preferredPlaybackSpeed = it.removeSuffix("×").toFloat())) }
                         HubToggle("Decodifica hardware", null, local.hardwareDecode) { save(local.copy(hardwareDecode = it, softwareDecode = !it)) }
                         HubToggle("Decompressione asincrona", null, local.asyncDecode) { save(local.copy(asyncDecode = it)) }
-                        HubChoice("Buffer di partenza", "${local.playerStartBufferSec} secondi", listOf("1 secondo", "3 secondi", "5 secondi", "8 secondi", "15 secondi")) { save(local.copy(playerStartBufferSec = it.substringBefore(' ').toInt().coerceAtMost(local.maxBufferSec))) }
+                        HubChoice("Buffer minimo", "${local.minBufferSec} secondi", listOf("5 secondi", "10 secondi", "15 secondi", "30 secondi", "60 secondi")) { save(local.copy(minBufferSec = it.substringBefore(' ').toInt().coerceAtMost(local.maxBufferSec))) }
+                        HubChoice("Buffer di partenza", "${local.playerStartBufferSec} ${if (local.playerStartBufferSec == 1) "secondo (istantaneo)" else "secondi"}", listOf("1 secondo", "2 secondi", "3 secondi", "5 secondi", "8 secondi", "15 secondi")) { save(local.copy(playerStartBufferSec = it.substringBefore(' ').toInt().coerceAtMost(local.maxBufferSec))) }
                         HubChoice("Buffer massimo", "${local.maxBufferSec} secondi", listOf("15 secondi", "30 secondi", "60 secondi", "90 secondi", "120 secondi")) { save(local.copy(maxBufferSec = it.substringBefore(' ').toInt().coerceAtLeast(local.minBufferSec))) }
                         HubToggle("Seek accurato", null, local.accurateSeek) { save(local.copy(accurateSeek = it)) }
-                        HubToggle("Deinterlacciamento automatico", null, local.deinterlace) { save(local.copy(deinterlace = it)) }
                         HubChoice("Adattamento video predefinito", aspectLabel(local.aspectRatio), listOf("Adatta", "Riempi", "Stira")) { save(local.copy(aspectRatio = when (it) { "Riempi" -> "fill"; "Stira" -> "stretch"; else -> "fit" })) }
-                        HubRow("Ripristina impostazioni predefinite del player", "Buffer, decodifica, seek e adattamento video", Icons.Default.RestartAlt, destructive = true) {
-                            confirm = "Buffer, decodifica hardware, seek accurato, deinterlacciamento e adattamento video torneranno ai valori di fabbrica. Autoplay, ripresa e velocità non vengono toccati." to {
+                        HubRow("Ripristina impostazioni predefinite del player", "Buffer, decodifica, seek, risoluzione e adattamento video", Icons.Default.RestartAlt, destructive = true) {
+                            confirm = "Buffer, decodifica hardware, seek accurato e adattamento video torneranno ai valori di fabbrica. Autoplay, ripresa e velocità non vengono toccati." to {
                                 val d = AppSettings(); save(local.copy(minBufferSec = d.minBufferSec, maxBufferSec = d.maxBufferSec, playerStartBufferSec = d.playerStartBufferSec, hardwareDecode = d.hardwareDecode, softwareDecode = d.softwareDecode, asyncDecode = d.asyncDecode, accurateSeek = d.accurateSeek, deinterlace = d.deinterlace, aspectRatio = d.aspectRatio)); toast = "Player ripristinato"
                             }
                         }
@@ -165,9 +165,7 @@ internal fun SettingsHub(app: GassPlayerApplication, settings: AppSettings, vm: 
                         HubToggle("Rotazione automatica 360°", null, local.autoRotate360) { save(local.copy(autoRotate360 = it)) }
                         HubToggle("Loop riproduzione", null, local.loopPlayback) { save(local.copy(loopPlayback = it)) }
                         SettingInt("A/V delay (ms)", local.videoDelayMs, -500..500, step = 10) { save(local.copy(videoDelayMs = it)) }
-                        HubChoice("Risoluzione ridotta", local.ffmpegLowResolution, listOf("full", "half", "quarter")) { save(local.copy(ffmpegLowResolution = it)) }
-                        OutlinedTextField(local.ffmpegOptions, { save(local.copy(ffmpegOptions = it)) }, modifier = Modifier.fillMaxWidth(), label = { Text("Opzioni FFmpeg") })
-                        OutlinedTextField(local.ffmpegFilters, { save(local.copy(ffmpegFilters = it)) }, modifier = Modifier.fillMaxWidth(), label = { Text("Filtri FFmpeg") })
+                        HubChoice("Risoluzione massima", when (local.ffmpegLowResolution) { "half" -> "Ridotta (max 720p)"; "quarter" -> "Bassa (max 480p)"; else -> "Originale" }, listOf("Originale", "Ridotta (max 720p)", "Bassa (max 480p)")) { save(local.copy(ffmpegLowResolution = when (it) { "Ridotta (max 720p)" -> "half"; "Bassa (max 480p)" -> "quarter"; else -> "full" })) }
                     } }
                 }
                 "metadata" -> {

@@ -37,4 +37,21 @@ class StreamingParseTest {
         val out = M3UParser.parse("h", StringReader(hls).buffered(), "https://cdn.example/live/index.m3u8")
         assertEquals(1, out.size)
     }
+
+    @Test fun sinkReceivesLiveAndMoviesAndReturnsOnlySeriesAndEpisodes() {
+        val text = buildString {
+            append("#EXTM3U\n")
+            for (i in 1..20) append("#EXTINF:-1 group-title=\"News\",Channel $i\nhttp://h/live/u/p/$i.ts\n")
+            for (i in 1..5) append("#EXTINF:-1 group-title=\"Film\",Movie $i\nhttp://h/movie/u/p/$i.mp4\n")
+            for (e in 1..3) append("#EXTINF:-1 group-title=\"Serie\",Show S01E0$e\nhttp://h/series/u/p/$e.mp4\n")
+            // exact duplicate of channel 1: must be dropped by the sink de-duplication
+            append("#EXTINF:-1 group-title=\"News\",Channel 1\nhttp://h/live/u/p/1.ts\n")
+        }
+        val sunk = ArrayList<MediaItem>()
+        val rest = M3UParser.parse("s", StringReader(text).buffered(), sink = { sunk += it })
+        assertEquals(25, sunk.size)
+        assert(sunk.all { it.kind == MediaKind.LIVE || it.kind == MediaKind.MOVIE })
+        assert(rest.none { it.kind == MediaKind.LIVE || it.kind == MediaKind.MOVIE })
+        assertEquals(3, rest.count { it.kind == MediaKind.EPISODE })
+    }
 }

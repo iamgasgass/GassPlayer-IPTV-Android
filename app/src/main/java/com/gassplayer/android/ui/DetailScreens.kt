@@ -37,7 +37,7 @@ fun MovieDetailScreen(app: GassPlayerApplication, item: MediaItem, allItems: Lis
         ratings = runCatching { app.omdb.lookup(item.title, settings.omdbApiKey) }.getOrNull()
         traktRating = runCatching { app.trakt.ratings(item.title, settings.traktClientId) }.getOrNull()
     }
-    val alternates = allItems.filter { it.kind == item.kind && it.id != item.id && it.title.equals(item.title, true) }
+    val alternates = remember(allItems, item.id) { allItems.sameTitleAs(item) }
     Column(Modifier.fillMaxSize()) {
         IconButton(onBack, modifier = Modifier.focusable()) { Icon(Icons.Default.ArrowBack, "Indietro") }
         Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
