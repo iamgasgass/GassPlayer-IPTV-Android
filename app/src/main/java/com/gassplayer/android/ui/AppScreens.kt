@@ -50,6 +50,7 @@ import coil3.compose.AsyncImage
 import com.gassplayer.android.GassPlayerApplication
 import com.gassplayer.android.data.*
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 import java.util.UUID
 
 private val Blue = Color(0xFF3478F6)
@@ -499,7 +500,7 @@ private fun AddSourceDialog(app: GassPlayerApplication, vm: MainViewModel, onDis
     }
 }
 
-@Composable internal fun SettingInt(label:String, value:Int, range:IntRange, step:Int=1, onChange:(Int)->Unit){ Column(Modifier.fillMaxWidth()){ Text("$label: $value",color=Color.White); Slider(value=value.toFloat(),onValueChange={onChange(it.toInt())},valueRange=range.first.toFloat()..range.last.toFloat(),steps=((range.last-range.first)/step-1).coerceAtLeast(0)) } }
+@Composable internal fun SettingInt(label:String, value:Int, range:IntRange, step:Int=1, onChange:(Int)->Unit){ val safeValue = value.coerceIn(range.first, range.last); Column(Modifier.fillMaxWidth()){ Text("$label: $safeValue",color=Color.White); Slider(value=safeValue.toFloat(),onValueChange={ raw -> val snapped = (range.first + ((raw.toInt() - range.first).toFloat() / step).roundToInt() * step).coerceIn(range.first, range.last); onChange(snapped) },valueRange=range.first.toFloat()..range.last.toFloat(),steps=((range.last-range.first)/step-1).coerceAtLeast(0)) } }
 @Composable private fun SettingToggle(label:String, value:Boolean, onChange:(Boolean)->Unit){ Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){ Text(label,color=Color.White); Switch(value,onChange) } }
 @Composable private fun SettingRow(label:String, value:String, choices:List<String>, onChange:(String)->Unit){ var expanded by remember{mutableStateOf(false)}; Box{ OutlinedButton({expanded=true},Modifier.fillMaxWidth()){ Text("$label: $value") }; DropdownMenu(expanded,{expanded=false}){choices.forEach{DropdownMenuItem({Text(it)},onClick={onChange(it);expanded=false})}} } }
 

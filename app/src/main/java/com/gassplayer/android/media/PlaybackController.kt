@@ -458,17 +458,16 @@ class PlaybackController(
             // not to select any video track instead of merely storing the switch.
             .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, value.audioOnly)
             .setMaxVideoSize(maxVideoWidthFor(value), maxVideoHeightFor(value))
-            // Faster/smoother adaptive switching between HLS/DASH renditions.
-            .setAllowVideoMixedMimeTypeAdaptiveness(true)
-            .setAllowVideoNonSeamlessAdaptiveness(true)
+            // The preference must affect the track selector, not just be persisted.
+            // When disabled, prefer the highest supported rendition inside the selected resolution ceiling.
+            .setForceHighestSupportedBitrate(!value.adaptiveBitrate)
+            .setAllowVideoMixedMimeTypeAdaptiveness(value.adaptiveBitrate)
+            .setAllowVideoNonSeamlessAdaptiveness(value.adaptiveBitrate)
             .build()
 
-    /** "Risoluzione ridotta" (half = max 720p, quarter = max 480p) combined with the ABR switch. */
-    private fun maxVideoHeightFor(value: AppSettings): Int {
-        val lowRes = when (value.ffmpegLowResolution) { "quarter" -> 480; "half" -> 720; else -> Int.MAX_VALUE }
-        val abr = if (value.adaptiveBitrate) Int.MAX_VALUE else 720
-        return minOf(lowRes, abr)
-    }
+    /** "Risoluzione ridotta" (half = max 720p, quarter = max 480p). Adaptive bitrate is configured separately. */
+    private fun maxVideoHeightFor(value: AppSettings): Int =
+        when (value.ffmpegLowResolution) { "quarter" -> 480; "half" -> 720; else -> Int.MAX_VALUE }
 
     private fun maxVideoWidthFor(value: AppSettings): Int {
         val h = maxVideoHeightFor(value)

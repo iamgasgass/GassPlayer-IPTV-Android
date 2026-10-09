@@ -1,6 +1,7 @@
 package com.gassplayer.android.ui
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -11,6 +12,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -22,6 +24,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -125,6 +129,7 @@ fun EpgGridScreen(
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var dayOffset by remember { mutableIntStateOf(0) }
     var groupId by remember { mutableStateOf<String?>(null) }
+    var searchQuery by remember { mutableStateOf("") }
     var favoritesOnly by remember { mutableStateOf(false) }
     var renderLimit by remember { mutableIntStateOf(PAGE) }
     var selectedProgram by remember { mutableStateOf<Pair<MediaItem, EpgProgram>?>(null) }
@@ -144,16 +149,18 @@ fun EpgGridScreen(
     val tileGap = 4.dp
     val cornerRadius = if (compact) 12.dp else 18.dp
 
-    LaunchedEffect(settings.epgAutoUpdateEnabled) {
+    // Keep the live marker moving independently of the optional EPG refresh policy.
+    LaunchedEffect(Unit) {
         while (true) {
-            delay(30_000)
+            delay(30_000L)
             now = System.currentTimeMillis()
-            if (settings.epgAutoUpdateEnabled) {
-                // Refresh the fetched EPG data periodically only when the
-                // automatic-update preference is enabled.
-                delay(4 * 60_000L)
-                refreshTick++
-            }
+        }
+    }
+    LaunchedEffect(settings.epgAutoUpdateEnabled) {
+        if (!settings.epgAutoUpdateEnabled) return@LaunchedEffect
+        while (true) {
+            delay(5 * 60_000L)
+            refreshTick++
         }
     }
 
@@ -173,7 +180,9 @@ fun EpgGridScreen(
         }.timeInMillis
     }
     fun xFor(ms: Long): Dp = ppm * ((ms - gridOrigin) / 60_000f)
-    val canvasW = xFor(windowEnd) + 60.dp
+    val halfHourTickCount = ((windowEnd - gridOrigin) / (30 * 60_000L)).toInt() + 1
+    // iOS reserves a full 160 pt cell after the last half-hour tick.
+    val canvasW = maxOf(160.dp * halfHourTickCount.toFloat(), 500.dp)
     val liveAxisX = xFor(windowCenter)
 
     // --- group filter -----------------------------------------------------------------------
@@ -194,8 +203,22 @@ fun EpgGridScreen(
         if (favoritesOnly) live.onlyIds(favorites.live).filter { groupId == null || (groupId == "__none__" && keyOf(it) == null) || keyOf(it) == groupId }
         else live.inCategory(groupId)
     }
-    LaunchedEffect(groupId, favoritesOnly) { renderLimit = PAGE }
-    val visible = channels.take(minOf(renderLimit, HARD_CAP))
+    LaunchedEffect(groupId, favoritesOnly, searchQuery) { renderLimit = PAGE }
+    val matchingChannels = remember(channels, searchQuery) {
+        val query = searchQuery.trim()
+        if (query.isEmpty()) channels else channels.filter { it.title.contains(query, ignoreCase = true) }
+    }
+    val visible = matchingChannels.take(minOf(renderLimit, HARD_CAP))
+    var previousDayOffset by remember { mutableIntStateOf(dayOffset) }
+    LaunchedEffect(dayOffset) {
+        if (previousDayOffset != dayOffset) {
+            previousDayOffset = dayOffset
+            store.programs.clear()
+            store.loading.clear()
+            refreshTick++
+            renderLimit = PAGE
+        }
+    }
 
     // --- XMLTV fallback index (external sources + each Xtream source's xmltv.php), loaded lazily ----
     val xmltvIndex by produceState<Map<String, List<EpgProgram>>>(emptyMap(), external, sources, refreshTick) {
@@ -213,7 +236,7 @@ fun EpgGridScreen(
     }
 
     // --- per-channel loading ----------------------------------------------------------------------
-    LaunchedEffect(visible.map { it.id }, refreshTick, xmltvIndex) {
+    LaunchedEffect(visible.map { it.id }, refreshTick, xmltvIndex, dayOffset) {
         val sem = Semaphore(MAX_CONCURRENT)
         coroutineScope {
             visible.filter { store.programs[it.id] == null }.map { ch ->
@@ -249,12 +272,12 @@ fun EpgGridScreen(
     Column(Modifier.fillMaxSize()) {
         EpgTopBar(
             groupName = groupName, groups = groups, counts = counts, uncategorized = uncategorized,
-            onGroup = { groupId = it }, dayTitle = when (dayOffset) { 0 -> "Oggi"; 1 -> "Domani"; -1 -> "Ieri"; else -> SimpleDateFormat("EEEE d MMM", Locale.ITALIAN).format(Date(windowCenter)) },
+            onGroup = { groupId = it; searchQuery = ""; favoritesOnly = false },
             settings = settings, favoritesOnly = favoritesOnly,
             onSettings = { vm.updateSettings(it) },
-            onRefresh = { toast = "Aggiornamento guida in corso…"; store.programs.clear(); refreshTick++ },
+            onRefresh = { toast = "Aggiornamento guida in corso…"; store.programs.clear(); store.loading.clear(); refreshTick++ },
             onFavoritesOnly = { favoritesOnly = !favoritesOnly },
-            onDay = { dayOffset = it; if (it == 0) now = System.currentTimeMillis() }
+            onDay = { dayOffset = it.coerceIn(-7, 7); if (it == 0) now = System.currentTimeMillis() }
         )
         toast?.let { msg ->
             LaunchedEffect(msg) { delay(2500); toast = null }
@@ -265,31 +288,107 @@ fun EpgGridScreen(
             Text("Nessun canale live disponibile. Aggiungi una sorgente e attendi il caricamento.", color = Color.White.copy(.6f), modifier = Modifier.padding(16.dp))
             return@Column
         }
-
         val listState = rememberLazyListState()
         LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+            item {
+                Row(
+                    Modifier.fillMaxWidth()
+                        .padding(horizontal = bannerInset)
+                        .padding(top = 10.dp, bottom = if (compact) 16.dp else 18.dp)
+                        .height(50.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(Color.White.copy(alpha = .09f))
+                        .border(BorderStroke(1.dp, Color.White.copy(alpha = .12f)), RoundedCornerShape(50))
+                        .padding(horizontal = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.Search, null, tint = Color.White.copy(alpha = .55f))
+                    Spacer(Modifier.width(10.dp))
+                    BasicTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 15.sp),
+                        cursorBrush = SolidColor(Color.White),
+                        decorationBox = { innerTextField ->
+                            Box(contentAlignment = Alignment.CenterStart) {
+                                if (searchQuery.isEmpty()) {
+                                    Text("Cerca per nome del programma", color = Color.White.copy(alpha = .48f), fontSize = 15.sp)
+                                }
+                                innerTextField()
+                            }
+                        }
+                    )
+                    if (searchQuery.isNotEmpty()) {
+                        IconButton(onClick = { searchQuery = "" }) {
+                            Icon(Icons.Default.Close, "Cancella ricerca", tint = Color.White.copy(alpha = .65f))
+                        }
+                    }
+                }
+            }
             stickyHeader {
                 Row(Modifier.fillMaxWidth().background(Color(0xFF050609)).height(headerH)) {
-                    Spacer(Modifier.width(bannerColumnW))
+                    Box(
+                        Modifier.width(bannerColumnW).fillMaxHeight().background(Color.Black),
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        val dayTitle = when (dayOffset) {
+                            0 -> "Oggi"
+                            1 -> "Domani"
+                            -1 -> "Ieri"
+                            else -> SimpleDateFormat("EEE d MMM", Locale.ITALIAN).format(Date(windowCenter))
+                        }
+                        TextButton(
+                            onClick = { dayOffset = (dayOffset - 1).coerceAtLeast(-7) },
+                            contentPadding = PaddingValues(start = bannerInset, end = 2.dp)
+                        ) {
+                            Text(dayTitle, color = Color.White, fontSize = if (compact) 24.sp else 28.sp,
+                                fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
                     Box(Modifier.weight(1f).clipToBounds().horizontalScroll(hScroll)) {
                         Box(Modifier.width(canvasW).fillMaxHeight()) {
                             var t = gridOrigin
-                            val fmt = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
+                            val fmt = remember { SimpleDateFormat("HH:mm", Locale.US) }
                             while (t <= windowEnd) {
-                                Text(fmt.format(Date(t)), color = Color.White.copy(.75f), fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
-                                    modifier = Modifier.offset(x = xFor(t) + 6.dp).align(Alignment.CenterStart))
+                                Text(fmt.format(Date(t)), color = Color.White.copy(if (compact) .60f else .58f),
+                                    fontSize = if (compact) 20.sp else 22.sp,
+                                    fontWeight = if (compact) FontWeight.SemiBold else FontWeight.Medium,
+                                    modifier = Modifier.offset(x = xFor(t)).align(Alignment.CenterStart))
                                 t += 30 * 60_000L
+                            }
+                            if (isToday) {
+                                val arrowW = if (compact) 16.dp else 20.dp
+                                Canvas(
+                                    Modifier.offset(x = liveAxisX - arrowW / 2).width(arrowW).height(headerH)
+                                ) {
+                                    val triW = size.width * 0.62f
+                                    val triH = size.height * 0.24f
+                                    val centerX = size.width / 2f
+                                    val centerY = size.height / 2f
+                                    val triangle = Path().apply {
+                                        moveTo(centerX - triW / 2f, centerY - triH / 2f)
+                                        lineTo(centerX + triW / 2f, centerY - triH / 2f)
+                                        lineTo(centerX, centerY + triH / 2f)
+                                        close()
+                                    }
+                                    drawPath(triangle, Color.White)
+                                }
                             }
                         }
                     }
                 }
+            }
+            if (matchingChannels.isEmpty()) item {
+                Text("Nessun canale trovato per questa ricerca.", color = Color.White.copy(.6f), modifier = Modifier.padding(16.dp))
             }
             itemsIndexed(visible, key = { _, c -> c.id }) { _, ch ->
                 val programs = store.programs[ch.id].orEmpty()
                 Row(Modifier.fillMaxWidth().height(rowH)) {
                     ChannelBanner(
                         ch, favorite = ch.id in favorites.live,
-                        hasCatchup = ch.hasArchive || programs.any { it.hasArchive },
+                        hasCatchup = programs.any { it.hasArchive },
                         width = bannerColumnW, bannerW = bannerW, bannerH = bannerH, inset = bannerInset, centered = cardStyleGrid,
                         dark = darkTiles, onClick = { onPlay(ch) }, onLongClick = { vm.toggleFavorite(ch) }
                     )
@@ -318,10 +417,41 @@ fun EpgGridScreen(
                                 ) {
                                     if (bright > 0.dp) Box(Modifier.width(bright).fillMaxHeight().background(
                                         if (darkTiles) Color(0.20f, 0.20f, 0.22f) else base.copy(alpha = if (compact) .38f else .45f)))
-                                    Column(Modifier.padding(horizontal = 12.dp, vertical = 6.dp).align(Alignment.CenterStart)) {
-                                        Text(p.title.ifBlank { "—" }, color = Color.White, fontSize = if (compact) 13.sp else 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                        val tf = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
-                                        Text("${tf.format(Date(p.startMs))} – ${tf.format(Date(p.endMs))}", color = Color.White.copy(.65f), fontSize = 11.sp, maxLines = 1)
+                                    val (channelName, qualityBadge) = remember(ch.title) { splitQuality(ch.title) }
+                                    val startLabel = remember(p.startMs) { SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(p.startMs)) }
+                                    Column(
+                                        Modifier.padding(horizontal = if (compact) 10.dp else 13.dp, vertical = if (compact) 7.dp else 8.dp)
+                                            .fillMaxHeight().align(Alignment.CenterStart),
+                                        verticalArrangement = Arrangement.spacedBy(if (compact) 3.dp else 2.dp)
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                                            Text(
+                                                channelName, color = if (compact) Color.White else Color.White.copy(.70f),
+                                                fontSize = if (compact) 13.sp else 11.sp,
+                                                fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false,
+                                                overflow = TextOverflow.Clip
+                                            )
+                                            qualityBadge?.let { badge ->
+                                                Text(
+                                                    badge, color = Color.White.copy(.65f), fontSize = if (compact) 10.sp else 9.sp,
+                                                    fontWeight = FontWeight.SemiBold, maxLines = 1,
+                                                    modifier = Modifier.border(BorderStroke(1.dp, Color.White.copy(.45f)), RoundedCornerShape(5.dp))
+                                                        .padding(horizontal = 4.dp, vertical = 0.dp)
+                                                )
+                                            }
+                                            if (compact) {
+                                                Text(startLabel, color = Color.White.copy(.60f), fontSize = 13.sp, maxLines = 1, softWrap = false)
+                                            }
+                                        }
+                                        if (!compact) {
+                                            Text(startLabel, color = Color.White.copy(.55f), fontSize = 12.sp, maxLines = 1)
+                                        }
+                                        Text(
+                                            p.title.ifBlank { "—" }, color = Color.White.copy(if (compact) .92f else 1f),
+                                            fontSize = if (compact) 14.sp else 16.sp,
+                                            fontWeight = if (compact) FontWeight.Normal else FontWeight.SemiBold,
+                                            maxLines = 1, overflow = TextOverflow.Ellipsis
+                                        )
                                     }
                                 }
                             }
@@ -330,9 +460,9 @@ fun EpgGridScreen(
                     }
                 }
             }
-            if (channels.size > visible.size && visible.size < HARD_CAP) item {
-                val remaining = channels.size - visible.size
-                TextButton({ renderLimit = minOf(renderLimit + PAGE, channels.size, HARD_CAP) }, Modifier.fillMaxWidth().padding(16.dp)) {
+            if (matchingChannels.size > visible.size && visible.size < HARD_CAP) item {
+                val remaining = matchingChannels.size - visible.size
+                TextButton({ renderLimit = minOf(renderLimit + PAGE, matchingChannels.size, HARD_CAP) }, Modifier.fillMaxWidth().padding(16.dp)) {
                     Icon(Icons.Default.ArrowCircleDown, null); Spacer(Modifier.width(8.dp)); Text("Carica altri ${minOf(PAGE, remaining)} canali")
                 }
             }
@@ -378,22 +508,52 @@ private fun ChannelBanner(
     width: Dp, bannerW: Dp, bannerH: Dp, inset: Dp, centered: Boolean, dark: Boolean,
     onClick: () -> Unit, onLongClick: () -> Unit
 ) {
-    val (baseName, quality) = remember(ch.title) { splitQuality(ch.title) }
-    Box(Modifier.width(width).fillMaxHeight().zIndex(10f).background(Color(0xFF050609)), contentAlignment = if (centered) Alignment.Center else Alignment.CenterStart) {
+    val compact = bannerH < 65.dp
+    val corner = if (compact) 14.dp else 16.dp
+    val badgeSize = if (compact) 26.dp else 30.dp
+    val leadingInset = if (centered) 0.dp else inset
+    Box(Modifier.width(width).fillMaxHeight().zIndex(10f)) {
+        // Keep the history badge outside the clipped logo surface, as in the iOS overlay.
         Box(
-            Modifier.padding(start = if (centered) 0.dp else inset).width(bannerW).height(bannerH)
-                .clip(RoundedCornerShape(12.dp))
-                .background(if (dark) DarkBanner else pastelFor(ch).copy(alpha = .30f).compositeOver(Color(0.09f, 0.09f, 0.10f)))
+            Modifier.padding(start = leadingInset).width(bannerW).height(bannerH)
+                .align(if (centered) Alignment.Center else Alignment.CenterStart)
+                .clip(RoundedCornerShape(corner))
+                .background(if (dark) DarkBanner else pastelFor(ch))
                 .combinedClickable(onClick = onClick, onLongClick = onLongClick)
         ) {
-            Column(Modifier.align(Alignment.Center).padding(horizontal = 4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                if (!ch.logoUrl.isNullOrBlank()) AsyncImage(ch.logoUrl, null, Modifier.size(width = bannerW - 16.dp, height = bannerH * .52f), contentScale = ContentScale.Fit)
-                Text(baseName, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                if (quality != null) Text(quality, color = Color.White.copy(.85f), fontSize = 9.sp, modifier = Modifier
-                    .border(BorderStroke(1.dp, Color.White.copy(.45f)), RoundedCornerShape(50)).padding(horizontal = 5.dp, vertical = 0.dp))
+            if (!ch.logoUrl.isNullOrBlank()) {
+                AsyncImage(
+                    model = ch.logoUrl,
+                    contentDescription = ch.title,
+                    modifier = Modifier.fillMaxSize().padding(if (compact) 8.dp else 12.dp),
+                    contentScale = ContentScale.Fit
+                )
+            } else {
+                Icon(
+                    Icons.Default.LiveTv, null, tint = Color.White,
+                    modifier = Modifier.align(Alignment.Center).size(if (compact) 22.dp else 26.dp)
+                )
             }
-            if (favorite) Icon(Icons.Default.Star, null, tint = Color(0xFFFFD60A), modifier = Modifier.size(14.dp).align(Alignment.TopEnd).padding(2.dp))
-            if (hasCatchup) Icon(Icons.Default.History, null, tint = Color.White.copy(.8f), modifier = Modifier.size(14.dp).align(Alignment.CenterEnd).padding(end = 2.dp))
+            if (favorite) {
+                Box(
+                    Modifier.align(Alignment.TopEnd).padding(4.dp).size(if (compact) 18.dp else 19.dp)
+                        .clip(RoundedCornerShape(50)).background(Color.Black.copy(alpha = .42f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.Star, null, tint = Color(0xFFFFD60A), modifier = Modifier.size(if (compact) 10.dp else 11.dp))
+                }
+            }
+        }
+        if (hasCatchup) {
+            Box(
+                Modifier.align(Alignment.CenterStart)
+                    .offset(x = inset + bannerW - badgeSize / 2)
+                    .size(badgeSize)
+                    .clip(RoundedCornerShape(50)).background(Color(0xFF4D4D4D)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Default.History, null, tint = Color.White, modifier = Modifier.size(if (compact) 13.dp else 15.dp))
+            }
         }
     }
 }
@@ -401,7 +561,7 @@ private fun ChannelBanner(
 @Composable
 private fun EpgTopBar(
     groupName: String, groups: List<Category>, counts: Map<String?, Int>, uncategorized: Int, onGroup: (String?) -> Unit,
-    dayTitle: String, settings: AppSettings, favoritesOnly: Boolean,
+    settings: AppSettings, favoritesOnly: Boolean,
     onSettings: (AppSettings) -> Unit, onRefresh: () -> Unit, onFavoritesOnly: () -> Unit, onDay: (Int) -> Unit
 ) {
     var groupOpen by remember { mutableStateOf(false) }
@@ -423,7 +583,6 @@ private fun EpgTopBar(
             }
         }
         Spacer(Modifier.weight(1f))
-        Text(dayTitle, color = Color.White.copy(.7f), fontSize = 14.sp)
         Box {
             IconButton({ page = null; menuOpen = true }) { Icon(Icons.Default.MoreHoriz, "Altre opzioni") }
             DropdownMenu(menuOpen, { menuOpen = false; page = null }) {

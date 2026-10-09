@@ -47,7 +47,11 @@ internal fun SettingsHub(app: GassPlayerApplication, settings: AppSettings, vm: 
     }
 
     if (page == null) {
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 48.dp)) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            contentPadding = PaddingValues(bottom = 48.dp)
+        ) {
             item { HubSection("Playlist", "Sorgenti e sorgente attiva", Icons.Default.PlaylistPlay) {
                 HubRow("Sorgenti", "${sources.size} configurate", Icons.Default.Storage) { onOpen("sources") }
                 if (sources.size > 1) HubChoice("Sorgente attiva", sources.firstOrNull { it.id == active }?.name ?: "Nessuna", sources.map { it.name }) { name ->
@@ -85,10 +89,14 @@ internal fun SettingsHub(app: GassPlayerApplication, settings: AppSettings, vm: 
         return
     }
 
-    Column {
+    Column(Modifier.fillMaxSize()) {
         TextButton({ page = null }) { Icon(Icons.Default.ArrowBack, null); Spacer(Modifier.width(6.dp)); Text("Impostazioni") }
         toast?.let { Text(it, color = Color(0xFF30D158), fontSize = 13.sp, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) }
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 48.dp)) {
+        LazyColumn(
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            contentPadding = PaddingValues(bottom = 48.dp)
+        ) {
             when (page) {
                 "general" -> {
                     item { PageTitle("Impostazioni generali") }
@@ -151,8 +159,29 @@ internal fun SettingsHub(app: GassPlayerApplication, settings: AppSettings, vm: 
                         HubToggle("Seek accurato", null, local.accurateSeek) { save(local.copy(accurateSeek = it)) }
                         HubChoice("Adattamento video predefinito", aspectLabel(local.aspectRatio), listOf("Adatta", "Riempi", "Stira")) { save(local.copy(aspectRatio = when (it) { "Riempi" -> "fill"; "Stira" -> "stretch"; else -> "fit" })) }
                         HubRow("Ripristina impostazioni predefinite del player", "Buffer, decodifica, seek, risoluzione e adattamento video", Icons.Default.RestartAlt, destructive = true) {
-                            confirm = "Buffer, decodifica hardware, seek accurato e adattamento video torneranno ai valori di fabbrica. Autoplay, ripresa e velocità non vengono toccati." to {
-                                val d = AppSettings(); save(local.copy(minBufferSec = d.minBufferSec, maxBufferSec = d.maxBufferSec, playerStartBufferSec = d.playerStartBufferSec, hardwareDecode = d.hardwareDecode, softwareDecode = d.softwareDecode, asyncDecode = d.asyncDecode, accurateSeek = d.accurateSeek, deinterlace = d.deinterlace, aspectRatio = d.aspectRatio)); toast = "Player ripristinato"
+                            confirm = "Le opzioni tecniche del player torneranno ai valori di fabbrica. Autoplay, ripresa e velocità predefinita non vengono toccati." to {
+                                val d = AppSettings()
+                                save(local.copy(
+                                    minBufferSec = d.minBufferSec,
+                                    maxBufferSec = d.maxBufferSec,
+                                    playerStartBufferSec = d.playerStartBufferSec,
+                                    hardwareDecode = d.hardwareDecode,
+                                    softwareDecode = d.softwareDecode,
+                                    asyncDecode = d.asyncDecode,
+                                    accurateSeek = d.accurateSeek,
+                                    deinterlace = d.deinterlace,
+                                    aspectRatio = d.aspectRatio,
+                                    ffmpegLowResolution = d.ffmpegLowResolution,
+                                    videoDelayMs = d.videoDelayMs,
+                                    adaptiveBitrate = d.adaptiveBitrate,
+                                    httpCache = d.httpCache,
+                                    audioOnly = d.audioOnly,
+                                    preserveImageSubtitles = d.preserveImageSubtitles,
+                                    panorama360 = d.panorama360,
+                                    autoRotate360 = d.autoRotate360,
+                                    loopPlayback = d.loopPlayback
+                                ))
+                                toast = "Player ripristinato"
                             }
                         }
                     } }
