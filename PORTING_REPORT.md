@@ -35,7 +35,7 @@ Il progetto iOS contiene 119 file complessivi, 103 file Swift, XcodeGen `project
 
 - Media3 stabile 1.11.1.
 - Compose for TV stabile: `tv-material` 1.1.0 e `tv-foundation` 1.0.0.
-- Target API 37 / min API 25 per la distribuzione Android/Android TV.
+- Profilo Fire OS/Android allineato successivamente a GassTV: `targetSdk = 35`, `minSdk = 23`; `compileSdk = 37` per le dipendenze correnti. Vedi `FIRETV_GASSTV_COMPATIBILITY_REPORT.md`.
 - IKEv2 tramite `VpnManager`/`Ikev2VpnProfile` API 30+.
 - WireGuard Android tag stabile 1.0.20260315.
 - WorkManager per lavori di lunga durata/download.

@@ -2,6 +2,8 @@ package com.gassplayer.android.ui
 
 import android.content.Context
 import android.content.res.Configuration
+import android.app.UiModeManager
+import android.content.pm.PackageManager
 import android.os.Build
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
@@ -21,15 +23,38 @@ import androidx.compose.ui.unit.dp
 
 /** Detect regular Android TV and Android-based Amazon Fire TV devices. */
 internal fun Context.isTvOrFireTvDevice(): Boolean {
-    val uiMode = resources.configuration.uiMode and Configuration.UI_MODE_TYPE_MASK
-    if (uiMode == Configuration.UI_MODE_TYPE_TELEVISION) return true
-    return isAmazonFireTvBuild(
+    // Match GassTV's feature-based detection first. Some Fire TV and smart-TV builds do not
+    // report UI_MODE_TYPE_TELEVISION consistently, while still advertising Leanback/television.
+    val uiModeManager = getSystemService(Context.UI_MODE_SERVICE) as? UiModeManager
+    val managerUiModeType = uiModeManager?.currentModeType ?: Configuration.UI_MODE_TYPE_NORMAL
+    val configurationUiModeType = resources.configuration.uiMode and Configuration.UI_MODE_TYPE_MASK
+    val hasLeanback = packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
+    val hasTelevisionHardware = packageManager.hasSystemFeature("android.hardware.type.television")
+    val isFireTv = isAmazonFireTvBuild(
         manufacturer = Build.MANUFACTURER,
         model = Build.MODEL,
         device = Build.DEVICE,
         product = Build.PRODUCT,
     )
+    return isTelevisionEnvironment(
+        managerUiModeType = managerUiModeType,
+        configurationUiModeType = configurationUiModeType,
+        hasLeanbackFeature = hasLeanback,
+        hasTelevisionHardware = hasTelevisionHardware,
+        isFireTvBuild = isFireTv,
+    )
 }
+
+/** Same runtime feature detection as GassTV, plus the resource mode and AFT fingerprint fallback. */
+internal fun isTelevisionEnvironment(
+    managerUiModeType: Int,
+    configurationUiModeType: Int,
+    hasLeanbackFeature: Boolean,
+    hasTelevisionHardware: Boolean,
+    isFireTvBuild: Boolean,
+): Boolean = managerUiModeType == Configuration.UI_MODE_TYPE_TELEVISION ||
+    configurationUiModeType == Configuration.UI_MODE_TYPE_TELEVISION ||
+    hasLeanbackFeature || hasTelevisionHardware || isFireTvBuild
 
 /** Pure build fingerprint check so Smart TVs/Stick variants can be regression-tested. */
 internal fun isAmazonFireTvBuild(

@@ -3,8 +3,6 @@ package com.gassplayer.android.vpn
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
-import android.net.Ikev2VpnProfile
-import android.net.VpnManager
 import android.os.Build
 import com.gassplayer.android.data.NetworkApi
 import com.gassplayer.android.data.VPNConfig
@@ -12,31 +10,25 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.jsonObject
 import java.lang.reflect.Proxy
-import java.util.Base64
 
 class VpnController(private val context: Context, private val api: NetworkApi) {
-    private val manager: VpnManager? = if (Build.VERSION.SDK_INT >= 31) context.getSystemService(VpnManager::class.java) else null
-
     fun provisionIkev2(config: VPNConfig): Intent? {
         check(Build.VERSION.SDK_INT >= 30) { "IKEv2 provisioning richiede Android 11+" }
         check(config.protocol.equals("ikev2", true))
         check(config.isValid)
-        val profile = Ikev2VpnProfile.Builder(config.serverEndpoint, config.username)
-            .setAuthUsernamePassword(config.username, config.password, null)
-            .setBypassable(false)
-            .setMetered(false)
-            .setAutomaticIpVersionSelectionEnabled(true)
-            .build()
-        return manager?.provisionVpnProfile(profile)
+        // Keep API-30 framework types out of this class's fields/signatures so it can load on
+        // Fire OS 6/7 (API 25/28) even when IKEv2 is unavailable on that platform.
+        return Ikev2VpnAdapter.provision(context, config)
     }
 
     fun startIkev2() {
         if (Build.VERSION.SDK_INT < 30) error("IKEv2 non disponibile")
-        val m = manager ?: error("VpnManager non disponibile")
-        if (Build.VERSION.SDK_INT >= 33) m.startProvisionedVpnProfileSession() else m.startProvisionedVpnProfile()
+        Ikev2VpnAdapter.start(context)
     }
 
-    fun stopIkev2() { if (Build.VERSION.SDK_INT >= 30) manager?.stopProvisionedVpnProfile() }
+    fun stopIkev2() {
+        if (Build.VERSION.SDK_INT >= 30) Ikev2VpnAdapter.stop(context)
+    }
 
     suspend fun providerDiscovery(host: String, username: String, password: String): VPNConfig? = withContext(Dispatchers.IO) {
         val base = host.trimEnd('/')

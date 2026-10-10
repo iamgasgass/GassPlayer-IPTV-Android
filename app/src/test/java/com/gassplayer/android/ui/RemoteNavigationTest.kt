@@ -2,6 +2,7 @@ package com.gassplayer.android.ui
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import android.content.res.Configuration
 import org.junit.Test
 
 class RemoteNavigationTest {
@@ -27,6 +28,18 @@ class RemoteNavigationTest {
         assertEquals(true, isAmazonFireTvBuild("amazon", "Ember TV", "AFTHA78451", "FireTV"))
         assertEquals(false, isAmazonFireTvBuild("Google", "AFTSSS", "AFTSSS", "AFTSSS"))
         assertEquals(false, isAmazonFireTvBuild("Amazon", "KFTRWI", "KFTRWI", "KFTRWI"))
+    }
+
+    @Test
+    fun televisionDetectionMatchesGassTvFeatureChecksAndFireTvFallback() {
+        val normal = Configuration.UI_MODE_TYPE_NORMAL
+        val television = Configuration.UI_MODE_TYPE_TELEVISION
+        assertEquals(true, isTelevisionEnvironment(television, normal, false, false, false))
+        assertEquals(true, isTelevisionEnvironment(normal, television, false, false, false))
+        assertEquals(true, isTelevisionEnvironment(normal, normal, true, false, false))
+        assertEquals(true, isTelevisionEnvironment(normal, normal, false, true, false))
+        assertEquals(true, isTelevisionEnvironment(normal, normal, false, false, true))
+        assertEquals(false, isTelevisionEnvironment(normal, normal, false, false, false))
     }
 
     @Test

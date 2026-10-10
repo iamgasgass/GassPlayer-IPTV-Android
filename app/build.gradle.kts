@@ -9,8 +9,10 @@ android {
     compileSdk = 37
     defaultConfig {
         applicationId = "com.gassgass.gassplayer"
-        minSdk = 25
-        targetSdk = 37
+        // Keep the same Android/Fire OS floor as GassTV. Fire OS 5 (API 22) is not targeted.
+        minSdk = 23
+        // Match GassTV’s tested target while compiling against the newer SDK needed by current dependencies.
+        targetSdk = 35
         versionCode = 1000
         versionName = "1.0.0-android"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -18,6 +20,8 @@ android {
     }
     buildFeatures { compose = true; buildConfig = true }
     compileOptions {
+        // java.time is used by the XMLTV parser; desugar it for Android API 23–25.
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
@@ -39,6 +43,7 @@ android {
 }
 
 dependencies {
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.3")
     implementation(platform("androidx.compose:compose-bom:2026.09.00"))
     implementation("androidx.core:core-ktx:1.19.0")
     implementation("androidx.activity:activity-compose:1.13.0")

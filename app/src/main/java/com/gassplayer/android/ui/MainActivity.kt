@@ -2,6 +2,7 @@ package com.gassplayer.android.ui
 
 import android.app.PictureInPictureParams
 import android.content.pm.PackageManager
+import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.os.Build
@@ -30,6 +31,12 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent { GassPlayerRoot(app) }
+    }
+
+    // The launcher and media notification can target the already-running singleTask activity.
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
     }
     /** Enter immersive playback without recreating MainActivity/losing the current navigation route. */
     fun enterPlayerMode() {
