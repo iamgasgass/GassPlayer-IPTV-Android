@@ -42,9 +42,10 @@ import coil3.compose.AsyncImage
 import com.gassplayer.android.GassPlayerApplication
 import com.gassplayer.android.data.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
@@ -60,21 +61,13 @@ import java.util.Locale
  *  - densities "compatta" (row 66, banner 80x58, header 40) / "comoda" (row 96, banner 86x76, header 44)
  *  - 160 dp every 30 minutes (5.333 dp/min), window = 30 min past .. 180 min future (day views centred on 12:00)
  *  - fixed channel column + horizontally scrolling programme tiles, live axis, quality badge pill, catch-up/favourite marks
- *  - menu: aspetto/layout/colori, aggiornamento guida, preferiti e selezione del giorno
- *  - lista completa lazy (senza hard cap); caricamento limitato alle righe visibili e al margine,
- *    con concorrenza di rete contenuta per ridurre i picchi di memoria
+ *  - "…" menu: Aspetto EPG, Assetti EPG, Colori EPG, Aggiorna guida, Solo preferiti, Ieri/Oggi/Domani
+ *  - 32 channels per page with "Carica altri N canali" (hard cap 250), 24 concurrent short-EPG requests
  */
-/** Canali di cui si precarica la guida prima/dopo quelli visibili; all'apertura, prima del primo layout. */
-private const val INITIAL_LOAD = 40
-private const val PREFETCH_BEHIND = 8
-private const val PREFETCH_AHEAD = 24
-private const val MAX_CONCURRENT = 6
+private const val PAGE = 32
+private const val HARD_CAP = 250
+private const val MAX_CONCURRENT = 24
 private const val SHORT_LIMIT = 24
-/** Giorni diversi da oggi: servono molti piu' programmi per coprire la finestra scelta. */
-private const val DAY_LIMIT = 150
-/** L'indice XMLTV si ricostruisce ogni 36 tick da 5 min = 3 h (come la validita' della cache). */
-private const val INDEX_REFRESH_TICKS = 36
-private val NoPrograms = emptyList<EpgProgram>()
 private val PAST_MS = 30 * 60_000L
 private val FUTURE_MS = 180 * 60_000L
 
@@ -100,7 +93,7 @@ private fun pastelFor(item: MediaItem): Color {
         "dazn" in n || "sport" in n -> Color(0.82f, 0.74f, 0.28f)
         "cinema" in n || "film" in n || "movie" in n -> Color(0.72f, 0.32f, 0.58f)
         "private" in n -> Color(0.85f, 0.30f, 0.36f)
-        else -> PastelPalette[Math.floorMod(item.title.hashCode() xor item.id.hashCode(), PastelPalette.size)]
+        else -> PastelPalette[Math.abs(item.title.hashCode() xor item.id.hashCode()) % PastelPalette.size]
     }
 }
 
@@ -121,40 +114,6 @@ private class EpgStore {
     val programs: SnapshotStateMap<String, List<EpgProgram>> = mutableStateMapOf()
     val loading: SnapshotStateMap<String, Boolean> = mutableStateMapOf()
     val failed: SnapshotStateMap<String, Boolean> = mutableStateMapOf()
-    /** Chiave (giorno|versione indice|tick) con cui ogni canale e' stato caricato. Solo thread principale. */
-    val loadedKey = HashMap<String, String>()
-    /** Canali con una richiesta in corso: i job NON dipendono dal LaunchedEffect, quindi non si
-     *  cancellano a ogni scroll (era la causa di canali rimasti senza dati). Solo thread principale. */
-    val inFlight = HashSet<String>()
-
-    fun reset() {
-        programs.clear(); loading.clear(); failed.clear(); loadedKey.clear()
-    }
-}
-
-private class ChannelEpg(val programs: List<EpgProgram>, val failed: Boolean)
-
-private suspend fun fetchChannelEpg(
-    app: GassPlayerApplication,
-    ch: MediaItem,
-    source: MediaSourceConfig?,
-    index: XmlTvIndex,
-    dayOffset: Int
-): ChannelEpg {
-    var panel = emptyList<EpgProgram>()
-    var requestFailed = false
-    if (source?.type == SourceType.XTREAM) {
-        val sid = ch.id.substringAfterLast(':')
-        val limit = if (dayOffset == 0) SHORT_LIMIT else DAY_LIMIT
-        suspend fun once() = runCatching { app.epg.shortEpg(source, sid, limit, preferTable = dayOffset != 0) }
-        var r = once()
-        if (r.isFailure) { delay(400); r = once() } // un solo nuovo tentativo sui guasti di rete reali
-        panel = r.getOrDefault(emptyList())
-        requestFailed = r.isFailure
-    }
-    val xml = index.programsFor(ch.metadataTag, ch.id.substringAfterLast(':'), ch.title)
-    val merged = mergePrograms(panel, xml)
-    return ChannelEpg(merged, requestFailed && merged.isEmpty())
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -178,11 +137,10 @@ fun EpgGridScreen(
     var searchQuery by remember { mutableStateOf("") }
     var debouncedSearch by remember { mutableStateOf("") }
     var favoritesOnly by remember { mutableStateOf(false) }
+    var renderLimit by remember { mutableIntStateOf(PAGE) }
     var selectedProgram by remember { mutableStateOf<Pair<MediaItem, EpgProgram>?>(null) }
     var toast by remember { mutableStateOf<String?>(null) }
     var refreshTick by remember { mutableIntStateOf(0) }
-    var manualTick by remember { mutableIntStateOf(0) }
-    var pokes by remember { mutableIntStateOf(0) }
 
     val compact = settings.epgLayoutDensity == "compatta"
     val cardStyleGrid = settings.epgChannelCardStyle != "scheda"
@@ -266,96 +224,54 @@ fun EpgGridScreen(
         if (normalizedSearch.isEmpty()) grouped
         else grouped.matchingTitle(normalizedSearch)
     }
-    // --- caricamento della guida: SOLO per i canali in vista (+ margine), mentre si scorre ------------
-    // Prima: tetto rigido di 250 canali con "Carica altri". Ora la lista e' completa (LazyColumn compone
-    // solo le righe visibili) e la guida si scarica per le righe vicine alla finestra visibile.
-    val listState = rememberLazyListState()
-    // Evita di materializzare ogni canale per costruire una mappa degli indici: channels può essere
-    // un DbList su SQLite con centinaia di migliaia di righe. Gli indici LazyColumn sono già stabili;
-    // i primi due item sono ricerca e timeline, quindi i canali iniziano dall'indice 2.
-    var loadRange by remember(channels) { mutableStateOf(0..(minOf(channels.size, INITIAL_LOAD) - 1)) }
-    LaunchedEffect(channels, listState) {
-        snapshotFlow {
-            var lo = Int.MAX_VALUE
-            var hi = -1
-            for (info in listState.layoutInfo.visibleItemsInfo) {
-                val i = info.index - 2
-                if (i < 0 || i >= channels.size) continue
-                if (i < lo) lo = i
-                if (i > hi) hi = i
-            }
-            if (hi < 0) -1L else (lo.toLong() shl 32) or hi.toLong()
-        }.distinctUntilChanged().collectLatest { packed ->
-            if (packed >= 0L) {
-                delay(100) // assorbe lo scroll veloce: si carica dove ci si ferma
-                val lo = (packed shr 32).toInt()
-                val hi = (packed and 0xFFFFFFFFL).toInt()
-                loadRange = maxOf(0, lo - PREFETCH_BEHIND)..minOf(channels.size - 1, hi + PREFETCH_AHEAD)
-            }
-        }
-    }
-    val toLoad = remember(channels, loadRange) {
-        val from = loadRange.first.coerceAtLeast(0)
-        val to = (loadRange.last + 1).coerceAtMost(channels.size)
-        if (from < to) channels.subList(from, to).toList() else emptyList()
-    }
+    LaunchedEffect(groupId, favoritesOnly, normalizedSearch, dayOffset) { renderLimit = PAGE }
+    val visible = channels.take(minOf(renderLimit, HARD_CAP))
 
-    // --- XMLTV (sorgenti esterne, altrimenti xmltv.php Xtream), filtrato sui canali delle playlist ---
-    val indexCounter = remember { intArrayOf(0) }
-    val xmltvIndex by produceState(XmlTvIndex.EMPTY, external, sources, live, manualTick, refreshTick / INDEX_REFRESH_TICKS) {
-        val version = ++indexCounter[0]
-        value = try {
-            app.epg.buildIndex(external, sources, live, version)
-        } catch (cancelled: kotlinx.coroutines.CancellationException) {
-            throw cancelled
-        } catch (_: Throwable) {
-            XmlTvIndex(emptyMap(), emptyMap(), version, ready = true)
-        }
-    }
-
-    val dayKey = dayOffset
-    val currentKey = "$dayKey|${xmltvIndex.version}|$refreshTick"
-    val currentKeyState = rememberUpdatedState(currentKey)
-    val loadSem = remember { Semaphore(MAX_CONCURRENT) }
-
-    fun loadMissing() {
-        val index = xmltvIndex
-        val key = currentKey
-        for (ch in toLoad) {
-            if (store.loadedKey[ch.id] == key || ch.id in store.inFlight) continue
-            val source = sources.firstOrNull { it.id == ch.sourceId }
-            // Senza API Xtream (M3U) i dati vengono solo dall'XMLTV: si attende l'indice invece di
-            // salvare subito "nessun dato" (era il bug: canali caricati prima dell'XMLTV restavano vuoti).
-            if (source?.type != SourceType.XTREAM && !index.ready) {
-                if (store.programs[ch.id] == null) store.loading[ch.id] = true
-                continue
-            }
-            store.inFlight += ch.id
-            if (store.programs[ch.id] == null) store.loading[ch.id] = true
-            scope.launch {
-                try {
-                    val result = loadSem.withPermit {
-                        withContext(Dispatchers.IO) { fetchChannelEpg(app, ch, source, index, dayKey) }
-                    }
-                    store.programs[ch.id] = result.programs
-                    if (result.failed) store.failed[ch.id] = true else store.failed.remove(ch.id)
-                    store.loadedKey[ch.id] = key
-                } catch (e: kotlinx.coroutines.CancellationException) {
-                    throw e
-                } catch (_: Throwable) {
-                    if (store.programs[ch.id] == null) store.failed[ch.id] = true
-                    // Tentativo registrato per questa chiave: si riprova al prossimo tick, non in loop.
-                    store.loadedKey[ch.id] = key
-                } finally {
-                    store.inFlight -= ch.id
-                    store.loading.remove(ch.id)
-                    // Se nel frattempo e' cambiato giorno/indice/tick, ripassa su questo canale.
-                    if (store.loadedKey[ch.id] != currentKeyState.value) pokes++
+    // --- XMLTV fallback index (external sources + each Xtream source's xmltv.php), loaded lazily ----
+    val xmltvIndex by produceState<Map<String, List<EpgProgram>>>(emptyMap(), external, sources, refreshTick) {
+        value = withContext(Dispatchers.IO) {
+            val all = ArrayList<EpgProgram>()
+            for (e in external.filter { it.isEnabled }) runCatching { app.epg.xmltv(e.urlString, e.id) }.getOrNull()?.let(all::addAll)
+            if (all.isEmpty()) {
+                val used = live.sourceIds()
+                for (s in sources.filter { it.type == SourceType.XTREAM && it.id in used && it.isEnabled }) {
+                    runCatching { app.epg.xtreamXmltv(s) }.getOrNull()?.let(all::addAll)
                 }
             }
+            all.groupBy { it.streamId.lowercase(Locale.ROOT) }
         }
     }
-    LaunchedEffect(toLoad, xmltvIndex, dayOffset, refreshTick, pokes, sources) { loadMissing() }
+
+    // --- per-channel loading ----------------------------------------------------------------------
+    LaunchedEffect(visible.map { it.id }, refreshTick, xmltvIndex, dayOffset) {
+        val sem = Semaphore(MAX_CONCURRENT)
+        coroutineScope {
+            visible.filter { store.programs[it.id] == null }.map { ch ->
+                async(Dispatchers.IO) {
+                    sem.withPermit {
+                        store.loading[ch.id] = true
+                        val source = sources.firstOrNull { it.id == ch.sourceId }
+                        var found = emptyList<EpgProgram>()
+                        var requestFailed = false
+                        if (source?.type == SourceType.XTREAM) {
+                            val result = runCatching { app.epg.shortEpg(source, ch.id.substringAfterLast(':'), SHORT_LIMIT) }
+                            found = result.getOrDefault(emptyList())
+                            requestFailed = result.isFailure
+                        }
+                        if (found.isEmpty()) {
+                            val key = (ch.metadataTag?.takeIf { it.isNotBlank() } ?: ch.id.substringAfterLast(':')).lowercase(Locale.ROOT)
+                            found = xmltvIndex[key]
+                                ?: xmltvIndex[ch.title.lowercase(Locale.ROOT)]
+                                ?: emptyList()
+                        }
+                        store.programs[ch.id] = found.sortedBy { it.startMs }
+                        if (requestFailed && found.isEmpty()) store.failed[ch.id] = true else store.failed.remove(ch.id)
+                        store.loading.remove(ch.id)
+                    }
+                }
+            }.awaitAll()
+        }
+    }
 
     // One shared horizontal position synchronises the time axis and every channel row.
     // The iOS guide starts at the left edge of its -30 min window, so we intentionally do not
@@ -379,15 +295,19 @@ fun EpgGridScreen(
             onSettings = { vm.updateSettings(it) },
             onRefresh = {
                 toast = "Aggiornamento guida in corso…"
-                app.epg.invalidate()
-                store.reset()
-                manualTick++
+                store.programs.clear()
+                store.loading.clear()
+                store.failed.clear()
                 refreshTick++
             },
             onFavoritesOnly = { favoritesOnly = !favoritesOnly },
             onDay = {
-                // I dati restano visibili mentre si ricaricano per il nuovo giorno (nessun lampeggio).
-                if (dayOffset != it) dayOffset = it
+                if (dayOffset != it) {
+                    store.programs.clear()
+                    store.loading.clear()
+                    store.failed.clear()
+                    dayOffset = it
+                }
                 if (it == 0) now = System.currentTimeMillis()
             }
         )
@@ -401,6 +321,7 @@ fun EpgGridScreen(
             return@Column
         }
 
+        val listState = rememberLazyListState()
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
@@ -420,6 +341,9 @@ fun EpgGridScreen(
                     Box(
                         Modifier.width(bannerColumnW).fillMaxHeight().background(Color.Black)
                             .combinedClickable(onClick = {
+                                store.programs.clear()
+                                store.loading.clear()
+                                store.failed.clear()
                                 dayOffset = (dayOffset - 1).coerceAtLeast(-7)
                             }),
                         contentAlignment = Alignment.CenterStart
@@ -472,17 +396,13 @@ fun EpgGridScreen(
                     }
                 }
             }
-            itemsIndexed(channels, key = { _, c -> c.id }) { _, ch ->
-                // Gia' ordinati alla scrittura nello store: niente sort a ogni ricomposizione della riga.
-                val programs = store.programs[ch.id] ?: NoPrograms
-                val hasCatchupNow = remember(programs, windowStart, windowEnd) {
-                    programs.any { it.hasArchive && it.endMs > windowStart && it.startMs < windowEnd }
-                }
+            itemsIndexed(visible, key = { _, c -> c.id }) { _, ch ->
+                val programs = store.programs[ch.id].orEmpty().sortedBy { it.startMs }
                 Row(Modifier.fillMaxWidth().height(rowH)) {
                     ChannelBanner(
                         ch,
                         favorite = ch.id in favorites.live,
-                        hasCatchup = hasCatchupNow,
+                        hasCatchup = programs.any { it.hasArchive && it.endMs > windowStart && it.startMs < windowEnd },
                         width = bannerColumnW,
                         bannerW = bannerW,
                         bannerH = bannerH,
@@ -498,7 +418,7 @@ fun EpgGridScreen(
                         Modifier.weight(1f).fillMaxHeight().offset(x = -bleed).clipToBounds().horizontalScroll(hScroll)
                     ) {
                         Box(Modifier.width(canvasW + bleed).fillMaxHeight()) {
-                            val inWindow = remember(programs, windowStart, windowEnd) { programs.filter { it.endMs > windowStart && it.startMs < windowEnd } }
+                            val inWindow = programs.filter { it.endMs > windowStart && it.startMs < windowEnd }
                             if (inWindow.isEmpty()) {
                                 val label = when {
                                     store.loading[ch.id] == true -> "Caricamento EPG"
@@ -553,6 +473,12 @@ fun EpgGridScreen(
                             }
                         }
                     }
+                }
+            }
+            if (channels.size > visible.size && visible.size < HARD_CAP) item(key = "epg-load-more") {
+                val remaining = channels.size - visible.size
+                TextButton({ renderLimit = minOf(renderLimit + PAGE, channels.size, HARD_CAP) }, Modifier.fillMaxWidth().padding(16.dp)) {
+                    Icon(Icons.Default.ArrowCircleDown, null); Spacer(Modifier.width(8.dp)); Text("Carica altri ${minOf(PAGE, remaining)} canali")
                 }
             }
         }
