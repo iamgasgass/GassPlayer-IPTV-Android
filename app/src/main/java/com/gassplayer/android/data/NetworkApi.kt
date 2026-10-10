@@ -39,6 +39,10 @@ class NetworkApi {
     /** Used for alternate scheme/port candidates: fail fast instead of stalling for 15s each. */
     private val fastClient: OkHttpClient = client.newBuilder().connectTimeout(6, TimeUnit.SECONDS).build()
 
+    /** Guide XMLTV da decine di MB su box lente: 5 minuti totali non bastavano, il read-timeout resta a 60 s. */
+    private val longClient: OkHttpClient = client.newBuilder().callTimeout(20, TimeUnit.MINUTES).build()
+    private val longFastClient: OkHttpClient = longClient.newBuilder().connectTimeout(6, TimeUnit.SECONDS).build()
+
     /** Remembers which candidate base (scheme://host:port) worked so later calls skip the ladder. */
     private val workingBase = java.util.concurrent.ConcurrentHashMap<String, String>()
 
@@ -161,7 +165,7 @@ class NetworkApi {
 
     /** Streams a large XML/XMLTV body (plain or gzip) straight into [parse] without buffering it. */
     suspend fun <T> getXmlTv(url: String, parse: (java.io.InputStream) -> T): T =
-        execute(url, emptyMap(), "application/xml, text/xml, application/gzip, */*") { response, _ ->
+        execute(url, emptyMap(), "application/xml, text/xml, application/gzip, */*", longCall = true) { response, _ ->
             val pb = java.io.PushbackInputStream(java.io.BufferedInputStream(response.body.source().inputStream(), 64 * 1024), 2)
             val magic = ByteArray(2)
             val n = pb.read(magic, 0, 2)
@@ -209,12 +213,13 @@ class NetworkApi {
         url: String,
         headers: Map<String, String>,
         defaultAccept: String,
+        longCall: Boolean = false,
         block: (okhttp3.Response, String) -> R
     ): R {
         val host = runCatching { java.net.URI(url).host?.lowercase() }.getOrNull()
         val first = host?.let { agentByHost[it] } ?: userAgent
         try {
-            return executeWithAgent(url, headers, defaultAccept, first, block)
+            return executeWithAgent(url, headers, defaultAccept, first, longCall, block)
         } catch (e: HttpStatusException) {
             // Parity with the iOS app: many panels refuse unknown User-Agents (403/406/451) while accepting
             // classic players. Walk the ladder — but never for the Xtream JSON API (403 there means wrong
@@ -226,7 +231,7 @@ class NetworkApi {
             for (ua in com.gassplayer.android.media.StreamUserAgents.ladder) {
                 if (ua == first) continue
                 try {
-                    val result = executeWithAgent(url, headers, defaultAccept, ua, block)
+                    val result = executeWithAgent(url, headers, defaultAccept, ua, longCall, block)
                     if (host != null) agentByHost[host] = ua // remembered: next requests start from the working UA
                     return result
                 } catch (e2: HttpStatusException) {
@@ -246,6 +251,7 @@ class NetworkApi {
         headers: Map<String, String>,
         defaultAccept: String,
         agent: String,
+        longCall: Boolean,
         block: (okhttp3.Response, String) -> R
     ): R = withContext(Dispatchers.IO) {
         val (requestUrl, inlineHeaders) = splitInlineHeaders(url)
@@ -266,7 +272,10 @@ class NetworkApi {
                 requestHeaders.forEach { (k, v) ->
                     if (!k.equals("User-Agent", true) && !k.equals("Accept", true)) builder.header(k, v)
                 }
-                val call = (if (index == 0) client else fastClient).newCall(builder.build())
+                val call = (
+                    if (longCall) { if (index == 0) longClient else longFastClient }
+                    else { if (index == 0) client else fastClient }
+                ).newCall(builder.build())
                 call.execute().use { response ->
                     if (response.isSuccessful) {
                         workingBase[key] = baseOf(candidate)
