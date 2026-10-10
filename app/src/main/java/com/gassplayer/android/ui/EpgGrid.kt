@@ -175,7 +175,7 @@ internal class EpgGridSession {
 
 @OptIn(ExperimentalFoundationApi::class, UnstableApi::class)
 @Composable
-fun EpgGridScreen(
+internal fun EpgGridScreen(
     app: GassPlayerApplication,
     vm: MainViewModel,
     session: EpgGridSession,
