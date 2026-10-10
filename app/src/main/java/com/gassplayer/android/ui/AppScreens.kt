@@ -94,10 +94,45 @@ fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
 
     val loading by vm.loading.collectAsStateWithLifecycle()
     val message by vm.message.collectAsStateWithLifecycle()
-    AdaptiveShell(route, tv, loading, message, onRetry = { vm.refresh(true) }, onRoute = { route = it }, title = when(route) {
-        "home" -> "GassPlayer"; "live", "movies", "series" -> ""; "epg" -> "Guida TV"; "search" -> "Cerca"; "sources" -> "Sorgenti"; "source-manager" -> "Gestisci sorgenti"; "downloads" -> "Download"; "settings" -> "Impostazioni"; "home-customize", "live-customize", "movies-customize", "series-customize" -> ""; "vpn" -> "VPN"; "parental" -> "Controllo genitori"; "diagnostics" -> "Diagnostica"; "backup" -> "Backup e migrazione"; "epg-manage" -> "Fonti EPG"; "merged" -> "Playlist unificate"; else -> "GassPlayer"
-    }) {
-        when (route) {
+    // Personalizzazione come sheet sopra la vista che si sta modificando, come
+    // HomeCustomizeSheet presentata con .sheet in SwiftUI. La libreria resta
+    // montata sullo sfondo, così scroll, filtro e posizione non vengono persi.
+    val customizationScope = when (route) {
+        "home-customize" -> "home"
+        "live-customize" -> "live"
+        "movies-customize" -> "movies"
+        "series-customize" -> "series"
+        else -> null
+    }
+    val contentRoute = when (route) {
+        "home-customize" -> "home"
+        "live-customize" -> "live"
+        "movies-customize" -> "movies"
+        "series-customize" -> "series"
+        else -> route
+    }
+    // Live TV / Film / Serie TV own the large title on the same row as
+    // "Modifica". Do not render a shell/system heading or even a placeholder
+    // row above it, otherwise the page appears to have a duplicate title.
+    val shellTitle = when (contentRoute) {
+        "live", "movies", "series" -> ""
+        "home" -> "GassPlayer"
+        "epg" -> "Guida TV"
+        "search" -> "Cerca"
+        "sources" -> "Sorgenti"
+        "source-manager" -> "Gestisci sorgenti"
+        "downloads" -> "Download"
+        "settings" -> "Impostazioni"
+        "vpn" -> "VPN"
+        "parental" -> "Controllo genitori"
+        "diagnostics" -> "Diagnostica"
+        "backup" -> "Backup e migrazione"
+        "epg-manage" -> "Fonti EPG"
+        "merged" -> "Playlist unificate"
+        else -> "GassPlayer"
+    }
+    AdaptiveShell(contentRoute, tv, loading, message, onRetry = { vm.refresh(true) }, onRoute = { route = it }, title = shellTitle) {
+        when (contentRoute) {
             "home" -> HomeScreen(vm, catalog, favorite, watch, sources, onRoute = { route = it }, onPlay = { playerItem = it })
             "live" -> CatalogScreen("Live TV", catalog?.live.orEmpty(), catalog?.liveCategories.orEmpty(), favorite, parental, vm, onPlay = { playerItem = it }, showNumbers = settings.showChannelNumbers, scopeKey = "live", onCustomize = { route = "live-customize" })
             "movies" -> CatalogScreen("Film (VOD)", catalog?.movies.orEmpty(), catalog?.vodCategories.orEmpty(), favorite, parental, vm, onPlay = { playerItem = it }, detail = true, scopeKey = "movies", onCustomize = { route = "movies-customize" })
@@ -105,10 +140,6 @@ fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
             "epg" -> EpgGridScreen(app, vm, catalog?.live.orEmpty(), catalog?.liveCategories.orEmpty(), favorite, settings, onPlay = { playerItem = it })
             "epg-manage" -> ExternalEpgManageScreen(app, onBack = { route = epgManageReturnRoute })
             "merged" -> MergedPlaylistScreen(app)
-            "home-customize" -> HomeCustomizationScreen(vm, "home", onBack = { route = "home" }, isTv = tv)
-            "live-customize" -> HomeCustomizationScreen(vm, "live", onBack = { route = "live" }, isTv = tv)
-            "movies-customize" -> HomeCustomizationScreen(vm, "movies", onBack = { route = "movies" }, isTv = tv)
-            "series-customize" -> HomeCustomizationScreen(vm, "series", onBack = { route = "series" }, isTv = tv)
             "trakt" -> TraktScreen(app, settings, vm)
             "search" -> SearchScreen(app, catalog, onPlay = { playerItem = it }, onRoute = { route = it })
             "sources" -> SourcesView(app, vm, onRoute = { route = it }, onManage = { managerSourceId = it.id; route = "source-manager" })
@@ -128,6 +159,14 @@ fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
             "diagnostics" -> DiagnosticsScreen(app)
             "backup" -> BackupScreen(app)
         }
+        if (customizationScope != null) {
+            HomeCustomizationSheet(
+                vm = vm,
+                scopeKey = customizationScope,
+                onBack = { route = contentRoute },
+                isTv = tv
+            )
+        }
     }
 }
 
@@ -135,6 +174,19 @@ fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
 @OptIn(ExperimentalFoundationApi::class)
 private fun AdaptiveShell(route: String, tv: Boolean, loading: Boolean, message: String?, onRetry: () -> Unit, onRoute: (String) -> Unit, title: String, content: @Composable () -> Unit) {
     val destinations = listOf("home" to "Home", "live" to "Live TV", "movies" to "Film", "series" to "Serie", "epg" to "Guida", "search" to "Cerca", "sources" to "Sorgenti", "settings" to "Impostazioni")
+    val configuration = LocalConfiguration.current
+    val screenWidthDp = configuration.screenWidthDp
+    // Narrow mobile layouts reserve enough width for the library title and
+    // the adjacent "Modifica" capsule instead of letting either overlap.
+    val mobileRailWidth = when {
+        screenWidthDp <= 360 -> 88.dp
+        screenWidthDp <= 420 -> 96.dp
+        else -> 104.dp
+    }
+    // Live/Film/Serie draw their title in LibraryScreenTitle next to Modifica.
+    // Suppress the shell heading by route (not just by an empty title string),
+    // so a future title-map change can never reintroduce the duplicate row.
+    val libraryOwnsHeading = route == "live" || route == "movies" || route == "series"
     val railScrollState = rememberScrollState()
     val railScope = rememberCoroutineScope()
     LiquidGlassBackdrop(Modifier.fillMaxSize()) {
@@ -142,7 +194,7 @@ private fun AdaptiveShell(route: String, tv: Boolean, loading: Boolean, message:
             LiquidGlassSurface(
                 modifier = Modifier
                     .fillMaxHeight()
-                    .width(if (tv) 142.dp else 104.dp),
+                    .width(if (tv) 142.dp else mobileRailWidth),
                 cornerRadius = 26.dp,
                 contentPadding = 7.dp
             ) {
@@ -182,8 +234,15 @@ private fun AdaptiveShell(route: String, tv: Boolean, loading: Boolean, message:
                     }
                 }
             }
-            Column(Modifier.fillMaxSize().padding(horizontal = if (tv) 28.dp else 16.dp, vertical = 18.dp)) {
-                if (title.isNotBlank()) {
+            Column(
+                Modifier.fillMaxSize().padding(
+                    start = if (tv) 28.dp else if (screenWidthDp <= 360) 12.dp else 16.dp,
+                    end = if (tv) 28.dp else if (screenWidthDp <= 360) 12.dp else 16.dp,
+                    top = if (libraryOwnsHeading) 8.dp else 18.dp,
+                    bottom = if (tv) 18.dp else 14.dp
+                )
+            ) {
+                if (!libraryOwnsHeading && title.isNotBlank()) {
                     Text(
                         title,
                         color = glassForeground(),
@@ -192,8 +251,6 @@ private fun AdaptiveShell(route: String, tv: Boolean, loading: Boolean, message:
                         modifier = Modifier.fillMaxWidth()
                     )
                     Spacer(Modifier.height(16.dp))
-                } else {
-                    Spacer(Modifier.height(2.dp))
                 }
                 val showStatusBanner = loading || (!message.isNullOrBlank() && route != "sources" && route != "settings")
                 if (loading) {
@@ -239,7 +296,10 @@ private val homeSectionTitles = linkedMapOf(
 private fun HomeScreen(vm: MainViewModel, catalog: CatalogState?, fav: FavoriteState, watch: List<WatchEntry>, sources: List<MediaSourceConfig>, onRoute: (String) -> Unit, onPlay: (MediaItem) -> Unit) {
     val settings by vm.settings.collectAsStateWithLifecycle()
     val activeSource by vm.activeSource.collectAsStateWithLifecycle()
-    val allSectionOrder = remember(settings.homeSectionOrder) { (settings.homeSectionOrder + defaultHomeSections).distinct() }
+    val allSectionOrder = remember(settings.homeSectionOrder) {
+        // Ignore stale library-only sections from older Android preferences.
+        (settings.homeSectionOrder.filter { it in defaultHomeSections } + defaultHomeSections).distinct()
+    }
     val visibleOrder = allSectionOrder.filterNot { settings.hiddenHomeSections.contains(it) }
     var homeMode by remember { mutableStateOf("overview") }
     var homeMenuOpen by remember { mutableStateOf(false) }
@@ -727,8 +787,7 @@ private fun MediaCard(
 private data class LibraryCategoryEntry(val filterId: String, val name: String)
 
 /** Category tiles from the independently configurable iOS "Categorie" section. */
-private fun buildLibraryCategoryEntries(categories: List<Category>, items: List<MediaItem>): List<LibraryCategoryEntry> {
-    val counts = items.categoryCounts()
+private fun buildLibraryCategoryEntries(categories: List<Category>, counts: Map<String?, Int>): List<LibraryCategoryEntry> {
     val visible = categories.distinctBy { it.id }
         .filter { (counts[it.id] ?: 0) > 0 }
         .map { LibraryCategoryEntry(it.id, it.name) }
@@ -742,29 +801,55 @@ private fun buildLibraryCategoryEntries(categories: List<Category>, items: List<
 
 @Composable
 private fun LibraryScreenTitle(title: String, onCustomize: () -> Unit) {
+    val screenWidthDp = LocalConfiguration.current.screenWidthDp
+    val titleSize = when {
+        screenWidthDp <= 360 -> 24.sp
+        screenWidthDp <= 420 -> 27.sp
+        else -> 30.sp
+    }
+    val rowSpacing = if (screenWidthDp <= 360) 8.dp else 12.dp
+
     Row(
-        Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 2.dp),
+        modifier = Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
+        horizontalArrangement = Arrangement.spacedBy(rowSpacing)
     ) {
         Text(
             title,
             modifier = Modifier.weight(1f),
             color = glassForeground(),
-            fontSize = 30.sp,
+            fontSize = titleSize,
             fontWeight = FontWeight.Bold,
             maxLines = 1,
+            softWrap = false,
             overflow = TextOverflow.Ellipsis
         )
-        Surface(onClick = onCustomize, shape = RoundedCornerShape(50), color = Color.Transparent) {
-            LiquidGlassPill {
+        // A fixed hit target makes the glass capsule independent of the title's
+        // intrinsic width. On narrow phones the title ellipsizes instead of
+        // pushing the Modify action into/over other controls.
+        Surface(
+            onClick = onCustomize,
+            modifier = Modifier.width(104.dp).height(40.dp),
+            shape = RoundedCornerShape(50),
+            color = Color.Transparent,
+            contentColor = glassForeground()
+        ) {
+            LiquidGlassPill(modifier = Modifier.fillMaxSize(), suppressHighlight = true) {
                 Row(
-                    Modifier.height(26.dp),
+                    modifier = Modifier.fillMaxSize(),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.Center
                 ) {
                     Icon(Icons.Default.Tune, null, tint = glassForeground().copy(.9f), modifier = Modifier.size(16.dp))
-                    Text("Modifica", color = glassForeground(), fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                    Spacer(Modifier.width(5.dp))
+                    Text(
+                        "Modifica",
+                        color = glassForeground(),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        softWrap = false
+                    )
                 }
             }
         }
@@ -839,7 +924,9 @@ private fun CatalogScreen(
     val hiddenSections = if (scopeKey == "live") libSettings.hiddenLiveSections else libSettings.hiddenMovieSections
     val sectionOrder = remember(rawOrder, defaults) { (rawOrder + defaults).distinct() }
     val visibleSections = sectionOrder.filterNot { it in hiddenSections }
-    LaunchedEffect(visibleSections.contains("categories")) { if (!visibleSections.contains("categories")) filter = null }
+    // The "Categorie" tile grid is a configurable content section, separate from
+    // the playlist group selector in LibraryHeader (like iOS ChannelGridView).
+    // Hiding/reordering that grid must not reset the currently selected group.
     LaunchedEffect(visibleSections.contains("search")) { if (!visibleSections.contains("search")) searchQuery = "" }
 
     LaunchedEffect(libSettings.tmdbApiKey, visibleSections.contains("trendingMovies"), scopeKey) {
@@ -848,7 +935,8 @@ private fun CatalogScreen(
         } else emptyList()
     }
 
-    val categoryEntries = remember(categories, items) { buildLibraryCategoryEntries(categories, items) }
+    val categoryCounts = rememberLibraryCategoryCounts(items)
+    val categoryEntries = remember(categories, categoryCounts) { buildLibraryCategoryEntries(categories, categoryCounts) }
     // Searching spans the whole library, independently of the selected group, as in iOS.
     val filtered = remember(items, filter, parental.lockedIds, searchQuery) {
         val base = if (searchQuery.isNotBlank()) items else items.inCategory(filter)
@@ -911,7 +999,7 @@ private fun CatalogScreen(
             ) {
                 if (!groupAfterSearch) {
                     item(key = "library-groups-$scopeKey-before") {
-                        LibraryHeader(title, categories, items, filter, { filter = it }, libSettings, vm, allowPoster = detail, showGroups = showGroupChips)
+                        LibraryHeader(title, categories, items, categoryCounts, filter, { filter = it }, libSettings, vm, allowPoster = detail, showGroups = showGroupChips)
                     }
                 }
 
@@ -928,7 +1016,7 @@ private fun CatalogScreen(
                             }
                             if (groupAfterSearch) {
                                 item(key = "library-groups-$scopeKey-after-search") {
-                                    LibraryHeader(title, categories, items, filter, { filter = it }, libSettings, vm, allowPoster = detail, showGroups = showGroupChips)
+                                    LibraryHeader(title, categories, items, categoryCounts, filter, { filter = it }, libSettings, vm, allowPoster = detail, showGroups = showGroupChips)
                                 }
                             }
                         }
@@ -1042,7 +1130,9 @@ private fun SeriesScreen(
     val defaults = defaultSeriesSections
     val sectionOrder = remember(libSettings.seriesSectionOrder) { (libSettings.seriesSectionOrder + defaults).distinct() }
     val visibleSections = sectionOrder.filterNot { it in libSettings.hiddenSeriesSections }
-    LaunchedEffect(visibleSections.contains("categories")) { if (!visibleSections.contains("categories")) filter = null }
+    // Keep the group filter independent from the visibility of the configurable
+    // category-tile section, matching iOS: the group selector remains usable
+    // even when the standalone "Categorie" grid is hidden.
     LaunchedEffect(visibleSections.contains("search")) { if (!visibleSections.contains("search")) searchQuery = "" }
 
     LaunchedEffect(libSettings.tmdbApiKey, visibleSections.contains("trendingSeries")) {
@@ -1051,7 +1141,8 @@ private fun SeriesScreen(
         } else emptyList()
     }
 
-    val categoryEntries = remember(categories, series) { buildLibraryCategoryEntries(categories, series) }
+    val categoryCounts = rememberLibraryCategoryCounts(series)
+    val categoryEntries = remember(categories, categoryCounts) { buildLibraryCategoryEntries(categories, categoryCounts) }
     val filtered = remember(series, filter, parental.lockedIds, searchQuery) {
         val base = if (searchQuery.isNotBlank()) series else series.inCategory(filter)
         base.withoutIds(parental.lockedIds).matchingText(searchQuery)
@@ -1115,7 +1206,7 @@ private fun SeriesScreen(
             ) {
                 if (!groupAfterSearch) {
                     item(key = "library-groups-series-before") {
-                        LibraryHeader("Serie TV", categories, series, filter, { filter = it }, libSettings, vm, allowPoster = true, showGroups = showGroupChips)
+                        LibraryHeader("Serie TV", categories, series, categoryCounts, filter, { filter = it }, libSettings, vm, allowPoster = true, showGroups = showGroupChips)
                     }
                 }
 
@@ -1127,7 +1218,7 @@ private fun SeriesScreen(
                             }
                             if (groupAfterSearch) {
                                 item(key = "library-groups-series-after-search") {
-                                    LibraryHeader("Serie TV", categories, series, filter, { filter = it }, libSettings, vm, allowPoster = true, showGroups = showGroupChips)
+                                    LibraryHeader("Serie TV", categories, series, categoryCounts, filter, { filter = it }, libSettings, vm, allowPoster = true, showGroups = showGroupChips)
                                 }
                             }
                         }
@@ -1578,13 +1669,17 @@ private fun TraktScreen(app: GassPlayerApplication, settings: AppSettings, vm: M
 }
 
 @Composable
-@OptIn(ExperimentalFoundationApi::class)
-private fun HomeCustomizationScreen(vm: MainViewModel, scopeKey: String = "home", onBack: () -> Unit = {}, isTv: Boolean = false) {
+@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
+private fun HomeCustomizationSheet(
+    vm: MainViewModel,
+    scopeKey: String = "home",
+    onBack: () -> Unit = {},
+    isTv: Boolean = false
+) {
     val settings by vm.settings.collectAsStateWithLifecycle()
     var local by remember(settings, scopeKey) { mutableStateOf(settings) }
     var continueMenu by remember { mutableStateOf(false) }
     var addMenu by remember { mutableStateOf(false) }
-    var tvMoveMenuFor by remember { mutableStateOf<String?>(null) }
     var dragId by remember(scopeKey) { mutableStateOf<String?>(null) }
     var dragStartIndex by remember(scopeKey) { mutableStateOf(0) }
     var dragTranslationPx by remember(scopeKey) { mutableStateOf(0f) }
@@ -1601,13 +1696,15 @@ private fun HomeCustomizationScreen(vm: MainViewModel, scopeKey: String = "home"
         "live" -> s.liveSectionOrder
         "movies" -> s.movieSectionOrder
         "series" -> s.seriesSectionOrder
-        else -> s.homeSectionOrder
+        // The iOS Home layout has no playlist "Categorie" tile grid. That
+        // configurable section belongs only to Live TV / Film / Serie TV.
+        else -> s.homeSectionOrder.filter { it in defaultHomeSections }
     }
     fun readHidden(s: AppSettings): Set<String> = when (scopeKey) {
         "live" -> s.hiddenLiveSections
         "movies" -> s.hiddenMovieSections
         "series" -> s.hiddenSeriesSections
-        else -> s.hiddenHomeSections
+        else -> s.hiddenHomeSections.intersect(defaultHomeSections.toSet())
     }
     fun saveLayout(order: List<String>, hidden: Set<String>, continueKind: String? = local.homeContinueKind) {
         val normalizedOrder = (order + defaults).distinct()
@@ -1635,33 +1732,37 @@ private fun HomeCustomizationScreen(vm: MainViewModel, scopeKey: String = "home"
     }
     val density = androidx.compose.ui.platform.LocalDensity.current
     val rowPitchPx = with(density) { 64.dp.toPx() }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val rowShape = RoundedCornerShape(50)
 
-    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ModalBottomSheet(
+        onDismissRequest = onBack,
+        sheetState = sheetState,
+        sheetMaxWidth = Dp.Unspecified,
+        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = .97f),
+        contentColor = glassForeground(),
+        tonalElevation = 0.dp,
+        scrimColor = Color.Black.copy(alpha = .54f),
+        dragHandle = null
+    ) {
+        // Replica il foglio SwiftUI: titolo centrato, righe a capsula da 55 pt,
+        // maniglia drag a sinistra, opzioni contestuali, cestino e + in fondo.
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth().fillMaxHeight(.96f),
+            verticalArrangement = Arrangement.spacedBy(9.dp),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp)
         ) {
-            IconButton(onClick = onBack) {
-                Icon(Icons.Default.ArrowBack, "Indietro", tint = glassForeground())
-            }
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(title, color = glassForeground(), fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
+            item(key = "customization-title-$scopeKey") {
                 Text(
-                    "Trascina ☰ per riordinare · Cestino per nascondere",
-                    color = glassForeground().copy(.60f),
-                    fontSize = 12.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    title,
+                    modifier = Modifier.fillMaxWidth().padding(top = 26.dp, bottom = 37.dp),
+                    color = glassForeground(),
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
                 )
             }
-        }
-
-        LazyColumn(
-            Modifier.weight(1f).fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(9.dp),
-            contentPadding = PaddingValues(horizontal = 16.dp, top = 4.dp, bottom = 8.dp)
-        ) {
             items(displayOrder, key = { it }) { id ->
                 val index = displayOrder.indexOf(id)
                 val isDragging = dragId == id
@@ -1675,16 +1776,17 @@ private fun HomeCustomizationScreen(vm: MainViewModel, scopeKey: String = "home"
                             translationY = residualOffset
                             scaleX = if (isDragging) 1.02f else 1f
                             scaleY = if (isDragging) 1.02f else 1f
+                            shadowElevation = if (isDragging) 12.dp.toPx() else 0f
                         }
                         .zIndex(if (isDragging) 1f else 0f)
-                        .clip(RoundedCornerShape(50))
-                        .background(MaterialTheme.colorScheme.onBackground.copy(if (isDragging) .13f else .085f))
-                        .border(BorderStroke(.65.dp, glassForeground().copy(if (isDragging) .20f else .09f)), RoundedCornerShape(50)),
+                        .clip(rowShape)
+                        .background(glassForeground().copy(if (isDragging) .13f else .09f)),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    Spacer(Modifier.width(8.dp))
                     Icon(
                         Icons.Default.DragHandle,
-                        contentDescription = "Trascina per spostare ${homeSectionTitles[id] ?: id}",
+                        contentDescription = if (isTv) "Sposta ${homeSectionTitles[id] ?: id}: usa su/giù o trascina" else "Trascina per spostare ${homeSectionTitles[id] ?: id}",
                         tint = glassForeground().copy(.58f),
                         modifier = Modifier
                             .width(44.dp)
@@ -1702,7 +1804,8 @@ private fun HomeCustomizationScreen(vm: MainViewModel, scopeKey: String = "home"
                                         change.consume()
                                         val nextTranslation = dragTranslationPx + dragAmount.y
                                         dragTranslationPx = nextTranslation
-                                        val target = (dragStartIndex + (nextTranslation / rowPitchPx).roundToInt()).coerceIn(0, (dragOriginalOrder.size - 1).coerceAtLeast(0))
+                                        val target = (dragStartIndex + (nextTranslation / rowPitchPx).roundToInt())
+                                            .coerceIn(0, (dragOriginalOrder.size - 1).coerceAtLeast(0))
                                         val originalIndex = dragOriginalOrder.indexOf(id)
                                         if (originalIndex >= 0) {
                                             val preview = dragOriginalOrder.toMutableList().apply {
@@ -1730,15 +1833,39 @@ private fun HomeCustomizationScreen(vm: MainViewModel, scopeKey: String = "home"
                                     }
                                 )
                             }
+                            .then(
+                                if (isTv) Modifier
+                                    .focusable()
+                                    .onKeyEvent { event ->
+                                        if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
+                                        val delta = when (event.key) {
+                                            Key.DirectionUp -> -1
+                                            Key.DirectionDown -> 1
+                                            else -> 0
+                                        }
+                                        if (delta == 0) return@onKeyEvent false
+                                        val current = displayOrder.indexOf(id)
+                                        val target = (current + delta).coerceIn(0, displayOrder.lastIndex.coerceAtLeast(0))
+                                        if (current >= 0 && target != current) {
+                                            val reordered = displayOrder.toMutableList().apply {
+                                                val moved = removeAt(current)
+                                                add(target, moved)
+                                            }
+                                            saveLayout(reordered + hidden, hiddenSet)
+                                        }
+                                        true
+                                    }
+                                else Modifier
+                            )
                     )
                     Column(
-                        Modifier.weight(1f).padding(start = 2.dp),
+                        Modifier.weight(1f).padding(start = 5.dp),
                         verticalArrangement = Arrangement.Center
                     ) {
                         Text(
                             homeSectionTitles[id] ?: id,
                             color = glassForeground(),
-                            fontSize = 15.sp,
+                            fontSize = 17.sp,
                             fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -1752,15 +1879,26 @@ private fun HomeCustomizationScreen(vm: MainViewModel, scopeKey: String = "home"
                                     else -> ""
                                 },
                                 color = glassForeground().copy(.58f),
-                                fontSize = 12.sp,
-                                maxLines = 1
+                                fontSize = 17.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
                     if (id == "continueWatching" && scopeKey == "home") {
-                        Box {
-                            IconButton(onClick = { continueMenu = true }, modifier = Modifier.size(40.dp)) {
-                                Icon(Icons.Default.Tune, "Opzioni", tint = glassForeground().copy(.75f), modifier = Modifier.size(19.dp))
+                        Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
+                            Surface(
+                                onClick = { continueMenu = true },
+                                modifier = Modifier.size(40.dp),
+                                shape = RoundedCornerShape(50),
+                                color = Color.Transparent,
+                                contentColor = glassForeground()
+                            ) {
+                                LiquidGlassSurface(Modifier.fillMaxSize(), cornerRadius = 50.dp, contentPadding = 0.dp) {
+                                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                        Icon(Icons.Default.Tune, "Opzioni", tint = glassForeground().copy(.78f), modifier = Modifier.size(19.dp))
+                                    }
+                                }
                             }
                             DropdownMenu(continueMenu, { continueMenu = false }) {
                                 listOf(null to "Tutti", "movie" to "Film", "series" to "Serie TV", "live" to "Live TV").forEach { (value, label) ->
@@ -1775,51 +1913,18 @@ private fun HomeCustomizationScreen(vm: MainViewModel, scopeKey: String = "home"
                             }
                         }
                     }
-                    if (isTv) {
-                        Box {
-                            IconButton(onClick = { tvMoveMenuFor = id }, modifier = Modifier.size(40.dp)) {
-                                Icon(Icons.Default.MoreVert, "Riordina", tint = glassForeground().copy(.75f), modifier = Modifier.size(19.dp))
-                            }
-                            DropdownMenu(expanded = tvMoveMenuFor == id, onDismissRequest = { tvMoveMenuFor = null }) {
-                                DropdownMenuItem(
-                                    text = { Text("Sposta su") },
-                                    leadingIcon = { Icon(Icons.Default.KeyboardArrowUp, null) },
-                                    enabled = index > 0,
-                                    onClick = {
-                                        val reordered = displayOrder.toMutableList()
-                                        val moved = reordered.removeAt(index)
-                                        reordered.add(index - 1, moved)
-                                        saveLayout(reordered + hidden, hiddenSet)
-                                        tvMoveMenuFor = null
-                                    }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Sposta giù") },
-                                    leadingIcon = { Icon(Icons.Default.KeyboardArrowDown, null) },
-                                    enabled = index < displayOrder.lastIndex,
-                                    onClick = {
-                                        val reordered = displayOrder.toMutableList()
-                                        val moved = reordered.removeAt(index)
-                                        reordered.add(index + 1, moved)
-                                        saveLayout(reordered + hidden, hiddenSet)
-                                        tvMoveMenuFor = null
-                                    }
-                                )
-                            }
-                        }
-                    }
-                    Surface(
-                        onClick = {
-                            val newHidden = hiddenSet + id
-                            val newOrder = visible.filterNot { it == id } + hidden + id
-                            saveLayout(newOrder, newHidden)
-                        },
-                        modifier = Modifier.padding(end = 7.dp).size(40.dp),
-                        shape = RoundedCornerShape(50),
-                        color = Color.Transparent,
-                        contentColor = glassForeground()
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
+                    Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
+                        Surface(
+                            onClick = {
+                                val newHidden = hiddenSet + id
+                                val newOrder = visible.filterNot { it == id } + hidden + id
+                                saveLayout(newOrder, newHidden)
+                            },
+                            modifier = Modifier.size(40.dp),
+                            shape = RoundedCornerShape(50),
+                            color = Color.Transparent,
+                            contentColor = glassForeground()
+                        ) {
                             LiquidGlassSurface(Modifier.fillMaxSize(), cornerRadius = 50.dp, contentPadding = 0.dp) {
                                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                     Icon(Icons.Default.DeleteOutline, "Nascondi ${homeSectionTitles[id] ?: id}", tint = glassForeground().copy(.78f), modifier = Modifier.size(19.dp))
@@ -1827,12 +1932,12 @@ private fun HomeCustomizationScreen(vm: MainViewModel, scopeKey: String = "home"
                             }
                         }
                     }
+                    Spacer(Modifier.width(12.dp))
                 }
             }
-
-            item {
-                Box(Modifier.fillMaxWidth().padding(top = 8.dp), contentAlignment = Alignment.Center) {
-                    Box {
+            item(key = "customization-add-$scopeKey") {
+                Box(Modifier.fillMaxWidth().padding(top = 17.dp, bottom = 32.dp), contentAlignment = Alignment.Center) {
+                    Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
                         Surface(
                             onClick = { addMenu = true },
                             enabled = hidden.isNotEmpty(),
