@@ -18,6 +18,17 @@ import java.util.TimeZone
 
 class EpgRepository(private val context: Context, private val api: NetworkApi) {
     private val shortCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, List<EpgProgram>>>()
+    /** Parsed XMLTV snapshots stay in memory for fast section switches; disk remains the source of truth. */
+    private data class MemoryGuide(val updatedAt: Long, val guide: XmlTvGuide)
+    private val xmltvMemoryCache = java.util.concurrent.ConcurrentHashMap<String, MemoryGuide>()
+
+    private fun rememberGuide(key: String, updatedAt: Long, guide: XmlTvGuide) {
+        xmltvMemoryCache[key] = MemoryGuide(updatedAt, guide)
+        // Avoid retaining obsolete URLs indefinitely after users edit many playlists/EPG sources.
+        if (xmltvMemoryCache.size > 32) {
+            xmltvMemoryCache.keys.asSequence().filter { it != key }.take(xmltvMemoryCache.size - 24).forEach { xmltvMemoryCache.remove(it) }
+        }
+    }
 
     suspend fun shortEpg(source: MediaSourceConfig, streamId: String, limit: Int = 40): List<EpgProgram> = withContext(Dispatchers.IO) {
         val key = "${source.id}:$streamId"
@@ -60,11 +71,15 @@ class EpgRepository(private val context: Context, private val api: NetworkApi) {
 
     /** Reads the last known guide without applying the network freshness TTL (stale-while-revalidate). */
     suspend fun cachedXmltvGuide(url: String, sourceId: String): XmlTvGuide = withContext(Dispatchers.IO) {
-        runCatching {
-            FileCache(context, cacheFileName(url, sourceId)).read()
-                .takeIf { it.programs.isNotEmpty() }
-                ?.asGuide()
-        }.getOrNull() ?: XmlTvGuide()
+        val key = cacheFileName(url, sourceId)
+        xmltvMemoryCache[key]?.let { return@withContext it.guide }
+        val snapshot = runCatching { FileCache(context, key).read() }
+            .getOrNull()
+            ?.takeIf { it.programs.isNotEmpty() }
+        if (snapshot == null) return@withContext XmlTvGuide()
+        val guide = snapshot.asGuide()
+        rememberGuide(key, snapshot.updatedAt, guide)
+        guide
     }
 
     /** Same fast cache access for the provider-generated Xtream XMLTV URL. */
@@ -88,31 +103,50 @@ class EpgRepository(private val context: Context, private val api: NetworkApi) {
         preloadedCache: XmlTvGuide? = null,
     ): XmlTvGuide = withContext(Dispatchers.IO) {
         // Include the URL fingerprint: changing a custom feed URL must not silently reuse its old guide.
-        val file = FileCache(context, cacheFileName(url, sourceId))
-        // The EPG screen already read this same cache to render immediately. Reuse that parsed
-        // payload as the stale fallback, avoiding a second decode of potentially huge XMLTV JSON.
-        val cached = if (forceRefresh && preloadedCache != null) {
-            EpgSnapshot(0L, preloadedCache.programs, preloadedCache.channels)
-        } else runCatching { file.read() }.getOrNull()
+        val key = cacheFileName(url, sourceId)
+        val file = FileCache(context, key)
+        val memory = xmltvMemoryCache[key]
+        // The EPG screen may already have parsed this same payload. Reuse it instead of decoding a
+        // potentially very large XMLTV JSON cache for every section visit.
+        val cached = when {
+            forceRefresh && preloadedCache != null -> EpgSnapshot(0L, preloadedCache.programs, preloadedCache.channels)
+            memory != null -> EpgSnapshot(memory.updatedAt, memory.guide.programs, memory.guide.channels)
+            else -> runCatching { file.read() }.getOrNull()
+        }
         val now = System.currentTimeMillis()
         if (!forceRefresh && cached != null && cached.programs.isNotEmpty() && now - cached.updatedAt < XMLTV_CACHE_TTL_MS) {
-            return@withContext cached.asGuide()
+            val guide = memory?.takeIf { it.updatedAt == cached.updatedAt }?.guide ?: cached.asGuide()
+            if (memory == null || memory.updatedAt != cached.updatedAt) rememberGuide(key, cached.updatedAt, guide)
+            return@withContext guide
         }
 
         try {
             val guide = api.getXmlTv(url) { XmlTvParser.parseGuide(it) }
             if (guide.programs.isNotEmpty()) {
                 file.write(EpgSnapshot(now, guide.programs, guide.channels))
+                rememberGuide(key, now, guide)
                 guide
             } else {
                 // Empty but syntactically valid feeds should not erase a previous useful guide.
-                cached?.takeIf { it.programs.isNotEmpty() }?.asGuide() ?: guide
+                cachedFallback(key, cached, memory, preloadedCache)
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
-            cached?.takeIf { it.programs.isNotEmpty() }?.asGuide() ?: XmlTvGuide()
+            cachedFallback(key, cached, memory, preloadedCache)
         }
+    }
+
+    private fun cachedFallback(
+        key: String,
+        cached: EpgSnapshot?,
+        memory: MemoryGuide?,
+        preloadedCache: XmlTvGuide?,
+    ): XmlTvGuide {
+        if (preloadedCache != null && cached?.updatedAt == 0L && preloadedCache.programs.isNotEmpty()) return preloadedCache
+        if (cached == null || cached.programs.isEmpty()) return XmlTvGuide()
+        if (memory != null && memory.updatedAt == cached.updatedAt) return memory.guide
+        return cached.asGuide().also { rememberGuide(key, cached.updatedAt, it) }
     }
 
     suspend fun catchUpUrl(source: MediaSourceConfig, streamId: String, startMs: Long, endMs: Long, extension: String = "ts"): String {

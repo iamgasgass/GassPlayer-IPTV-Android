@@ -252,11 +252,31 @@ class CatalogDb(context: Context) : SQLiteOpenHelper(context.applicationContext,
     fun byIds(kind: MediaKind, ids: Set<String>, sources: List<String>): List<MediaItem> {
         if (ids.isEmpty() || sources.isEmpty()) return emptyList()
         val out = ArrayList<MediaItem>()
+        val sourceMarks = sources.joinToString(",") { "?" }
         for (chunk in ids.chunked(400)) {
-            val marks = chunk.joinToString(",") { "?" }
-            out += query("SELECT json FROM items WHERE kind=? AND id IN ($marks)", arrayOf(kind.ordinal.toString()) + chunk.toTypedArray())
+            val idMarks = chunk.joinToString(",") { "?" }
+            out += query(
+                "SELECT json FROM items WHERE kind=? AND id IN ($idMarks) AND src IN ($sourceMarks)",
+                arrayOf(kind.ordinal.toString()) + chunk.toTypedArray() + sources.toTypedArray()
+            )
         }
-        return out.filter { it.sourceId in sources }
+        return out
+    }
+
+    /** Count matching IDs in SQLite without decoding every favourite item into Kotlin objects. */
+    fun countByIds(kind: MediaKind, ids: Set<String>, sources: List<String>): Int {
+        if (ids.isEmpty() || sources.isEmpty()) return 0
+        val sourceMarks = sources.joinToString(",") { "?" }
+        var total = 0
+        for (chunk in ids.chunked(400)) {
+            val idMarks = chunk.joinToString(",") { "?" }
+            val args = arrayOf(kind.ordinal.toString()) + chunk.toTypedArray() + sources.toTypedArray()
+            total += readableDatabase.rawQuery(
+                "SELECT COUNT(*) FROM items WHERE kind=? AND id IN ($idMarks) AND src IN ($sourceMarks)",
+                args
+            ).use { if (it.moveToFirst()) it.getInt(0) else 0 }
+        }
+        return total
     }
 
     fun sameTitle(kind: MediaKind, title: String, excludeId: String, sources: List<String>): List<MediaItem> =
@@ -453,6 +473,13 @@ fun List<MediaItem>.fromSourceIds(sourceIds: List<String>): List<MediaItem> =
 
 fun List<MediaItem>.onlyIds(ids: Set<String>): List<MediaItem> =
     if (this is DbList) db.byIds(kind, ids, sources) else filter { it.id in ids }
+
+/** Fast count counterpart to [onlyIds]; avoids decoding JSON just to render a category badge. */
+fun List<MediaItem>.countIds(ids: Set<String>): Int = when {
+    ids.isEmpty() -> 0
+    this is DbList -> db.countByIds(kind, ids, sources)
+    else -> count { it.id in ids }
+}
 
 /** Uses the episode index in SQLite to find parent series in very large disk-backed catalogs. */
 fun List<MediaItem>.seriesItemIdsForEpisodeIds(episodeIds: Set<String>): Set<String> =

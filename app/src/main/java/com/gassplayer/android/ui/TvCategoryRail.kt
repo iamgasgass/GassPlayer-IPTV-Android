@@ -1,7 +1,9 @@
 package com.gassplayer.android.ui
 
 import com.gassplayer.android.data.categoryCounts
-import com.gassplayer.android.data.onlyIds
+import com.gassplayer.android.data.countIds
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.BorderStroke
@@ -36,6 +38,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -184,12 +187,31 @@ private fun varWasExpandedEffect(expanded: Boolean, focusRequester: FocusRequest
     }
 }
 
+@Composable
+internal fun rememberTvCategoryRailOptions(
+    categories: List<com.gassplayer.android.data.Category>,
+    items: List<com.gassplayer.android.data.MediaItem>,
+    favoriteIds: Set<String>,
+    countsOverride: Map<String?, Int>? = null,
+): List<TvCategoryRailOption> {
+    val options by produceState(
+        initialValue = emptyList<TvCategoryRailOption>(),
+        categories, items, favoriteIds, countsOverride,
+    ) {
+        value = withContext(Dispatchers.IO) {
+            buildTvCategoryRailOptions(categories, items, favoriteIds, countsOverride)
+        }
+    }
+    return options
+}
+
 internal fun buildTvCategoryRailOptions(
     categories: List<com.gassplayer.android.data.Category>,
     items: List<com.gassplayer.android.data.MediaItem>,
     favoriteIds: Set<String>,
+    countsOverride: Map<String?, Int>? = null,
 ): List<TvCategoryRailOption> {
-    val counts = items.categoryCounts()
+    val counts = countsOverride ?: items.categoryCounts()
     val visibleCategories = categories.distinctBy { it.id }
         .filter { (counts[it.id] ?: 0) > 0 }
         .map { TvCategoryRailOption(it.id, it.name, counts[it.id] ?: 0) }
@@ -199,7 +221,7 @@ internal fun buildTvCategoryRailOptions(
         .map { TvCategoryRailOption(it, it, counts[it] ?: 0) }
     val uncategorizedCount = counts[null] ?: 0
     return buildList {
-        add(TvCategoryRailOption(TV_CATEGORY_FAVORITES, "Preferiti", items.onlyIds(favoriteIds).size, Icons.Default.Star, pinned = true))
+        add(TvCategoryRailOption(TV_CATEGORY_FAVORITES, "Preferiti", items.countIds(favoriteIds), Icons.Default.Star, pinned = true))
         add(TvCategoryRailOption(TV_CATEGORY_ALL, "Tutti", items.size, Icons.Default.Apps, pinned = true))
         if (uncategorizedCount > 0) add(TvCategoryRailOption(TV_CATEGORY_NONE, "Senza categoria", uncategorizedCount, Icons.Default.FolderOpen))
         addAll(visibleCategories)

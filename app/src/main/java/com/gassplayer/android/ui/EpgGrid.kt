@@ -129,10 +129,48 @@ private fun splitQuality(name: String): Pair<String, String?> {
     return trimmed to null
 }
 
-private class EpgStore {
+internal class EpgStore {
     val programs: SnapshotStateMap<String, List<EpgProgram>> = mutableStateMapOf()
     val loading: SnapshotStateMap<String, Boolean> = mutableStateMapOf()
     val failed: SnapshotStateMap<String, Boolean> = mutableStateMapOf()
+    /** Guide revision used to avoid resolving the same visible rows again after section switches. */
+    val resolvedRevision: SnapshotStateMap<String, Int> = mutableStateMapOf()
+}
+
+/** Shared by Live TV and Guida so navigation does not rebuild the large XMLTV index each time. */
+internal class EpgGridSession {
+    val store = EpgStore()
+    private var inputKey: String? = null
+    // Observable so an EPG refresh in the standalone Guide immediately updates the warm Live TV grid.
+    private var index by mutableStateOf<EpgGuideIndex?>(null)
+    private var guidePayloads: Map<String, XmlTvGuide> = emptyMap()
+    var revision by mutableIntStateOf(0)
+        private set
+
+    @Synchronized
+    fun cachedIndex(key: String): EpgGuideIndex? = if (inputKey == key) index else null
+
+    @Synchronized
+    fun reusableIndex(key: String, payloads: Map<String, XmlTvGuide>): EpgGuideIndex? {
+        if (inputKey != key || index == null || !samePayloads(guidePayloads, payloads)) return null
+        return index
+    }
+
+    @Synchronized
+    fun publishIndex(key: String, payloads: Map<String, XmlTvGuide>, built: EpgGuideIndex): EpgGuideIndex {
+        if (inputKey != key || !samePayloads(guidePayloads, payloads) || index == null) {
+            inputKey = key
+            guidePayloads = payloads.toMap()
+            index = built
+            revision++
+        } else {
+            index = built
+        }
+        return index ?: built
+    }
+
+    private fun samePayloads(a: Map<String, XmlTvGuide>, b: Map<String, XmlTvGuide>): Boolean =
+        a.size == b.size && a.all { (id, guide) -> b[id] === guide }
 }
 
 @OptIn(ExperimentalFoundationApi::class, UnstableApi::class)
@@ -140,6 +178,7 @@ private class EpgStore {
 fun EpgGridScreen(
     app: GassPlayerApplication,
     vm: MainViewModel,
+    session: EpgGridSession,
     live: List<MediaItem>,
     categories: List<Category>,
     favorites: FavoriteState,
@@ -147,11 +186,12 @@ fun EpgGridScreen(
     onPlay: (MediaItem) -> Unit,
     tvCategoryMode: Boolean = false,
     playerActive: Boolean = false,
+    screenActive: Boolean = true,
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var categoryRailExpanded by remember(tvCategoryMode) { mutableStateOf(true) }
-    BackHandler(enabled = tvCategoryMode && !categoryRailExpanded) { categoryRailExpanded = true }
+    BackHandler(enabled = screenActive && tvCategoryMode && !categoryRailExpanded) { categoryRailExpanded = true }
     LaunchedEffect(playerActive, tvCategoryMode) {
         if (tvCategoryMode && !playerActive) categoryRailExpanded = true
     }
@@ -172,7 +212,7 @@ fun EpgGridScreen(
     DisposableEffect(previewPlayer) {
         onDispose { previewPlayer?.release() }
     }
-    val store = remember { EpgStore() }
+    val store = session.store
     val sources by app.sources.sources.collectAsState(emptyList())
     val external by app.externalEpg.flow.collectAsState(emptyList())
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -226,9 +266,6 @@ fun EpgGridScreen(
                 delay(5 * 60_000L)
                 // Re-resolve visible rows as well as the feed index; changing only the index
                 // left already-populated rows permanently stale until the user changed screens.
-                store.programs.clear()
-                store.loading.clear()
-                store.failed.clear()
                 refreshTick++
             }
         }
@@ -259,8 +296,12 @@ fun EpgGridScreen(
 
     // --- group filter -----------------------------------------------------------------------
     fun keyOf(i: MediaItem) = (i.categoryId ?: i.group)?.takeIf { it.isNotBlank() }
-    val counts = remember(live) { live.categoryCounts() }
-    val groups = remember(categories, live) {
+    // A playlist backed by SQLite can contain hundreds of thousands of rows. Keep even the small
+    // GROUP BY query off the main thread so tapping between libraries never waits on SQLite.
+    val counts by produceState(initialValue = emptyMap<String?, Int>(), live) {
+        value = withContext(Dispatchers.IO) { live.categoryCounts() }
+    }
+    val groups = remember(categories, live, counts) {
         val present = counts.keys.filterNotNull().toSet()
         categories.filter { it.id in present }.distinctBy { it.id }
     }
@@ -275,29 +316,39 @@ fun EpgGridScreen(
         debouncedSearch = searchQuery.trim()
     }
     val normalizedSearch = debouncedSearch
-    val channels = remember(live, groupId, favoritesOnly, favorites, normalizedSearch) {
-        // The iOS grid filters channel names before paging (the placeholder mentions programmes,
-        // but the original implementation actually matches the stream/channel name).
-        val grouped = if (favoritesOnly) {
-            live.onlyIds(favorites.live).filter {
-                groupId == null || (groupId == "__none__" && keyOf(it) == null) || keyOf(it) == groupId
-            }
-        } else live.inCategory(groupId)
-        if (normalizedSearch.isEmpty()) grouped
-        else grouped.matchingTitle(normalizedSearch)
+    val channels by produceState<List<MediaItem>>(
+        initialValue = emptyList(), live, groupId, favoritesOnly, favorites.live, normalizedSearch,
+    ) {
+        value = withContext(Dispatchers.IO) {
+            // The iOS grid filters channel names before paging. For in-memory lists this can scan
+            // the full playlist, so do it away from the UI thread as well.
+            val grouped = if (favoritesOnly) {
+                live.onlyIds(favorites.live).filter {
+                    groupId == null || (groupId == "__none__" && keyOf(it) == null) || keyOf(it) == groupId
+                }
+            } else live.inCategory(groupId)
+            if (normalizedSearch.isEmpty()) grouped else grouped.matchingTitle(normalizedSearch)
+        }
     }
     LaunchedEffect(groupId, favoritesOnly, normalizedSearch, dayOffset) {
         renderLimit = PAGE
-        previewChannelId = channels.firstOrNull()?.id
+        previewChannelId = null
     }
-    val visible = channels.take(minOf(renderLimit, HARD_CAP))
-    val previewChannel = remember(channels, previewChannelId) {
-        channels.firstOrNull { it.id == previewChannelId } ?: channels.firstOrNull()
+    val visible by produceState<List<MediaItem>>(
+        initialValue = emptyList(), channels, renderLimit,
+    ) {
+        value = withContext(Dispatchers.IO) { channels.take(minOf(renderLimit, HARD_CAP)) }
     }
-    LaunchedEffect(previewPlayer, previewChannel?.id, tvCategoryMode, playerActive) {
+    LaunchedEffect(visible) {
+        if (previewChannelId == null) previewChannelId = visible.firstOrNull()?.id
+    }
+    val previewChannel = remember(visible, previewChannelId) {
+        visible.firstOrNull { it.id == previewChannelId } ?: visible.firstOrNull()
+    }
+    LaunchedEffect(previewPlayer, previewChannel?.id, tvCategoryMode, playerActive, screenActive) {
         val player = previewPlayer
         val channel = previewChannel
-        if (player == null || channel == null || !tvCategoryMode) {
+        if (player == null || channel == null || !tvCategoryMode || !screenActive) {
             player?.stop()
             return@LaunchedEffect
         }
@@ -324,24 +375,47 @@ fun EpgGridScreen(
             player.playWhenReady = true
         }.onFailure { player.stop() }
     }
-    val previewPrograms = previewChannel?.let { store.programs[it.id].orEmpty().sortedBy { p -> p.startMs } }.orEmpty()
+    val previewPrograms = previewChannel?.let { store.programs[it.id].orEmpty() }.orEmpty()
     val previewCurrent = previewPrograms.firstOrNull { it.isCurrent(now) }
     val previewNext = previewPrograms.firstOrNull { it.startMs >= (previewCurrent?.endMs ?: now) && it.startMs > now }
 
-    val tvRailOptions = remember(categories, live, favorites.live) { buildTvCategoryRailOptions(categories, live, favorites.live) }
+    val tvRailOptions = rememberTvCategoryRailOptions(categories, live, favorites.live, counts)
     val selectedTvRailId = when {
         favoritesOnly -> TV_CATEGORY_FAVORITES
         groupId == null -> TV_CATEGORY_ALL
         else -> groupId!!
     }
 
-    // --- XMLTV index: show disk cache immediately, then revalidate every enabled feed. --------
-    // Track entry refreshes per feed so late catalog/source emissions refresh only the newly
-    // available provider instead of downloading every external guide a second time.
+    // --- XMLTV index: keep the parsed index across Live/VOD/Series/Guide navigation. ----------
+    // The signature changes only when an enabled feed or its credentials/URL change. The shared
+    // session supplies its last good index synchronously; building a large XMLTV index is always
+    // moved off Main, and Live TV does not force a network refresh on every tab return.
+    val guideInputKey = remember(external, sources, live) {
+        val usedSourceIds = live.sourceIds()
+        buildList {
+            external.filter { it.isEnabled }.forEach { add("external:${it.id}:${it.urlString.hashCode()}") }
+            sources.filter { it.type == SourceType.XTREAM && it.id in usedSourceIds && it.isEnabled }.forEach {
+                add("xtream:${it.id}:${it.host.hashCode()}:${it.username.orEmpty().hashCode()}:${it.password.orEmpty().hashCode()}")
+            }
+        }.sorted().joinToString("|")
+    }
     val lastGuideRefresh = remember { intArrayOf(-1, -1) }
     val entryRefreshedFeedKeys = remember { mutableSetOf<String>() }
-    val xmltvIndex by produceState<EpgGuideIndex?>(null, external, sources, live, refreshTick, manualGuideRefreshTick) {
-        val refreshAllFeeds = refreshTick != lastGuideRefresh[0] || manualGuideRefreshTick != lastGuideRefresh[1]
+    val producedXmltvIndex by produceState<EpgGuideIndex?>(
+        initialValue = session.cachedIndex(guideInputKey),
+        session, guideInputKey, external, sources, live, refreshTick, manualGuideRefreshTick, tvCategoryMode,
+    ) {
+        // A return to Live TV with the same feed set reuses the already indexed XMLTV in memory.
+        // The dedicated Guide section still revalidates automatically when opened, as requested.
+        val inMemoryIndex = session.cachedIndex(guideInputKey)
+        if (tvCategoryMode && inMemoryIndex != null && refreshTick == 0 && manualGuideRefreshTick == 0) {
+            value = inMemoryIndex
+            return@produceState
+        }
+
+        val firstRun = lastGuideRefresh[0] < 0 && lastGuideRefresh[1] < 0
+        val refreshAllFeeds = if (firstRun && tvCategoryMode) false
+            else refreshTick != lastGuideRefresh[0] || manualGuideRefreshTick != lastGuideRefresh[1]
         lastGuideRefresh[0] = refreshTick
         lastGuideRefresh[1] = manualGuideRefreshTick
 
@@ -388,8 +462,17 @@ fun EpgGridScreen(
                 (externalJobs + providerJobs).awaitAll().filterNotNull()
             }
         }
-        if (cachedGuides.any { it.second.programs.isNotEmpty() }) {
-            value = EpgGuideIndex.build(cachedGuides.filter { it.second.programs.isNotEmpty() })
+        val cachedForIndex = cachedGuides.filter { it.second.programs.isNotEmpty() }
+        val cachedPayloads = cachedForIndex.associate { it.first to it.second }
+        if (cachedForIndex.isNotEmpty()) {
+            val reusable = session.reusableIndex(guideInputKey, cachedPayloads)
+            val cachedIndex = reusable ?: withContext(Dispatchers.Default) {
+                EpgGuideIndex.build(cachedForIndex)
+            }.let { session.publishIndex(guideInputKey, cachedPayloads, it) }
+            value = cachedIndex
+        } else if (activeFeedKeys.isEmpty() && session.cachedIndex(guideInputKey) == null) {
+            val emptyIndex = withContext(Dispatchers.Default) { EpgGuideIndex.build(emptyList()) }
+            value = session.publishIndex(guideInputKey, emptyMap(), emptyIndex)
         }
 
         val cachedById = cachedGuides.associate { it.first to it.second }
@@ -399,7 +482,7 @@ fun EpgGridScreen(
                     async(Dispatchers.IO) {
                         downloadSemaphore.withPermit {
                             try {
-                                val forceThisFeed = refreshAllFeeds || externalFeedKey(feed) !in entryRefreshedFeedKeys
+                                val forceThisFeed = refreshAllFeeds || (!tvCategoryMode && externalFeedKey(feed) !in entryRefreshedFeedKeys)
                                 val staleFallback = if (forceThisFeed) cachedById[feed.id] ?: XmlTvGuide() else null
                                 feed.id to app.epg.xmltvGuide(feed.urlString, feed.id, forceThisFeed, staleFallback)
                             } catch (cancelled: CancellationException) {
@@ -414,7 +497,7 @@ fun EpgGridScreen(
                     async(Dispatchers.IO) {
                         downloadSemaphore.withPermit {
                             try {
-                                val forceThisFeed = refreshAllFeeds || providerFeedKey(source) !in entryRefreshedFeedKeys
+                                val forceThisFeed = refreshAllFeeds || (!tvCategoryMode && providerFeedKey(source) !in entryRefreshedFeedKeys)
                                 val staleFallback = if (forceThisFeed) cachedById[source.id] ?: XmlTvGuide() else null
                                 source.id to app.epg.xtreamXmltvGuide(source, forceThisFeed, staleFallback)
                             } catch (cancelled: CancellationException) {
@@ -430,51 +513,67 @@ fun EpgGridScreen(
         }
         // Mark only after all jobs finish, so a cancelled producer retries newly arrived feeds.
         entryRefreshedFeedKeys.addAll(activeFeedKeys)
-        if (loadedGuides.any { it.second.programs.isNotEmpty() }) {
-            value = EpgGuideIndex.build(loadedGuides.filter { it.second.programs.isNotEmpty() })
+        val loadedForIndex = loadedGuides.filter { it.second.programs.isNotEmpty() }
+        if (loadedForIndex.isNotEmpty()) {
+            val loadedPayloads = loadedForIndex.associate { it.first to it.second }
+            val reusable = session.reusableIndex(guideInputKey, loadedPayloads)
+            val loadedIndex = reusable ?: withContext(Dispatchers.Default) {
+                EpgGuideIndex.build(loadedForIndex)
+            }.let { session.publishIndex(guideInputKey, loadedPayloads, it) }
+            value = loadedIndex
         } else if (activeFeedKeys.isEmpty()) {
-            value = EpgGuideIndex.build(emptyList())
+            val emptyIndex = withContext(Dispatchers.Default) { EpgGuideIndex.build(emptyList()) }
+            value = session.publishIndex(guideInputKey, emptyMap(), emptyIndex)
         }
     }
 
-    // --- per-channel loading ----------------------------------------------------------------------
-    LaunchedEffect(visible.map { it.id }, xmltvIndex, dayOffset) {
+    // Read the observable shared index after the loader. If Guida refreshed XMLTV while Live TV
+    // was hidden but retained in composition, this immediately exposes the same new index here.
+    val xmltvIndex = session.cachedIndex(guideInputKey) ?: producedXmltvIndex
+
+    // Resolve only rows that have no data yet or whose guide revision actually changed. Cached rows
+    // remain visible during navigation, so the first frame after returning to Live TV is populated.
+    val guideRevision = session.revision
+    LaunchedEffect(visible.map { it.id }, xmltvIndex, dayOffset, guideRevision, screenActive) {
+        if (!screenActive) return@LaunchedEffect
         val sem = Semaphore(MAX_CONCURRENT)
         coroutineScope {
-            visible.filter { xmltvIndex != null || store.programs[it.id] == null }.map { ch ->
+            visible.filter { channel ->
+                val alreadyResolved = xmltvIndex != null && store.resolvedRevision[channel.id] == guideRevision
+                !alreadyResolved && (store.programs[channel.id] == null || xmltvIndex != null)
+            }.map { ch ->
                 async(Dispatchers.IO) {
                     sem.withPermit {
                         store.loading[ch.id] = true
-                        val source = sources.firstOrNull { it.id == ch.sourceId }
-                        // Preserve the row while a guide refresh is in flight. This is usually
-                        // cached XMLTV/short-EPG data, and also prevents duplicate provider calls
-                        // when the cached guide index is replaced by the freshly downloaded one.
-                        var found = store.programs[ch.id].orEmpty()
-                        var requestFailed = false
-                        val streamId = ch.id.substringAfterLast(':')
-                        val fullGuidePrograms = xmltvIndex?.find(ch.sourceId, ch.metadataTag, streamId, ch.title).orEmpty()
-                        if (found.isEmpty() && fullGuidePrograms.isEmpty() && source?.type == SourceType.XTREAM) {
-                            val result = try {
-                                Result.success(app.epg.shortEpg(source, streamId, SHORT_LIMIT))
-                            } catch (cancelled: CancellationException) {
-                                throw cancelled
-                            } catch (error: Exception) {
-                                Result.failure(error)
+                        try {
+                            val source = sources.firstOrNull { it.id == ch.sourceId }
+                            var found = store.programs[ch.id].orEmpty()
+                            var requestFailed = false
+                            val streamId = ch.id.substringAfterLast(':')
+                            val fullGuidePrograms = xmltvIndex?.find(ch.sourceId, ch.metadataTag, streamId, ch.title).orEmpty()
+                            if (found.isEmpty() && fullGuidePrograms.isEmpty() && source?.type == SourceType.XTREAM) {
+                                val result = try {
+                                    Result.success(app.epg.shortEpg(source, streamId, SHORT_LIMIT))
+                                } catch (cancelled: CancellationException) {
+                                    throw cancelled
+                                } catch (error: Exception) {
+                                    Result.failure(error)
+                                }
+                                found = result.getOrDefault(emptyList())
+                                requestFailed = result.isFailure
                             }
-                            found = result.getOrDefault(emptyList())
-                            requestFailed = result.isFailure
+                            if (fullGuidePrograms.isNotEmpty()) {
+                                val mergedByStart = LinkedHashMap<Long, EpgProgram>()
+                                found.forEach { mergedByStart[it.startMs] = it }
+                                fullGuidePrograms.forEach { mergedByStart[it.startMs] = it }
+                                found = mergedByStart.values.sortedBy { it.startMs }
+                            }
+                            store.programs[ch.id] = found.sortedBy { it.startMs }
+                            store.resolvedRevision[ch.id] = guideRevision
+                            if (requestFailed && found.isEmpty()) store.failed[ch.id] = true else store.failed.remove(ch.id)
+                        } finally {
+                            store.loading.remove(ch.id)
                         }
-                        if (fullGuidePrograms.isNotEmpty()) {
-                            // XMLTV is the complete timeline; overlay it on existing/short data so
-                            // newly downloaded programmes replace stale entries with the same start.
-                            val mergedByStart = LinkedHashMap<Long, EpgProgram>()
-                            found.forEach { mergedByStart[it.startMs] = it }
-                            fullGuidePrograms.forEach { mergedByStart[it.startMs] = it }
-                            found = mergedByStart.values.sortedBy { it.startMs }
-                        }
-                        store.programs[ch.id] = found.sortedBy { it.startMs }
-                        if (requestFailed && found.isEmpty()) store.failed[ch.id] = true else store.failed.remove(ch.id)
-                        store.loading.remove(ch.id)
                     }
                 }
             }.awaitAll()
@@ -531,9 +630,6 @@ fun EpgGridScreen(
                 onSettings = { vm.updateSettings(it) },
                 onRefresh = {
                     toast = "Aggiornamento guida in corso…"
-                    store.programs.clear()
-                    store.loading.clear()
-                    store.failed.clear()
                     manualGuideRefreshTick++
                     refreshTick++
                 },
@@ -541,9 +637,8 @@ fun EpgGridScreen(
                 tvCategoryMode = false,
                 onDay = {
                     if (dayOffset != it) {
-                        store.programs.clear()
-                        store.loading.clear()
-                        store.failed.clear()
+                        // XMLTV covers the previous/current/next-day window; changing the date
+                        // does not require discarding valid cached channel programmes.
                         dayOffset = it
                     }
                     if (it == 0) now = System.currentTimeMillis()
@@ -567,18 +662,14 @@ fun EpgGridScreen(
                 onSettings = { vm.updateSettings(it) },
                 onRefresh = {
                     toast = "Aggiornamento guida in corso…"
-                    store.programs.clear()
-                    store.loading.clear()
-                    store.failed.clear()
                     manualGuideRefreshTick++
                     refreshTick++
                 },
                 onFavoritesOnly = { favoritesOnly = !favoritesOnly },
                 onDay = {
                     if (dayOffset != it) {
-                        store.programs.clear()
-                        store.loading.clear()
-                        store.failed.clear()
+                        // XMLTV covers the previous/current/next-day window; changing the date
+                        // does not require discarding valid cached channel programmes.
                         dayOffset = it
                     }
                     if (it == 0) now = System.currentTimeMillis()
@@ -620,9 +711,6 @@ fun EpgGridScreen(
                     Box(
                         Modifier.width(bannerColumnW).fillMaxHeight().background(Color.Black)
                             .combinedClickable(onClick = {
-                                store.programs.clear()
-                                store.loading.clear()
-                                store.failed.clear()
                                 dayOffset = (dayOffset - 1).coerceAtLeast(-7)
                             }),
                         contentAlignment = Alignment.CenterStart

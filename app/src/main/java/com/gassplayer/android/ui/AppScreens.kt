@@ -8,6 +8,12 @@ import android.content.res.Configuration
 import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -35,6 +41,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -49,6 +56,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.layout.ContentScale
@@ -64,7 +72,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import com.gassplayer.android.GassPlayerApplication
 import com.gassplayer.android.data.*
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 import java.util.UUID
 
@@ -83,6 +93,8 @@ private val Dark = Color.Black
 @Composable
 fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
     var route by remember { mutableStateOf("home") }
+    // Reused by Live TV and Guida so category/EPG switches keep the parsed timeline warm.
+    val epgSession = remember(app) { EpgGridSession() }
     var playerItem by remember { mutableStateOf<MediaItem?>(null) }
     var managerSourceId by remember { mutableStateOf<String?>(null) }
     var epgManageReturnRoute by remember { mutableStateOf("settings") }
@@ -154,46 +166,66 @@ fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
             .graphicsLayer { alpha = if (playerActive) 0f else 1f }
             .then(if (playerActive) Modifier.focusProperties { canFocus = false } else Modifier)
     ) {
-    AdaptiveShell(contentRoute, tv, loading, message, onRetry = { vm.refresh(true) }, onRoute = { route = it }, title = shellTitle) {
-        when (contentRoute) {
-            "home" -> HomeScreen(vm, catalog, favorite, watch, sources, onRoute = { route = it }, onPlay = { playerItem = it })
-            "live" -> if (settings.groupUIStyle == "categorie_tv") {
-                // The TV category layout embeds the exact same EPG screen/index used by Guida.
-                EpgGridScreen(app, vm, catalog?.live.orEmpty(), catalog?.liveCategories.orEmpty(), favorite, settings, onPlay = { playerItem = it }, tvCategoryMode = true, playerActive = playerActive)
-            } else CatalogScreen("Live TV", catalog?.live.orEmpty(), catalog?.liveCategories.orEmpty(), favorite, parental, vm, onPlay = { playerItem = it }, showNumbers = settings.showChannelNumbers, scopeKey = "live", onCustomize = { route = "live-customize" }, isTelevision = tv)
-            "movies" -> CatalogScreen("Film (VOD)", catalog?.movies.orEmpty(), catalog?.vodCategories.orEmpty(), favorite, parental, vm, onPlay = { playerItem = it }, detail = true, scopeKey = "movies", onCustomize = { route = "movies-customize" }, isTelevision = tv)
-            "series" -> SeriesScreen(catalog?.series.orEmpty(), catalog?.episodes.orEmpty(), catalog?.seriesCategories.orEmpty(), favorite, parental, vm, onPlay = { playerItem = it }, onCustomize = { route = "series-customize" }, isTelevision = tv)
-            "epg" -> EpgGridScreen(app, vm, catalog?.live.orEmpty(), catalog?.liveCategories.orEmpty(), favorite, settings, onPlay = { playerItem = it }, playerActive = playerActive)
-            "epg-manage" -> ExternalEpgManageScreen(app, onBack = { route = epgManageReturnRoute })
-            "merged" -> MergedPlaylistScreen(app)
-            "trakt" -> TraktScreen(app, settings, vm)
-            "search" -> SearchScreen(app, catalog, onPlay = { playerItem = it }, onRoute = { route = it })
-            "sources" -> SourcesView(app, vm, onRoute = { route = it }, onManage = { managerSourceId = it.id; route = "source-manager" })
-            "source-manager" -> SourceManagerView(app, vm, initialSourceId = managerSourceId, onBack = { managerSourceId = null; route = "sources" }, onRoute = { next ->
-                if (next == "epg-manage") {
-                    epgManageReturnRoute = "source-manager"
-                    route = next
-                } else {
-                    managerSourceId = null
-                    route = next
-                }
-            })
-            "downloads" -> DownloadsScreen(app)
-            "settings" -> SettingsHub(app, settings, vm, onOpen = { next -> if (next == "epg-manage") epgManageReturnRoute = "settings"; route = next })
-            "vpn" -> VpnScreen(app)
-            "parental" -> ParentalScreen(vm, parental)
-            "diagnostics" -> DiagnosticsScreen(app)
-            "backup" -> BackupScreen(app)
+    AdaptiveShell(
+        route = contentRoute,
+        tv = tv,
+        loading = loading,
+        message = message,
+        onRetry = { vm.refresh(true) },
+        onRoute = { route = it },
+        title = shellTitle,
+        content = { activeRoute ->
+            when (activeRoute) {
+                "home" -> HomeScreen(vm, catalog, favorite, watch, sources, onRoute = { route = it }, onPlay = { playerItem = it })
+                "live" -> if (settings.groupUIStyle == "categorie_tv") {
+                    // The same session/index powers both Live TV and the standalone Guida screen.
+                    EpgGridScreen(app, vm, epgSession, catalog?.live.orEmpty(), catalog?.liveCategories.orEmpty(), favorite, settings,
+                        onPlay = { playerItem = it }, tvCategoryMode = true, playerActive = playerActive,
+                        screenActive = activeRoute == contentRoute)
+                } else CatalogScreen("Live TV", catalog?.live.orEmpty(), catalog?.liveCategories.orEmpty(), favorite, parental, vm,
+                    onPlay = { playerItem = it }, showNumbers = settings.showChannelNumbers, scopeKey = "live",
+                    onCustomize = { route = "live-customize" }, isTelevision = tv, screenActive = activeRoute == contentRoute)
+                "movies" -> CatalogScreen("Film (VOD)", catalog?.movies.orEmpty(), catalog?.vodCategories.orEmpty(), favorite, parental, vm,
+                    onPlay = { playerItem = it }, detail = true, scopeKey = "movies", onCustomize = { route = "movies-customize" }, isTelevision = tv,
+                    screenActive = activeRoute == contentRoute)
+                "series" -> SeriesScreen(catalog?.series.orEmpty(), catalog?.episodes.orEmpty(), catalog?.seriesCategories.orEmpty(), favorite, parental, vm,
+                    onPlay = { playerItem = it }, onCustomize = { route = "series-customize" }, isTelevision = tv,
+                    screenActive = activeRoute == contentRoute)
+                "epg" -> EpgGridScreen(app, vm, epgSession, catalog?.live.orEmpty(), catalog?.liveCategories.orEmpty(), favorite, settings,
+                    onPlay = { playerItem = it }, playerActive = playerActive, screenActive = activeRoute == contentRoute)
+                "epg-manage" -> ExternalEpgManageScreen(app, onBack = { route = epgManageReturnRoute })
+                "merged" -> MergedPlaylistScreen(app)
+                "trakt" -> TraktScreen(app, settings, vm)
+                "search" -> SearchScreen(app, catalog, onPlay = { playerItem = it }, onRoute = { route = it })
+                "sources" -> SourcesView(app, vm, onRoute = { route = it }, onManage = { managerSourceId = it.id; route = "source-manager" })
+                "source-manager" -> SourceManagerView(app, vm, initialSourceId = managerSourceId, onBack = { managerSourceId = null; route = "sources" }, onRoute = { next ->
+                    if (next == "epg-manage") {
+                        epgManageReturnRoute = "source-manager"
+                        route = next
+                    } else {
+                        managerSourceId = null
+                        route = next
+                    }
+                })
+                "downloads" -> DownloadsScreen(app)
+                "settings" -> SettingsHub(app, settings, vm, onOpen = { next -> if (next == "epg-manage") epgManageReturnRoute = "settings"; route = next })
+                "vpn" -> VpnScreen(app)
+                "parental" -> ParentalScreen(vm, parental)
+                "diagnostics" -> DiagnosticsScreen(app)
+                "backup" -> BackupScreen(app)
+            }
+        },
+        overlay = {
+            if (customizationScope != null) {
+                HomeCustomizationSheet(
+                    vm = vm,
+                    scopeKey = customizationScope,
+                    onBack = { route = contentRoute },
+                    isTv = tv
+                )
+            }
         }
-        if (customizationScope != null) {
-            HomeCustomizationSheet(
-                vm = vm,
-                scopeKey = customizationScope,
-                onBack = { route = contentRoute },
-                isTv = tv
-            )
-        }
-    }
+    )
     }
     playerItem?.let { current ->
         Box(
@@ -217,8 +249,19 @@ fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
 
 @Composable
 @OptIn(ExperimentalFoundationApi::class)
-private fun AdaptiveShell(route: String, tv: Boolean, loading: Boolean, message: String?, onRetry: () -> Unit, onRoute: (String) -> Unit, title: String, content: @Composable () -> Unit) {
+private fun AdaptiveShell(
+    route: String,
+    tv: Boolean,
+    loading: Boolean,
+    message: String?,
+    onRetry: () -> Unit,
+    onRoute: (String) -> Unit,
+    title: String,
+    content: @Composable (String) -> Unit,
+    overlay: @Composable () -> Unit,
+) {
     val destinations = listOf("home" to "Home", "live" to "Live TV", "movies" to "Film", "series" to "Serie", "epg" to "Guida", "search" to "Cerca", "sources" to "Sorgenti", "settings" to "Impostazioni")
+    val saveableStateHolder = rememberSaveableStateHolder()
     val railScrollState = rememberScrollState()
     val railScope = rememberCoroutineScope()
     LiquidGlassBackdrop(Modifier.fillMaxSize()) {
@@ -291,7 +334,65 @@ private fun AdaptiveShell(route: String, tv: Boolean, loading: Boolean, message:
                     }
                 }
                 if (showStatusBanner) Spacer(Modifier.height(12.dp))
-                Box(Modifier.fillMaxSize()) { content() }
+                val libraryRoutes = remember { setOf("live", "movies", "series") }
+                var visitedLibraryRoutes by remember { mutableStateOf(emptySet<String>()) }
+                // Keep a library page composed after its first visit. GassTV's section navigation
+                // does not rebuild the whole list for every tab tap; doing this here preserves
+                // LazyListState, selected category, search and EPG/player state across Live/VOD/Series.
+                val renderedLibraryRoutes = if (route in libraryRoutes) visitedLibraryRoutes + route else visitedLibraryRoutes
+                LaunchedEffect(route) {
+                    if (route in libraryRoutes && route !in visitedLibraryRoutes) {
+                        visitedLibraryRoutes = visitedLibraryRoutes + route
+                    }
+                }
+                Box(Modifier.fillMaxSize()) {
+                    renderedLibraryRoutes.forEach { section ->
+                        key(section) {
+                            val active = route == section
+                            val pageAlpha by animateFloatAsState(
+                                targetValue = if (active) 1f else 0f,
+                                animationSpec = tween(if (active || renderedLibraryRoutes.size > 1) 110 else 0),
+                                label = "${section}-section-alpha",
+                            )
+                            Box(
+                                Modifier
+                                    .fillMaxSize()
+                                    .graphicsLayer { alpha = pageAlpha }
+                                    .zIndex(if (active) 1f else 0f)
+                                    .focusProperties { canFocus = active }
+                                    .pointerInput(active) {
+                                        if (!active) {
+                                            awaitPointerEventScope {
+                                                while (true) {
+                                                    awaitPointerEvent(PointerEventPass.Initial).changes.forEach { it.consume() }
+                                                }
+                                            }
+                                        }
+                                    }
+                            ) {
+                                // Library screens remain warm while another library or a secondary
+                                // page is open; screenActive stops Live TV's mini-player off-route.
+                                content(section)
+                            }
+                        }
+                    }
+                    if (route !in libraryRoutes) {
+                        AnimatedContent(
+                            targetState = route,
+                            modifier = Modifier.fillMaxSize().zIndex(2f),
+                            transitionSpec = {
+                                EnterTransition.None togetherWith ExitTransition.None
+                            },
+                            label = "secondary-route-content",
+                        ) { activeRoute ->
+                            saveableStateHolder.SaveableStateProvider(activeRoute) {
+                                Box(Modifier.fillMaxSize()) { content(activeRoute) }
+                            }
+                        }
+                    }
+                    // Keep customization as a single overlay rather than animating two copies of it.
+                    overlay()
+                }
             }
         }
     }
@@ -909,6 +1010,7 @@ private fun CatalogScreen(
     scopeKey: String = if (detail) "movies" else "live",
     onCustomize: () -> Unit = {},
     isTelevision: Boolean = false,
+    screenActive: Boolean = true,
 ) {
     var selected by remember { mutableStateOf<MediaItem?>(null) }
     var filter by remember { mutableStateOf<String?>(null) }
@@ -922,11 +1024,11 @@ private fun CatalogScreen(
     val mobileRailWidth = (LocalConfiguration.current.screenWidthDp - 136).dp.coerceIn(160.dp, 236.dp)
     var categoryRailExpanded by remember(scopeKey) { mutableStateOf(true) }
     val favoriteIds = if (scopeKey == "live") favorite.live else favorite.movies
-    if (detail && selected != null) {
+    if (detail && selected != null && screenActive) {
         MovieDetailScreen(vm.app, selected!!, vm.catalog.value?.movies.orEmpty(), favorite, onBack = { selected = null; if (tvCategoryMode) categoryRailExpanded = true }, onPlay = { i, pos -> onPlayWithPosition(onPlay, i, pos) })
         return
     }
-    BackHandler(enabled = tvCategoryMode && !categoryRailExpanded) { categoryRailExpanded = true }
+    BackHandler(enabled = screenActive && tvCategoryMode && !categoryRailExpanded) { categoryRailExpanded = true }
     val defaults = if (scopeKey == "live") defaultLiveSections else defaultMovieSections
     val rawOrder = if (scopeKey == "live") libSettings.liveSectionOrder else libSettings.movieSectionOrder
     val hiddenSections = if (scopeKey == "live") libSettings.hiddenLiveSections else libSettings.hiddenMovieSections
@@ -943,20 +1045,35 @@ private fun CatalogScreen(
         } else emptyList()
     }
 
-    val categoryEntries = remember(categories, items) { buildLibraryCategoryEntries(categories, items) }
+    val categoryEntries by produceState(
+        initialValue = emptyList<LibraryCategoryEntry>(), categories, items, visibleSections.contains("categories"),
+    ) {
+        value = if (visibleSections.contains("categories")) {
+            withContext(Dispatchers.IO) { buildLibraryCategoryEntries(categories, items) }
+        } else emptyList()
+    }
     // Searching spans the whole library, independently of the selected group, as in iOS.
-    val filtered = remember(items, filter, parental.lockedIds, searchQuery, favoriteIds) {
-        val base = when {
-            searchQuery.isNotBlank() -> items
-            filter == TV_CATEGORY_FAVORITES -> items.onlyIds(favoriteIds)
-            else -> items.inCategory(filter)
+    val filtered by produceState<List<MediaItem>>(
+        initialValue = if (filter == null && searchQuery.isBlank() && parental.lockedIds.isEmpty()) items else emptyList(),
+        items, filter, parental.lockedIds, searchQuery, favoriteIds,
+    ) {
+        value = withContext(Dispatchers.IO) {
+            val base = when {
+                searchQuery.isNotBlank() -> items
+                filter == TV_CATEGORY_FAVORITES -> items.onlyIds(favoriteIds)
+                else -> items.inCategory(filter)
+            }
+            base.withoutIds(parental.lockedIds).matchingText(searchQuery).also { it.size }
         }
-        base.withoutIds(parental.lockedIds).matchingText(searchQuery)
     }
     val watchedIds = remember(watch) { watch.filter { it.kind == MediaKind.MOVIE }.associateBy { it.contentId } }
-    val continueItems = remember(items, watch, detail) {
-        if (!detail) emptyList() else items.onlyIds(watchedIds.keys)
-            .sortedByDescending { watchedIds[it.id]?.lastWatchedMs ?: 0L }
+    val continueItems by produceState<List<MediaItem>>(
+        initialValue = emptyList(), items, watchedIds, detail,
+    ) {
+        value = withContext(Dispatchers.IO) {
+            if (!detail) emptyList() else items.onlyIds(watchedIds.keys)
+                .sortedByDescending { watchedIds[it.id]?.lastWatchedMs ?: 0L }
+        }
     }
     val listState = rememberLazyListState()
     val scrollScope = rememberCoroutineScope()
@@ -964,7 +1081,7 @@ private fun CatalogScreen(
     val showTrending = detail && searchQuery.isBlank()
     val visibleContentSections = if (searchQuery.isNotBlank()) visibleSections.filter { it == "search" } else visibleSections
     val groupAfterSearch = libSettings.groupUIStyle == "scorrevole" && visibleSections.firstOrNull() == "search" && !tvCategoryMode
-    val railOptions = remember(categories, items, favoriteIds) { buildTvCategoryRailOptions(categories, items, favoriteIds) }
+    val railOptions = rememberTvCategoryRailOptions(categories, items, favoriteIds)
     val selectedRailId = when {
         filter == TV_CATEGORY_FAVORITES -> TV_CATEGORY_FAVORITES
         filter == null -> TV_CATEGORY_ALL
@@ -1174,6 +1291,7 @@ private fun SeriesScreen(
     onPlay: (MediaItem) -> Unit,
     onCustomize: () -> Unit = {},
     isTelevision: Boolean = false,
+    screenActive: Boolean = true,
 ) {
     var selected by remember { mutableStateOf<MediaItem?>(null) }
     var filter by remember { mutableStateOf<String?>(null) }
@@ -1187,11 +1305,11 @@ private fun SeriesScreen(
     val mobileRailWidth = (LocalConfiguration.current.screenWidthDp - 136).dp.coerceIn(160.dp, 236.dp)
     var categoryRailExpanded by remember { mutableStateOf(true) }
     val favoriteIds = favorite.series
-    if (selected != null) {
+    if (selected != null && screenActive) {
         SeriesDetailScreen(vm.app, selected!!, episodes, favorite, onBack = { selected = null; if (tvCategoryMode) categoryRailExpanded = true }, onPlay = { i, pos -> onPlayWithPosition(onPlay, i, pos) }, allSeries = series, onOpenAlternateSeries = { selected = it })
         return
     }
-    BackHandler(enabled = tvCategoryMode && !categoryRailExpanded) { categoryRailExpanded = true }
+    BackHandler(enabled = screenActive && tvCategoryMode && !categoryRailExpanded) { categoryRailExpanded = true }
     val defaults = defaultSeriesSections
     val sectionOrder = remember(libSettings.seriesSectionOrder) { (libSettings.seriesSectionOrder + defaults).distinct() }
     val visibleSections = sectionOrder.filterNot { it in libSettings.hiddenSeriesSections || ((isTelevision || tvCategoryMode) && it == "categories") }
@@ -1206,25 +1324,44 @@ private fun SeriesScreen(
         } else emptyList()
     }
 
-    val categoryEntries = remember(categories, series) { buildLibraryCategoryEntries(categories, series) }
-    val filtered = remember(series, filter, parental.lockedIds, searchQuery, favoriteIds) {
-        val base = when {
-            searchQuery.isNotBlank() -> series
-            filter == TV_CATEGORY_FAVORITES -> series.onlyIds(favoriteIds)
-            else -> series.inCategory(filter)
+    val categoryEntries by produceState(
+        initialValue = emptyList<LibraryCategoryEntry>(), categories, series, visibleSections.contains("categories"),
+    ) {
+        value = if (visibleSections.contains("categories")) {
+            withContext(Dispatchers.IO) { buildLibraryCategoryEntries(categories, series) }
+        } else emptyList()
+    }
+    val filtered by produceState<List<MediaItem>>(
+        initialValue = if (filter == null && searchQuery.isBlank() && parental.lockedIds.isEmpty()) series else emptyList(),
+        series, filter, parental.lockedIds, searchQuery, favoriteIds,
+    ) {
+        value = withContext(Dispatchers.IO) {
+            val base = when {
+                searchQuery.isNotBlank() -> series
+                filter == TV_CATEGORY_FAVORITES -> series.onlyIds(favoriteIds)
+                else -> series.inCategory(filter)
+            }
+            base.withoutIds(parental.lockedIds).matchingText(searchQuery).also { it.size }
         }
-        base.withoutIds(parental.lockedIds).matchingText(searchQuery)
     }
     val watchedById = remember(watch) { watch.filter { it.kind == MediaKind.EPISODE || it.kind == MediaKind.SERIES }.associateBy { it.contentId } }
     val continueSectionVisible = "continueWatching" in visibleSections
-    val watchedSeriesIds = remember(watch, episodes, continueSectionVisible) {
-        if (!continueSectionVisible) emptySet()
-        else episodes.seriesItemIdsForEpisodeIds(watch.filter { it.kind == MediaKind.EPISODE }.mapTo(HashSet()) { it.contentId })
+    val watchedSeriesIds by produceState<Set<String>>(
+        initialValue = emptySet(), watch, episodes, continueSectionVisible,
+    ) {
+        value = withContext(Dispatchers.IO) {
+            if (!continueSectionVisible) emptySet()
+            else episodes.seriesItemIdsForEpisodeIds(watch.filter { it.kind == MediaKind.EPISODE }.mapTo(HashSet()) { it.contentId })
+        }
     }
-    val continueItems = remember(series, watchedById, watchedSeriesIds, continueSectionVisible) {
-        if (!continueSectionVisible) emptyList()
-        else series.onlyIds(watchedById.keys + watchedSeriesIds)
-            .sortedByDescending { watchedById[it.id]?.lastWatchedMs ?: 0L }
+    val continueItems by produceState<List<MediaItem>>(
+        initialValue = emptyList(), series, watchedById, watchedSeriesIds, continueSectionVisible,
+    ) {
+        value = withContext(Dispatchers.IO) {
+            if (!continueSectionVisible) emptyList()
+            else series.onlyIds(watchedById.keys + watchedSeriesIds)
+                .sortedByDescending { watchedById[it.id]?.lastWatchedMs ?: 0L }
+        }
     }
     val showContinue = searchQuery.isBlank() && continueItems.isNotEmpty()
     val showTrending = searchQuery.isBlank()
@@ -1232,7 +1369,7 @@ private fun SeriesScreen(
     val groupAfterSearch = libSettings.groupUIStyle == "scorrevole" && visibleSections.firstOrNull() == "search" && !tvCategoryMode
     val listState = rememberLazyListState()
     val scrollScope = rememberCoroutineScope()
-    val railOptions = remember(categories, series, favoriteIds) { buildTvCategoryRailOptions(categories, series, favoriteIds) }
+    val railOptions = rememberTvCategoryRailOptions(categories, series, favoriteIds)
     val selectedRailId = when {
         filter == TV_CATEGORY_FAVORITES -> TV_CATEGORY_FAVORITES
         filter == null -> TV_CATEGORY_ALL
