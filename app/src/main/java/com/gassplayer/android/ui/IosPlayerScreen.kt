@@ -940,14 +940,17 @@ private fun PlayerLiveCategoryRail(
     }
 
     BoxWithConstraints(modifier) {
+        // Capture the constraint here: BoxWithConstraintsScope's implicit receiver is not
+        // available inside every nested Material content lambda on all Compose compiler versions.
+        val compactLayout = maxWidth < 700.dp
         // A light scrim keeps the moving video visible through the LiquidGlass surface.
-        Box(Modifier.fillMaxSize().background(Color.Black.copy(if (maxWidth < 700.dp) .30f else .12f)))
-        val panelWidth = if (maxWidth < 700.dp) maxWidth * .96f else (maxWidth * .72f).coerceAtMost(760.dp)
-        val groupWidth = if (maxWidth < 700.dp) 126.dp else 224.dp
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(if (compactLayout) .30f else .12f)))
+        val panelWidth = if (compactLayout) maxWidth * .96f else (maxWidth * .72f).coerceAtMost(760.dp)
+        val groupWidth = if (compactLayout) 126.dp else 224.dp
         Row(
             Modifier
                 .align(Alignment.CenterStart)
-                .padding(start = if (maxWidth < 700.dp) 6.dp else 22.dp, top = 12.dp, bottom = 12.dp)
+                .padding(start = if (compactLayout) 6.dp else 22.dp, top = 12.dp, bottom = 12.dp)
                 .width(panelWidth)
                 .fillMaxHeight(.94f)
                 .focusGroup(),
@@ -958,11 +961,11 @@ private fun PlayerLiveCategoryRail(
             Surface(
                 modifier = Modifier.fillMaxSize(),
                 shape = RoundedCornerShape(25.dp),
-                color = Color.Black.copy(alpha = if (maxWidth < 700.dp) .58f else .46f),
+                color = Color.Black.copy(alpha = if (compactLayout) .58f else .46f),
                 border = BorderStroke(1.dp, Brush.verticalGradient(listOf(Color.White.copy(.20f), Color.White.copy(.055f)))),
                 shadowElevation = 12.dp,
             ) {
-                Column(Modifier.fillMaxSize().padding(if (maxWidth < 700.dp) 8.dp else 12.dp)) {
+                Column(Modifier.fillMaxSize().padding(if (compactLayout) 8.dp else 12.dp)) {
                     Row(
                         Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -1019,12 +1022,12 @@ private fun PlayerLiveCategoryRail(
                                             suppressTopHighlight = true,
                                         ) {
                                             Row(
-                                                Modifier.fillMaxWidth().height(if (maxWidth < 700.dp) 40.dp else 44.dp).padding(horizontal = 8.dp),
+                                                Modifier.fillMaxWidth().height(if (compactLayout) 40.dp else 44.dp).padding(horizontal = 8.dp),
                                                 verticalAlignment = Alignment.CenterVertically,
                                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                                             ) {
                                                 Icon(option.icon ?: Icons.Default.FolderOpen, null, tint = if (selected) Color(0xFFBBD0FF) else glassForeground(.62f), modifier = Modifier.size(15.dp))
-                                                Text(option.label, color = glassForeground(if (selected) 1f else .82f), fontSize = if (maxWidth < 700.dp) 10.sp else 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                                                Text(option.label, color = glassForeground(if (selected) 1f else .82f), fontSize = if (compactLayout) 10.sp else 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                                                 Text(option.count.toString(), color = glassForeground(.48f), fontSize = 9.sp, maxLines = 1)
                                             }
                                         }
@@ -1076,7 +1079,7 @@ private fun PlayerLiveCategoryRail(
                                                 suppressTopHighlight = true,
                                             ) {
                                                 Row(
-                                                    Modifier.fillMaxWidth().height(if (maxWidth < 700.dp) 48.dp else 54.dp).padding(horizontal = 8.dp),
+                                                    Modifier.fillMaxWidth().height(if (compactLayout) 48.dp else 54.dp).padding(horizontal = 8.dp),
                                                     verticalAlignment = Alignment.CenterVertically,
                                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                                 ) {
@@ -1087,14 +1090,14 @@ private fun PlayerLiveCategoryRail(
                                                         AsyncImage(
                                                             model = channel.logoUrl,
                                                             contentDescription = null,
-                                                            modifier = Modifier.size(if (maxWidth < 700.dp) 28.dp else 38.dp),
+                                                            modifier = Modifier.size(if (compactLayout) 28.dp else 38.dp),
                                                             contentScale = ContentScale.Fit,
                                                         )
                                                     } else {
                                                         Icon(Icons.Default.LiveTv, contentDescription = null, tint = glassForeground(.55f), modifier = Modifier.size(22.dp))
                                                     }
                                                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
-                                                        Text(channel.title, color = glassForeground(if (playing) 1f else .86f), fontSize = if (maxWidth < 700.dp) 11.sp else 13.sp, fontWeight = if (playing) FontWeight.SemiBold else FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                        Text(channel.title, color = glassForeground(if (playing) 1f else .86f), fontSize = if (compactLayout) 11.sp else 13.sp, fontWeight = if (playing) FontWeight.SemiBold else FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                                         if (playing) Text("IN RIPRODUZIONE", color = Color(0xFFBBD0FF), fontSize = 8.sp, maxLines = 1)
                                                     }
                                                     if (channel.id in favoriteIds) Icon(Icons.Default.Star, null, tint = Color(0xFFFFD166), modifier = Modifier.size(13.dp))

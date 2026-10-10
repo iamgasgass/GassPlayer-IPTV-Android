@@ -36,7 +36,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -192,14 +199,44 @@ fun EpgStyleSearchField(
     placeholder: String = "Cerca per nome del programma",
     onSubmit: (() -> Unit)? = null,
     onFocus: (() -> Unit)? = null,
+    focusRequester: FocusRequester? = null,
+    onMoveDown: (() -> Boolean)? = null,
+    inputFocusRequester: FocusRequester? = null,
+    onActivate: (() -> Unit)? = null,
 ) {
+    var containerFocused by remember { mutableStateOf(false) }
     Row(
         modifier = modifier
             .height(50.dp)
             .clip(RoundedCornerShape(50))
             .background(Color.White.copy(.09f))
-            .border(BorderStroke(1.dp, Color.White.copy(.12f)), RoundedCornerShape(50))
-            .padding(horizontal = 16.dp),
+            .border(
+                BorderStroke(
+                    if (containerFocused) 1.8.dp else 1.dp,
+                    if (containerFocused) Color(0xFF8CB7FF) else Color.White.copy(.12f)
+                ),
+                RoundedCornerShape(50)
+            )
+            .padding(horizontal = 16.dp)
+            .then(focusRequester?.let { Modifier.focusRequester(it).focusable() } ?: Modifier)
+            .onFocusChanged {
+                containerFocused = it.isFocused || it.hasFocus
+                if (it.isFocused || it.hasFocus) onFocus?.invoke()
+            }
+            .onPreviewKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown) false
+                else when {
+                    event.key == Key.DirectionDown && onMoveDown != null -> {
+                        onMoveDown.invoke()
+                        true
+                    }
+                    (event.key == Key.DirectionCenter || event.key == Key.Enter) && onActivate != null -> {
+                        onActivate.invoke()
+                        true
+                    }
+                    else -> false
+                }
+            },
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(Icons.Default.Search, contentDescription = "Cerca", tint = glassForeground().copy(.6f), modifier = Modifier.size(20.dp))
@@ -215,7 +252,15 @@ fun EpgStyleSearchField(
                 onSearch = { onSubmit?.invoke() },
                 onDone = { onSubmit?.invoke() }
             ),
-            modifier = Modifier.weight(1f).onFocusChanged { if (it.isFocused) onFocus?.invoke() },
+            modifier = Modifier.weight(1f)
+                .then(inputFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
+                .onPreviewKeyEvent { event ->
+                    if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown && onMoveDown != null) {
+                        onMoveDown.invoke()
+                        true
+                    } else false
+                }
+                .onFocusChanged { if (it.isFocused) onFocus?.invoke() },
             decorationBox = { inner ->
                 Box {
                     if (value.isEmpty()) Text(placeholder, color = glassForeground().copy(.55f), fontSize = 16.sp, fontFamily = FontFamily.SansSerif, maxLines = 1, overflow = TextOverflow.Ellipsis)

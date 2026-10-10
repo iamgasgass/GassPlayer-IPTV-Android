@@ -24,6 +24,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -226,6 +228,11 @@ internal fun EpgGridScreen(
     var toast by remember { mutableStateOf<String?>(null) }
     var refreshTick by remember { mutableIntStateOf(0) }
     var manualGuideRefreshTick by remember { mutableIntStateOf(0) }
+    // Stable DPAD path on TV: preview/player or the ellipsis menu -> search -> first channel.
+    val guideListState = rememberLazyListState()
+    val searchFocusRequester = remember { FocusRequester() }
+    val searchInputFocusRequester = remember { FocusRequester() }
+    val firstChannelFocusRequester = remember { FocusRequester() }
     // Plain remembered holder avoids triggering composition just to remember the last manual refresh.
     val lastManualGuideRefresh = remember { intArrayOf(0) }
 
@@ -679,6 +686,16 @@ internal fun EpgGridScreen(
                     previewChannel?.let(onPlay)
                 },
                 compactLayout = compactCategoryLayout,
+                onMoveDown = {
+                    scope.launch {
+                        // The preview panel sits above the scrolling guide; always begin from
+                        // the search row so DPAD movement is deterministic, even after scrolling.
+                        guideListState.scrollToItem(0)
+                        delay(60L)
+                        runCatching { searchFocusRequester.requestFocus() }
+                    }
+                    true
+                },
                 modifier = Modifier.fillMaxWidth().onFocusChanged { if (it.hasFocus) categoryRailExpanded = false }
             )
         }
@@ -690,9 +707,8 @@ internal fun EpgGridScreen(
         if (live.isEmpty()) {
             Text("Nessun canale live disponibile. Aggiungi una sorgente e attendi il caricamento.", color = glassForeground().copy(.6f), modifier = Modifier.padding(16.dp))
         } else {
-        val listState = rememberLazyListState()
         LazyColumn(
-            state = listState,
+            state = guideListState,
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(bottom = if (compact) 24.dp else 32.dp)
         ) {
@@ -702,7 +718,27 @@ internal fun EpgGridScreen(
                     onValueChange = { searchQuery = it },
                     compact = compact,
                     horizontalInset = bannerInset,
-                    onFocus = { if (tvCategoryMode) categoryRailExpanded = false }
+                    onFocus = { if (tvCategoryMode) categoryRailExpanded = false },
+                    focusRequester = if (tvCategoryMode) searchFocusRequester else null,
+                    inputFocusRequester = if (tvCategoryMode) searchInputFocusRequester else null,
+                    onActivate = if (tvCategoryMode) ({ runCatching { searchInputFocusRequester.requestFocus() } }) else null,
+                    onMoveDown = if (tvCategoryMode) ({
+                        scope.launch {
+                            // Wait briefly for the paged channel rows to be composed. This covers
+                            // slower Fire TV sticks where the guide's first page arrives later.
+                            var attempts = 0
+                            while (visible.isEmpty() && attempts < 20) {
+                                delay(40L)
+                                attempts++
+                            }
+                            if (visible.isNotEmpty()) {
+                                guideListState.animateScrollToItem(2)
+                                delay(60L)
+                                runCatching { firstChannelFocusRequester.requestFocus() }
+                            }
+                        }
+                        true
+                    }) else null
                 )
             }
             // Like iOS, the day + time header is part of the vertical scroll content (not sticky).
@@ -785,7 +821,8 @@ internal fun EpgGridScreen(
                         onClick = { stopPreviewPlayback(); onPlay(ch) },
                         onLongClick = { vm.toggleFavorite(ch) },
                         onFocus = { if (tvCategoryMode) { previewChannelId = ch.id; categoryRailExpanded = false } },
-                        onExitLeft = { if (tvCategoryMode && !categoryRailExpanded) { categoryRailExpanded = true; true } else false }
+                        onExitLeft = { if (tvCategoryMode && !categoryRailExpanded) { categoryRailExpanded = true; true } else false },
+                        focusRequester = if (visibleIndex == 0) firstChannelFocusRequester else null
                     )
                     Box(
                         Modifier.weight(1f).fillMaxHeight().offset(x = -bleed).clipToBounds().horizontalScroll(hScroll)
@@ -939,11 +976,17 @@ private fun TvEpgPreviewPanel(
     onDay: (Int) -> Unit,
     onWatch: () -> Unit,
     compactLayout: Boolean = false,
+    onMoveDown: (() -> Boolean)? = null,
     modifier: Modifier = Modifier,
 ) {
     val timeFormat = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
     Row(
-        modifier.fillMaxWidth()
+        modifier.fillMaxWidth().onPreviewKeyEvent { event ->
+            if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown && onMoveDown != null) {
+                onMoveDown.invoke()
+                true
+            } else false
+        }
             .height(if (compactLayout) 154.dp else 212.dp)
             .padding(horizontal = if (compactLayout) 4.dp else 16.dp, vertical = if (compactLayout) 6.dp else 12.dp),
         horizontalArrangement = Arrangement.spacedBy(if (compactLayout) 8.dp else 18.dp),
@@ -1046,6 +1089,7 @@ private fun ChannelBanner(
     onLongClick: () -> Unit,
     onFocus: () -> Unit = {},
     onExitLeft: () -> Boolean = { false },
+    focusRequester: FocusRequester? = null,
 ) {
     val cardLeft = if (centered) (width - bannerW) / 2 else inset
     val badgeSize = if (compact) 26.dp else 30.dp
@@ -1054,6 +1098,7 @@ private fun ChannelBanner(
         Box(
             Modifier.offset(x = cardLeft, y = (rowHeight - bannerH) / 2f).width(bannerW).height(bannerH)
                 .clip(RoundedCornerShape(if (compact) 14.dp else 16.dp))
+                .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
                 .then(when {
                     focused -> Modifier.border(BorderStroke(2.dp, Color(0xFF8CB7FF)), RoundedCornerShape(if (compact) 14.dp else 16.dp))
                     selected -> Modifier.border(BorderStroke(1.2.dp, Color(0xFF8FB3FF)), RoundedCornerShape(if (compact) 14.dp else 16.dp))
@@ -1198,13 +1243,21 @@ private fun EpgSearchHeader(
     compact: Boolean,
     horizontalInset: Dp,
     onFocus: (() -> Unit)? = null,
+    focusRequester: FocusRequester? = null,
+    onMoveDown: (() -> Boolean)? = null,
+    inputFocusRequester: FocusRequester? = null,
+    onActivate: (() -> Unit)? = null,
 ) {
     EpgStyleSearchField(
         value = value,
         onValueChange = onValueChange,
         modifier = Modifier.fillMaxWidth().padding(horizontal = horizontalInset).padding(top = 10.dp, bottom = if (compact) 16.dp else 18.dp),
         placeholder = "Cerca per nome del programma",
-        onFocus = onFocus
+        onFocus = onFocus,
+        focusRequester = focusRequester,
+        onMoveDown = onMoveDown,
+        inputFocusRequester = inputFocusRequester,
+        onActivate = onActivate
     )
 }
 
