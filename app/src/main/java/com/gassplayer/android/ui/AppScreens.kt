@@ -600,20 +600,20 @@ private fun HomeScreen(vm: MainViewModel, catalog: CatalogState?, fav: FavoriteS
                             if (settings.tmdbApiKey.isBlank()) EmptyHint("Configura la chiave API TMDB in Impostazioni per caricare le tendenze.")
                             else if (trendingSeries.isEmpty()) EmptyHint("Tendenze serie non disponibili: controlla la chiave TMDB e la rete.")
                             else androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                items(trendingSeries.take(16), key = { it.id }) { trend -> TrendingCard(trend, true) {
+                                items(trendingSeries.take(16), key = { it.id }) { trend -> TrendingCard(trend, true, onClick = {
                                     val match = catalog?.series.orEmpty().firstOrNull { item -> item.title.matchesTrendTitle(trend.title) || (trend.originalTitle?.let { item.title.matchesTrendTitle(it) } == true) }
                                     if (match != null) openLibraryItem(match) else trendingUnavailable = trend.title
-                                } }
+                                }) }
                             }
                         }
                         "trendingMovies" -> Section("Film di tendenza", { onRoute("movies") }) {
                             if (settings.tmdbApiKey.isBlank()) EmptyHint("Configura la chiave API TMDB in Impostazioni per caricare le tendenze.")
                             else if (trendingMovies.isEmpty()) EmptyHint("Tendenze film non disponibili: controlla la chiave TMDB e la rete.")
                             else androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                items(trendingMovies.take(16), key = { it.id }) { trend -> TrendingCard(trend, false) {
+                                items(trendingMovies.take(16), key = { it.id }) { trend -> TrendingCard(trend, false, onClick = {
                                     val match = catalog?.movies.orEmpty().firstOrNull { item -> item.title.matchesTrendTitle(trend.title) || (trend.originalTitle?.let { item.title.matchesTrendTitle(it) } == true) }
                                     if (match != null) openLibraryItem(match) else trendingUnavailable = trend.title
-                                } }
+                                }) }
                             }
                         }
                     }

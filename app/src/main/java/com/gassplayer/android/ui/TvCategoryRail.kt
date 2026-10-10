@@ -1,5 +1,8 @@
 package com.gassplayer.android.ui
 
+import com.gassplayer.android.data.categoryCounts
+import com.gassplayer.android.data.onlyIds
+
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
