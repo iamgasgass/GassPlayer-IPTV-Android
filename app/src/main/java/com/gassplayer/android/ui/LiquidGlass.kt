@@ -158,36 +158,19 @@ fun LiquidGlassFocusableSurface(
 }
 
 @Composable
-fun LiquidGlassPill(
-    modifier: Modifier = Modifier,
-    selected: Boolean = false,
-    suppressHighlight: Boolean = false,
-    content: @Composable BoxScope.() -> Unit
-) {
+fun LiquidGlassPill(modifier: Modifier = Modifier, selected: Boolean = false, content: @Composable BoxScope.() -> Unit) {
     val shape = RoundedCornerShape(50)
     val light = MaterialTheme.colorScheme.background.luminance() > .5f
-    // Some compact action pills (notably the library's "Modifica" control)
-    // must remain neutral: the normal specular top band can look like a second
-    // surface and visually wash out adjacent controls on mobile. Keep the same
-    // capsule, border, and glass translucency but make its non-selected fill
-    // and stroke uniform when suppressHighlight is requested.
-    val fill: Brush = when {
-        selected -> Brush.verticalGradient(listOf(Color(0xFF8CB7FF).copy(.30f), Color(0xFF3478F6).copy(.17f)))
-        suppressHighlight -> SolidColor(if (light) Color.White.copy(.76f) else Color.White.copy(.06f))
-        light -> Brush.verticalGradient(listOf(Color.White.copy(.92f), Color(0xFFE8EEF7).copy(.70f)))
-        else -> Brush.verticalGradient(listOf(Color.White.copy(.105f), Color.White.copy(.035f)))
-    }
-    val stroke: Brush = when {
-        suppressHighlight && light -> SolidColor(Color(0xFF596B86).copy(.18f))
-        suppressHighlight -> SolidColor(Color.White.copy(.11f))
-        light -> Brush.verticalGradient(listOf(Color(0xFF596B86).copy(if (selected) .30f else .18f), Color.White.copy(.85f)))
-        else -> Brush.verticalGradient(listOf(Color.White.copy(if (selected) .38f else .22f), Color.White.copy(.07f)))
-    }
     Box(
-        modifier = modifier
-            .clip(shape)
-            .background(fill)
-            .border(BorderStroke(.75.dp, stroke), shape)
+        modifier = modifier.clip(shape)
+            .background(
+                if (selected) Brush.verticalGradient(listOf(Color(0xFF8CB7FF).copy(.30f), Color(0xFF3478F6).copy(.17f)))
+                else Brush.verticalGradient(if (light) listOf(Color.White.copy(.92f), Color(0xFFE8EEF7).copy(.70f)) else listOf(Color.White.copy(.105f), Color.White.copy(.035f)))
+            )
+            .border(
+                BorderStroke(.75.dp, Brush.verticalGradient(if (light) listOf(Color(0xFF596B86).copy(if (selected) .30f else .18f), Color.White.copy(.85f)) else listOf(Color.White.copy(if (selected) .38f else .22f), Color.White.copy(.07f)))) ,
+                shape
+            )
             .padding(horizontal = 14.dp, vertical = 9.dp),
         content = content
     )

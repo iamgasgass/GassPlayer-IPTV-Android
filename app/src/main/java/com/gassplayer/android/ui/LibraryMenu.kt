@@ -12,8 +12,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.zIndex
@@ -27,22 +25,6 @@ import androidx.compose.ui.unit.sp
 import com.gassplayer.android.data.*
 
 internal const val GROUP_NONE = "__none__"
-
-
-/**
- * Compute playlist category counters without doing SQLite reads or a full-list
- * grouping on the main thread. The result is shared by category tiles and the
- * independent group selector, avoiding duplicate catalog scans on library entry.
- */
-@Composable
-internal fun rememberLibraryCategoryCounts(items: List<MediaItem>): Map<String?, Int> {
-    val counts by produceState<Map<String?, Int>>(initialValue = emptyMap(), key1 = items) {
-        value = withContext(Dispatchers.IO) {
-            runCatching { items.categoryCounts() }.getOrDefault(emptyMap())
-        }
-    }
-    return counts
-}
 
 internal fun matchesGroup(item: MediaItem, filter: String?): Boolean = when (filter) {
     null -> true
@@ -69,7 +51,6 @@ internal fun LibraryHeader(
     kindLabel: String,
     categories: List<Category>,
     items: List<MediaItem>,
-    categoryCounts: Map<String?, Int>,
     filter: String?,
     onFilter: (String?) -> Unit,
     settings: AppSettings,
@@ -77,7 +58,7 @@ internal fun LibraryHeader(
     allowPoster: Boolean,
     showGroups: Boolean = true
 ) {
-    val counts = categoryCounts
+    val counts = remember(items) { items.categoryCounts() }
     val ordered = remember(categories, counts) {
         val known = categories.distinctBy { it.id }.filter { counts.containsKey(it.id) }
         val knownIds = known.map { it.id }.toSet()

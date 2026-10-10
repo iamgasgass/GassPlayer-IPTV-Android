@@ -43,6 +43,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.pointer.pointerInput
@@ -63,6 +65,15 @@ import com.gassplayer.android.data.*
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 import java.util.UUID
+
+/** Passes a resume position to the player without changing the shared playback callback. */
+private fun onPlayWithPosition(
+    onPlay: (MediaItem) -> Unit,
+    item: MediaItem,
+    position: Long
+) {
+    onPlay(item.copy(metadataTag = "resume:${position.coerceAtLeast(0L)}"))
+}
 
 private val Blue = Color(0xFF3478F6)
 private val Dark = Color.Black
@@ -174,19 +185,6 @@ fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
 @OptIn(ExperimentalFoundationApi::class)
 private fun AdaptiveShell(route: String, tv: Boolean, loading: Boolean, message: String?, onRetry: () -> Unit, onRoute: (String) -> Unit, title: String, content: @Composable () -> Unit) {
     val destinations = listOf("home" to "Home", "live" to "Live TV", "movies" to "Film", "series" to "Serie", "epg" to "Guida", "search" to "Cerca", "sources" to "Sorgenti", "settings" to "Impostazioni")
-    val configuration = LocalConfiguration.current
-    val screenWidthDp = configuration.screenWidthDp
-    // Narrow mobile layouts reserve enough width for the library title and
-    // the adjacent "Modifica" capsule instead of letting either overlap.
-    val mobileRailWidth = when {
-        screenWidthDp <= 360 -> 88.dp
-        screenWidthDp <= 420 -> 96.dp
-        else -> 104.dp
-    }
-    // Live/Film/Serie draw their title in LibraryScreenTitle next to Modifica.
-    // Suppress the shell heading by route (not just by an empty title string),
-    // so a future title-map change can never reintroduce the duplicate row.
-    val libraryOwnsHeading = route == "live" || route == "movies" || route == "series"
     val railScrollState = rememberScrollState()
     val railScope = rememberCoroutineScope()
     LiquidGlassBackdrop(Modifier.fillMaxSize()) {
@@ -194,7 +192,7 @@ private fun AdaptiveShell(route: String, tv: Boolean, loading: Boolean, message:
             LiquidGlassSurface(
                 modifier = Modifier
                     .fillMaxHeight()
-                    .width(if (tv) 142.dp else mobileRailWidth),
+                    .width(if (tv) 142.dp else 104.dp),
                 cornerRadius = 26.dp,
                 contentPadding = 7.dp
             ) {
@@ -234,15 +232,8 @@ private fun AdaptiveShell(route: String, tv: Boolean, loading: Boolean, message:
                     }
                 }
             }
-            Column(
-                Modifier.fillMaxSize().padding(
-                    start = if (tv) 28.dp else if (screenWidthDp <= 360) 12.dp else 16.dp,
-                    end = if (tv) 28.dp else if (screenWidthDp <= 360) 12.dp else 16.dp,
-                    top = if (libraryOwnsHeading) 8.dp else 18.dp,
-                    bottom = if (tv) 18.dp else 14.dp
-                )
-            ) {
-                if (!libraryOwnsHeading && title.isNotBlank()) {
+            Column(Modifier.fillMaxSize().padding(horizontal = if (tv) 28.dp else 16.dp, vertical = 18.dp)) {
+                if (title.isNotBlank()) {
                     Text(
                         title,
                         color = glassForeground(),
@@ -787,7 +778,8 @@ private fun MediaCard(
 private data class LibraryCategoryEntry(val filterId: String, val name: String)
 
 /** Category tiles from the independently configurable iOS "Categorie" section. */
-private fun buildLibraryCategoryEntries(categories: List<Category>, counts: Map<String?, Int>): List<LibraryCategoryEntry> {
+private fun buildLibraryCategoryEntries(categories: List<Category>, items: List<MediaItem>): List<LibraryCategoryEntry> {
+    val counts = items.categoryCounts()
     val visible = categories.distinctBy { it.id }
         .filter { (counts[it.id] ?: 0) > 0 }
         .map { LibraryCategoryEntry(it.id, it.name) }
@@ -801,55 +793,29 @@ private fun buildLibraryCategoryEntries(categories: List<Category>, counts: Map<
 
 @Composable
 private fun LibraryScreenTitle(title: String, onCustomize: () -> Unit) {
-    val screenWidthDp = LocalConfiguration.current.screenWidthDp
-    val titleSize = when {
-        screenWidthDp <= 360 -> 24.sp
-        screenWidthDp <= 420 -> 27.sp
-        else -> 30.sp
-    }
-    val rowSpacing = if (screenWidthDp <= 360) 8.dp else 12.dp
-
     Row(
-        modifier = Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 2.dp),
+        Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(rowSpacing)
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text(
             title,
             modifier = Modifier.weight(1f),
             color = glassForeground(),
-            fontSize = titleSize,
+            fontSize = 30.sp,
             fontWeight = FontWeight.Bold,
             maxLines = 1,
-            softWrap = false,
             overflow = TextOverflow.Ellipsis
         )
-        // A fixed hit target makes the glass capsule independent of the title's
-        // intrinsic width. On narrow phones the title ellipsizes instead of
-        // pushing the Modify action into/over other controls.
-        Surface(
-            onClick = onCustomize,
-            modifier = Modifier.width(104.dp).height(40.dp),
-            shape = RoundedCornerShape(50),
-            color = Color.Transparent,
-            contentColor = glassForeground()
-        ) {
-            LiquidGlassPill(modifier = Modifier.fillMaxSize(), suppressHighlight = true) {
+        Surface(onClick = onCustomize, shape = RoundedCornerShape(50), color = Color.Transparent) {
+            LiquidGlassPill {
                 Row(
-                    modifier = Modifier.fillMaxSize(),
+                    Modifier.height(26.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Icon(Icons.Default.Tune, null, tint = glassForeground().copy(.9f), modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(5.dp))
-                    Text(
-                        "Modifica",
-                        color = glassForeground(),
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1,
-                        softWrap = false
-                    )
+                    Text("Modifica", color = glassForeground(), fontSize = 13.sp, fontWeight = FontWeight.Medium)
                 }
             }
         }
@@ -935,8 +901,7 @@ private fun CatalogScreen(
         } else emptyList()
     }
 
-    val categoryCounts = rememberLibraryCategoryCounts(items)
-    val categoryEntries = remember(categories, categoryCounts) { buildLibraryCategoryEntries(categories, categoryCounts) }
+    val categoryEntries = remember(categories, items) { buildLibraryCategoryEntries(categories, items) }
     // Searching spans the whole library, independently of the selected group, as in iOS.
     val filtered = remember(items, filter, parental.lockedIds, searchQuery) {
         val base = if (searchQuery.isNotBlank()) items else items.inCategory(filter)
@@ -999,7 +964,7 @@ private fun CatalogScreen(
             ) {
                 if (!groupAfterSearch) {
                     item(key = "library-groups-$scopeKey-before") {
-                        LibraryHeader(title, categories, items, categoryCounts, filter, { filter = it }, libSettings, vm, allowPoster = detail, showGroups = showGroupChips)
+                        LibraryHeader(title, categories, items, filter, { filter = it }, libSettings, vm, allowPoster = detail, showGroups = showGroupChips)
                     }
                 }
 
@@ -1016,7 +981,7 @@ private fun CatalogScreen(
                             }
                             if (groupAfterSearch) {
                                 item(key = "library-groups-$scopeKey-after-search") {
-                                    LibraryHeader(title, categories, items, categoryCounts, filter, { filter = it }, libSettings, vm, allowPoster = detail, showGroups = showGroupChips)
+                                    LibraryHeader(title, categories, items, filter, { filter = it }, libSettings, vm, allowPoster = detail, showGroups = showGroupChips)
                                 }
                             }
                         }
@@ -1141,8 +1106,7 @@ private fun SeriesScreen(
         } else emptyList()
     }
 
-    val categoryCounts = rememberLibraryCategoryCounts(series)
-    val categoryEntries = remember(categories, categoryCounts) { buildLibraryCategoryEntries(categories, categoryCounts) }
+    val categoryEntries = remember(categories, series) { buildLibraryCategoryEntries(categories, series) }
     val filtered = remember(series, filter, parental.lockedIds, searchQuery) {
         val base = if (searchQuery.isNotBlank()) series else series.inCategory(filter)
         base.withoutIds(parental.lockedIds).matchingText(searchQuery)
@@ -1206,7 +1170,7 @@ private fun SeriesScreen(
             ) {
                 if (!groupAfterSearch) {
                     item(key = "library-groups-series-before") {
-                        LibraryHeader("Serie TV", categories, series, categoryCounts, filter, { filter = it }, libSettings, vm, allowPoster = true, showGroups = showGroupChips)
+                        LibraryHeader("Serie TV", categories, series, filter, { filter = it }, libSettings, vm, allowPoster = true, showGroups = showGroupChips)
                     }
                 }
 
@@ -1218,7 +1182,7 @@ private fun SeriesScreen(
                             }
                             if (groupAfterSearch) {
                                 item(key = "library-groups-series-after-search") {
-                                    LibraryHeader("Serie TV", categories, series, categoryCounts, filter, { filter = it }, libSettings, vm, allowPoster = true, showGroups = showGroupChips)
+                                    LibraryHeader("Serie TV", categories, series, filter, { filter = it }, libSettings, vm, allowPoster = true, showGroups = showGroupChips)
                                 }
                             }
                         }
@@ -1680,6 +1644,7 @@ private fun HomeCustomizationSheet(
     var local by remember(settings, scopeKey) { mutableStateOf(settings) }
     var continueMenu by remember { mutableStateOf(false) }
     var addMenu by remember { mutableStateOf(false) }
+    var tvMoveMenuFor by remember { mutableStateOf<String?>(null) }
     var dragId by remember(scopeKey) { mutableStateOf<String?>(null) }
     var dragStartIndex by remember(scopeKey) { mutableStateOf(0) }
     var dragTranslationPx by remember(scopeKey) { mutableStateOf(0f) }
@@ -1751,12 +1716,12 @@ private fun HomeCustomizationSheet(
         LazyColumn(
             modifier = Modifier.fillMaxWidth().fillMaxHeight(.96f),
             verticalArrangement = Arrangement.spacedBy(9.dp),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp)
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 30.dp)
         ) {
             item(key = "customization-title-$scopeKey") {
                 Text(
                     title,
-                    modifier = Modifier.fillMaxWidth().padding(top = 26.dp, bottom = 37.dp),
+                    modifier = Modifier.fillMaxWidth().padding(top = 26.dp, bottom = 28.dp),
                     color = glassForeground(),
                     fontSize = 17.sp,
                     fontWeight = FontWeight.SemiBold,
@@ -1770,6 +1735,7 @@ private fun HomeCustomizationSheet(
                 Row(
                     Modifier
                         .fillMaxWidth()
+                        .padding(start = 8.dp, end = 12.dp)
                         .height(55.dp)
                         .animateItem()
                         .graphicsLayer {
@@ -1783,10 +1749,9 @@ private fun HomeCustomizationSheet(
                         .background(glassForeground().copy(if (isDragging) .13f else .09f)),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Spacer(Modifier.width(8.dp))
                     Icon(
                         Icons.Default.DragHandle,
-                        contentDescription = if (isTv) "Sposta ${homeSectionTitles[id] ?: id}: usa su/giù o trascina" else "Trascina per spostare ${homeSectionTitles[id] ?: id}",
+                        contentDescription = "Trascina per spostare ${homeSectionTitles[id] ?: id}",
                         tint = glassForeground().copy(.58f),
                         modifier = Modifier
                             .width(44.dp)
@@ -1833,30 +1798,6 @@ private fun HomeCustomizationSheet(
                                     }
                                 )
                             }
-                            .then(
-                                if (isTv) Modifier
-                                    .focusable()
-                                    .onKeyEvent { event ->
-                                        if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
-                                        val delta = when (event.key) {
-                                            Key.DirectionUp -> -1
-                                            Key.DirectionDown -> 1
-                                            else -> 0
-                                        }
-                                        if (delta == 0) return@onKeyEvent false
-                                        val current = displayOrder.indexOf(id)
-                                        val target = (current + delta).coerceIn(0, displayOrder.lastIndex.coerceAtLeast(0))
-                                        if (current >= 0 && target != current) {
-                                            val reordered = displayOrder.toMutableList().apply {
-                                                val moved = removeAt(current)
-                                                add(target, moved)
-                                            }
-                                            saveLayout(reordered + hidden, hiddenSet)
-                                        }
-                                        true
-                                    }
-                                else Modifier
-                            )
                     )
                     Column(
                         Modifier.weight(1f).padding(start = 5.dp),
@@ -1913,6 +1854,49 @@ private fun HomeCustomizationSheet(
                             }
                         }
                     }
+                    if (isTv) {
+                        Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
+                            Surface(
+                                onClick = { tvMoveMenuFor = id },
+                                modifier = Modifier.size(40.dp),
+                                shape = RoundedCornerShape(50),
+                                color = Color.Transparent,
+                                contentColor = glassForeground()
+                            ) {
+                                LiquidGlassSurface(Modifier.fillMaxSize(), cornerRadius = 50.dp, contentPadding = 0.dp) {
+                                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                        Icon(Icons.Default.MoreVert, "Riordina", tint = glassForeground().copy(.75f), modifier = Modifier.size(19.dp))
+                                    }
+                                }
+                            }
+                            DropdownMenu(expanded = tvMoveMenuFor == id, onDismissRequest = { tvMoveMenuFor = null }) {
+                                DropdownMenuItem(
+                                    text = { Text("Sposta su") },
+                                    leadingIcon = { Icon(Icons.Default.KeyboardArrowUp, null) },
+                                    enabled = index > 0,
+                                    onClick = {
+                                        val reordered = displayOrder.toMutableList()
+                                        val moved = reordered.removeAt(index)
+                                        reordered.add(index - 1, moved)
+                                        saveLayout(reordered + hidden, hiddenSet)
+                                        tvMoveMenuFor = null
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Sposta giù") },
+                                    leadingIcon = { Icon(Icons.Default.KeyboardArrowDown, null) },
+                                    enabled = index < displayOrder.lastIndex,
+                                    onClick = {
+                                        val reordered = displayOrder.toMutableList()
+                                        val moved = reordered.removeAt(index)
+                                        reordered.add(index + 1, moved)
+                                        saveLayout(reordered + hidden, hiddenSet)
+                                        tvMoveMenuFor = null
+                                    }
+                                )
+                            }
+                        }
+                    }
                     Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
                         Surface(
                             onClick = {
@@ -1932,11 +1916,10 @@ private fun HomeCustomizationSheet(
                             }
                         }
                     }
-                    Spacer(Modifier.width(12.dp))
                 }
             }
             item(key = "customization-add-$scopeKey") {
-                Box(Modifier.fillMaxWidth().padding(top = 17.dp, bottom = 32.dp), contentAlignment = Alignment.Center) {
+                Box(Modifier.fillMaxWidth().padding(top = 8.dp), contentAlignment = Alignment.Center) {
                     Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
                         Surface(
                             onClick = { addMenu = true },
