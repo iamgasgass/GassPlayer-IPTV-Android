@@ -12,7 +12,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.relocation.BringIntoViewRequester
@@ -22,6 +24,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -37,10 +40,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.viewinterop.AndroidView
@@ -48,6 +53,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -55,6 +61,7 @@ import coil3.compose.AsyncImage
 import com.gassplayer.android.GassPlayerApplication
 import com.gassplayer.android.data.*
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 import java.util.UUID
 
 private val Blue = Color(0xFF3478F6)
@@ -88,20 +95,20 @@ fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
     val loading by vm.loading.collectAsStateWithLifecycle()
     val message by vm.message.collectAsStateWithLifecycle()
     AdaptiveShell(route, tv, loading, message, onRetry = { vm.refresh(true) }, onRoute = { route = it }, title = when(route) {
-        "home" -> "GassPlayer"; "live" -> "Live TV"; "movies" -> "Film"; "series" -> "Serie"; "epg" -> "Guida TV"; "search" -> "Cerca"; "sources" -> "Sorgenti"; "source-manager" -> "Gestisci sorgenti"; "downloads" -> "Download"; "settings" -> "Impostazioni"; "home-customize" -> "Personalizza Home"; "live-customize" -> "Sezioni Live TV"; "movies-customize" -> "Sezioni Film"; "series-customize" -> "Sezioni Serie TV"; "vpn" -> "VPN"; "parental" -> "Controllo genitori"; "diagnostics" -> "Diagnostica"; "backup" -> "Backup e migrazione"; "epg-manage" -> "Fonti EPG"; "merged" -> "Playlist unificate"; else -> "GassPlayer"
+        "home" -> "GassPlayer"; "live", "movies", "series" -> ""; "epg" -> "Guida TV"; "search" -> "Cerca"; "sources" -> "Sorgenti"; "source-manager" -> "Gestisci sorgenti"; "downloads" -> "Download"; "settings" -> "Impostazioni"; "home-customize", "live-customize", "movies-customize", "series-customize" -> ""; "vpn" -> "VPN"; "parental" -> "Controllo genitori"; "diagnostics" -> "Diagnostica"; "backup" -> "Backup e migrazione"; "epg-manage" -> "Fonti EPG"; "merged" -> "Playlist unificate"; else -> "GassPlayer"
     }) {
         when (route) {
             "home" -> HomeScreen(vm, catalog, favorite, watch, sources, onRoute = { route = it }, onPlay = { playerItem = it })
             "live" -> CatalogScreen("Live TV", catalog?.live.orEmpty(), catalog?.liveCategories.orEmpty(), favorite, parental, vm, onPlay = { playerItem = it }, showNumbers = settings.showChannelNumbers, scopeKey = "live", onCustomize = { route = "live-customize" })
-            "movies" -> CatalogScreen("Film", catalog?.movies.orEmpty(), catalog?.vodCategories.orEmpty(), favorite, parental, vm, onPlay = { playerItem = it }, detail = true, scopeKey = "movies", onCustomize = { route = "movies-customize" })
+            "movies" -> CatalogScreen("Film (VOD)", catalog?.movies.orEmpty(), catalog?.vodCategories.orEmpty(), favorite, parental, vm, onPlay = { playerItem = it }, detail = true, scopeKey = "movies", onCustomize = { route = "movies-customize" })
             "series" -> SeriesScreen(catalog?.series.orEmpty(), catalog?.episodes.orEmpty(), catalog?.seriesCategories.orEmpty(), favorite, parental, vm, onPlay = { playerItem = it }, onCustomize = { route = "series-customize" })
             "epg" -> EpgGridScreen(app, vm, catalog?.live.orEmpty(), catalog?.liveCategories.orEmpty(), favorite, settings, onPlay = { playerItem = it })
             "epg-manage" -> ExternalEpgManageScreen(app, onBack = { route = epgManageReturnRoute })
             "merged" -> MergedPlaylistScreen(app)
-            "home-customize" -> HomeCustomizationScreen(vm, "home", onBack = { route = "home" })
-            "live-customize" -> HomeCustomizationScreen(vm, "live", onBack = { route = "live" })
-            "movies-customize" -> HomeCustomizationScreen(vm, "movies", onBack = { route = "movies" })
-            "series-customize" -> HomeCustomizationScreen(vm, "series", onBack = { route = "series" })
+            "home-customize" -> HomeCustomizationScreen(vm, "home", onBack = { route = "home" }, isTv = tv)
+            "live-customize" -> HomeCustomizationScreen(vm, "live", onBack = { route = "live" }, isTv = tv)
+            "movies-customize" -> HomeCustomizationScreen(vm, "movies", onBack = { route = "movies" }, isTv = tv)
+            "series-customize" -> HomeCustomizationScreen(vm, "series", onBack = { route = "series" }, isTv = tv)
             "trakt" -> TraktScreen(app, settings, vm)
             "search" -> SearchScreen(app, catalog, onPlay = { playerItem = it }, onRoute = { route = it })
             "sources" -> SourcesView(app, vm, onRoute = { route = it }, onManage = { managerSourceId = it.id; route = "source-manager" })
@@ -176,13 +183,19 @@ private fun AdaptiveShell(route: String, tv: Boolean, loading: Boolean, message:
                 }
             }
             Column(Modifier.fillMaxSize().padding(horizontal = if (tv) 28.dp else 16.dp, vertical = 18.dp)) {
-                Text(
-                    title,
-                    color = glassForeground(),
-                    fontSize = if (tv) 32.sp else 26.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.fillMaxWidth()
-                )
+                if (title.isNotBlank()) {
+                    Text(
+                        title,
+                        color = glassForeground(),
+                        fontSize = if (tv) 32.sp else 26.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(16.dp))
+                } else {
+                    Spacer(Modifier.height(2.dp))
+                }
+                val showStatusBanner = loading || (!message.isNullOrBlank() && route != "sources" && route != "settings")
                 if (loading) {
                     Spacer(Modifier.height(8.dp)); LinearProgressIndicator(Modifier.fillMaxWidth(), color = Color(0xFF8CB7FF), trackColor = Color.White.copy(.08f))
                     Text("Caricamento playlist…", color = glassForeground().copy(.6f), fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
@@ -195,7 +208,8 @@ private fun AdaptiveShell(route: String, tv: Boolean, loading: Boolean, message:
                         }
                     }
                 }
-                Spacer(Modifier.height(16.dp)); Box(Modifier.fillMaxSize()) { content() }
+                if (showStatusBanner) Spacer(Modifier.height(12.dp))
+                Box(Modifier.fillMaxSize()) { content() }
             }
         }
     }
@@ -650,9 +664,15 @@ private fun TrendingCard(item: MetadataResult, isSeries: Boolean, onClick: () ->
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun MediaCard(item: MediaItem, favorite: Boolean, onClick: () -> Unit, onToggleFavorite: (() -> Unit)? = null) {
-    val w = if (item.kind == MediaKind.LIVE) 190.dp else 160.dp
-    val h = if (item.kind == MediaKind.LIVE) 108.dp else 220.dp
+private fun MediaCard(
+    item: MediaItem,
+    favorite: Boolean,
+    onClick: () -> Unit,
+    onToggleFavorite: (() -> Unit)? = null,
+    widthOverride: Dp? = null
+) {
+    val w = widthOverride ?: if (item.kind == MediaKind.LIVE) 190.dp else 160.dp
+    val h = w * if (item.kind == MediaKind.LIVE) (108f / 190f) else (220f / 160f)
     var focused by remember(item.id) { mutableStateOf(false) }
     val scale by androidx.compose.animation.core.animateFloatAsState(if (focused) 1.025f else 1f, label = "media-card-focus")
     Surface(
@@ -704,6 +724,91 @@ private fun MediaCard(item: MediaItem, favorite: Boolean, onClick: () -> Unit, o
     }
 }
 
+private data class LibraryCategoryEntry(val filterId: String, val name: String)
+
+/** Category tiles from the independently configurable iOS "Categorie" section. */
+private fun buildLibraryCategoryEntries(categories: List<Category>, items: List<MediaItem>): List<LibraryCategoryEntry> {
+    val counts = items.categoryCounts()
+    val visible = categories.distinctBy { it.id }
+        .filter { (counts[it.id] ?: 0) > 0 }
+        .map { LibraryCategoryEntry(it.id, it.name) }
+    val knownIds = visible.mapTo(HashSet()) { it.filterId }
+    val other = counts.keys.filterNotNull()
+        .filter { (counts[it] ?: 0) > 0 && it !in knownIds }
+        .map { LibraryCategoryEntry(it, it) }
+    val uncategorized = if ((counts[null] ?: 0) > 0) listOf(LibraryCategoryEntry(GROUP_NONE, "Senza categoria")) else emptyList()
+    return visible + other + uncategorized
+}
+
+@Composable
+private fun LibraryScreenTitle(title: String, onCustomize: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text(
+            title,
+            modifier = Modifier.weight(1f),
+            color = glassForeground(),
+            fontSize = 30.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Surface(onClick = onCustomize, shape = RoundedCornerShape(50), color = Color.Transparent) {
+            LiquidGlassPill {
+                Row(
+                    Modifier.height(26.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(Icons.Default.Tune, null, tint = glassForeground().copy(.9f), modifier = Modifier.size(16.dp))
+                    Text("Modifica", color = glassForeground(), fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LibraryCategoryTile(
+    name: String,
+    selected: Boolean,
+    width: Dp,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.width(width).height(68.dp),
+        shape = RoundedCornerShape(16.dp),
+        color = Color.Transparent,
+        border = BorderStroke(
+            if (selected) 1.4.dp else .5.dp,
+            if (selected) Color(0xFF82ACFF).copy(.9f) else glassForeground().copy(.16f)
+        )
+    ) {
+        LiquidGlassSurface(
+            modifier = Modifier.fillMaxSize(),
+            cornerRadius = 16.dp,
+            contentPadding = 0.dp,
+            highlighted = selected,
+            suppressTopHighlight = true
+        ) {
+            Box(Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.TopStart) {
+                Text(
+                    name,
+                    color = glassForeground(),
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun CatalogScreen(
     title: String,
@@ -736,95 +841,170 @@ private fun CatalogScreen(
     val visibleSections = sectionOrder.filterNot { it in hiddenSections }
     LaunchedEffect(visibleSections.contains("categories")) { if (!visibleSections.contains("categories")) filter = null }
     LaunchedEffect(visibleSections.contains("search")) { if (!visibleSections.contains("search")) searchQuery = "" }
-    val trendSection = "trendingMovies"
 
-    LaunchedEffect(libSettings.tmdbApiKey, visibleSections.contains(trendSection), scopeKey) {
-        trending = if (detail && visibleSections.contains(trendSection) && libSettings.tmdbApiKey.isNotBlank()) {
+    LaunchedEffect(libSettings.tmdbApiKey, visibleSections.contains("trendingMovies"), scopeKey) {
+        trending = if (detail && visibleSections.contains("trendingMovies") && libSettings.tmdbApiKey.isNotBlank()) {
             runCatching { vm.app.tmdb.trending("movie", libSettings.tmdbApiKey) }.getOrDefault(emptyList())
         } else emptyList()
     }
 
-    // Keep disk-backed catalogs lazy: applying Kotlin .filter to DbList here used to
-    // decode/scan every item on the main thread whenever Live/Film changed route.
-    val baseFiltered = remember(items, filter, parental.lockedIds) {
-        items.inCategory(filter).withoutIds(parental.lockedIds)
-    }
-    val filtered = remember(baseFiltered, searchQuery) {
-        baseFiltered.matchingText(searchQuery)
+    val categoryEntries = remember(categories, items) { buildLibraryCategoryEntries(categories, items) }
+    // Searching spans the whole library, independently of the selected group, as in iOS.
+    val filtered = remember(items, filter, parental.lockedIds, searchQuery) {
+        val base = if (searchQuery.isNotBlank()) items else items.inCategory(filter)
+        base.withoutIds(parental.lockedIds).matchingText(searchQuery)
     }
     val watchedIds = remember(watch) { watch.filter { it.kind == MediaKind.MOVIE }.associateBy { it.contentId } }
     val continueItems = remember(items, watch, detail) {
         if (!detail) emptyList() else items.onlyIds(watchedIds.keys)
             .sortedByDescending { watchedIds[it.id]?.lastWatchedMs ?: 0L }
     }
+    val listState = rememberLazyListState()
+    val scrollScope = rememberCoroutineScope()
+    val showContinue = detail && searchQuery.isBlank() && continueItems.isNotEmpty()
+    val showTrending = detail && searchQuery.isBlank()
+    val visibleContentSections = if (searchQuery.isNotBlank()) visibleSections.filter { it == "search" } else visibleSections
+    val groupAfterSearch = libSettings.groupUIStyle != "espansibile" && visibleSections.firstOrNull() == "search"
 
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(title, color = glassForeground(), fontSize = 28.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-            TextButton(onClick = onCustomize) {
-                Icon(Icons.Default.Tune, null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(5.dp))
-                Text("Modifica")
+        LibraryScreenTitle(title, onCustomize)
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+            val tileColumns = ((maxWidth.value + 9f) / 159f).toInt().coerceAtLeast(1)
+            val tileWidth = ((maxWidth.value - 9f * (tileColumns - 1)) / tileColumns).dp.coerceAtMost(220.dp)
+            val categoryRowCount = if (categoryEntries.isEmpty()) 0 else (categoryEntries.size + tileColumns - 1) / tileColumns
+            val gridMin = libraryGridMin(libSettings, !detail)
+            val gridColumns = ((maxWidth.value + 14f) / (gridMin.value + 14f)).toInt().coerceAtLeast(1)
+            val cellWidth = ((maxWidth.value - 14f * (gridColumns - 1)) / gridColumns).dp
+            val preferredCardWidth = when {
+                scopeKey == "live" -> 190.dp
+                libSettings.density == "poster" -> 200.dp
+                libSettings.density == "compact" || libSettings.density == "compatta" -> 128.dp
+                else -> 160.dp
             }
-        }
-
-        var categoryHeaderShown = false
-        visibleSections.forEach { section ->
-            key(section) {
-            when (section) {
-                "search" -> EpgStyleSearchField(
-                    value = searchQuery,
-                    onValueChange = { searchQuery = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    placeholder = if (scopeKey == "live") "Cerca per nome del canale" else "Cerca per nome del film"
-                )
-                "categories" -> {
-                    LibraryHeader(title, categories, items, filter, { filter = it }, libSettings, vm, allowPoster = detail, showGroups = true)
-                    categoryHeaderShown = true
-                }
-                "continueWatching" -> if (detail && searchQuery.isBlank()) {
-                    if (continueItems.isNotEmpty()) Section("Continua a guardare", null) {
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            items(continueItems.take(24), key = { it.id }) { item ->
-                                MediaCard(item, vm.appFavorite(favorite, item), onClick = { selected = item }, onToggleFavorite = { vm.toggleFavorite(item) })
-                            }
+            val cardWidth = cellWidth.coerceAtMost(preferredCardWidth)
+            val mediaRowCount = if (filtered.isEmpty()) 0 else (filtered.size + gridColumns - 1) / gridColumns
+            val showGroupChips = searchQuery.isBlank()
+            val resultStartIndex = remember(
+                visibleContentSections, groupAfterSearch, categoryEntries.size, categoryRowCount,
+                showContinue, showTrending, searchQuery
+            ) {
+                var index = if (groupAfterSearch) 0 else 1
+                visibleContentSections.forEach { section ->
+                    when (section) {
+                        "search" -> {
+                            index++
+                            if (groupAfterSearch) index++
                         }
+                        "categories" -> if (categoryEntries.isNotEmpty()) index += 1 + categoryRowCount
+                        "continueWatching" -> if (showContinue) index++
+                        "trendingMovies" -> if (showTrending) index++
                     }
                 }
-                "trendingMovies" -> if (detail && searchQuery.isBlank()) {
-                    Section("Film di tendenza", null) {
-                        if (libSettings.tmdbApiKey.isBlank()) Text("Configura la chiave TMDB nelle impostazioni per vedere le tendenze.", color = glassForeground(.6f), fontSize = 12.sp)
-                        else if (trending.isEmpty()) Text("Tendenze non disponibili: controlla la rete e la chiave TMDB.", color = glassForeground(.6f), fontSize = 12.sp)
-                        else LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            items(trending.take(16), key = { it.id }) { trend ->
-                                TrendingCard(trend, false) {
-                                    val match = items.firstOrNull { it.title.equals(trend.title, ignoreCase = true) }
-                                        ?: items.firstOrNull { it.title.contains(trend.title, ignoreCase = true) }
-                                    if (match != null) selected = match else showTrendUnavailable = true
+                index
+            }
+
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = PaddingValues(bottom = 40.dp)
+            ) {
+                if (!groupAfterSearch) {
+                    item(key = "library-groups-$scopeKey-before") {
+                        LibraryHeader(title, categories, items, filter, { filter = it }, libSettings, vm, allowPoster = detail, showGroups = showGroupChips)
+                    }
+                }
+
+                visibleContentSections.forEach { section ->
+                    when (section) {
+                        "search" -> {
+                            item(key = "library-search-$scopeKey") {
+                                EpgStyleSearchField(
+                                    value = searchQuery,
+                                    onValueChange = { searchQuery = it },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    placeholder = if (scopeKey == "live") "Cerca per nome del canale" else "Cerca per nome del film"
+                                )
+                            }
+                            if (groupAfterSearch) {
+                                item(key = "library-groups-$scopeKey-after-search") {
+                                    LibraryHeader(title, categories, items, filter, { filter = it }, libSettings, vm, allowPoster = detail, showGroups = showGroupChips)
+                                }
+                            }
+                        }
+                        "categories" -> if (categoryEntries.isNotEmpty()) {
+                            item(key = "library-category-title-$scopeKey") {
+                                Text("Categorie", color = glassForeground().copy(.72f), fontSize = 18.sp, fontWeight = FontWeight.Medium)
+                            }
+                            items(count = categoryRowCount, key = { rowIndex -> "library-category-row-$scopeKey-$rowIndex" }) { rowIndex ->
+                                Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                                    val firstIndex = rowIndex * tileColumns
+                                    for (index in firstIndex until minOf(categoryEntries.size, firstIndex + tileColumns)) {
+                                        val entry = categoryEntries[index]
+                                        LibraryCategoryTile(entry.name, filter == entry.filterId, tileWidth) {
+                                            filter = if (filter == entry.filterId) null else entry.filterId
+                                            scrollScope.launch { listState.animateScrollToItem(resultStartIndex.coerceAtLeast(0)) }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        "continueWatching" -> if (showContinue) {
+                            item(key = "library-continue-$scopeKey") {
+                                Section("Continua a guardare", null) {
+                                    LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                        items(continueItems.take(24), key = { it.id }) { item ->
+                                            MediaCard(item, vm.appFavorite(favorite, item), onClick = { selected = item }, onToggleFavorite = { vm.toggleFavorite(item) })
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        "trendingMovies" -> if (showTrending) {
+                            item(key = "library-trending-$scopeKey") {
+                                Section("Film di tendenza", null) {
+                                    if (libSettings.tmdbApiKey.isBlank()) Text("Configura la chiave TMDB nelle impostazioni per vedere le tendenze.", color = glassForeground(.6f), fontSize = 12.sp)
+                                    else if (trending.isEmpty()) Text("Tendenze non disponibili: controlla la rete e la chiave TMDB.", color = glassForeground(.6f), fontSize = 12.sp)
+                                    else LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                        items(trending.take(16), key = { it.id }) { trend ->
+                                            TrendingCard(trend, false) {
+                                                val match = items.firstOrNull { it.title.equals(trend.title, ignoreCase = true) }
+                                                    ?: items.firstOrNull { it.title.contains(trend.title, ignoreCase = true) }
+                                                if (match != null) selected = match else showTrendUnavailable = true
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
                 }
-            }
-            }
-        }
-        if (!categoryHeaderShown) {
-            LibraryHeader(title, categories, items, filter, { filter = it }, libSettings, vm, allowPoster = detail, showGroups = false)
-        }
-        if (filtered.isEmpty()) EmptyHint(when {
-            items.isEmpty() -> "Nessun contenuto: controlla la sorgente in Sorgenti e riprova a ricaricare."
-            searchQuery.isNotBlank() -> "Nessun risultato per ‘${searchQuery.trim()}’."
-            else -> "Nessun risultato per questo gruppo."
-        }) else LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = libraryGridMin(libSettings, !detail)),
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-            contentPadding = PaddingValues(bottom = 40.dp)
-        ) {
-            items(filtered, key = { it.id }) { item ->
-                MediaCard(item, vm.appFavorite(favorite, item), onClick = { if (detail) selected = item else onPlay(item) }, onToggleFavorite = { vm.toggleFavorite(item) })
+
+                if (filtered.isEmpty()) {
+                    item(key = "library-empty-$scopeKey") {
+                        EmptyHint(when {
+                            items.isEmpty() -> "Nessun contenuto: controlla la sorgente in Sorgenti e riprova a ricaricare."
+                            searchQuery.isNotBlank() -> "Nessun risultato per ‘${searchQuery.trim()}’."
+                            else -> "Nessun risultato per questo gruppo."
+                        })
+                    }
+                } else {
+                    items(count = mediaRowCount, key = { rowIndex -> "library-media-row-$scopeKey-$rowIndex" }) { rowIndex ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                            val firstIndex = rowIndex * gridColumns
+                            for (index in firstIndex until minOf(filtered.size, firstIndex + gridColumns)) {
+                                val item = filtered[index]
+                                MediaCard(
+                                    item,
+                                    vm.appFavorite(favorite, item),
+                                    onClick = { if (detail) selected = item else onPlay(item) },
+                                    onToggleFavorite = { vm.toggleFavorite(item) },
+                                    widthOverride = cardWidth
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -836,8 +1016,6 @@ private fun CatalogScreen(
         text = { Text("Questo titolo di tendenza non è presente nella playlist attiva.") }
     )
 }
-
-private fun onPlayWithPosition(onPlay: (MediaItem) -> Unit, item: MediaItem, position: Long) { onPlay(item.copy(metadataTag = "resume:$position")) }
 
 @Composable
 private fun SeriesScreen(
@@ -873,12 +1051,10 @@ private fun SeriesScreen(
         } else emptyList()
     }
 
-    // Apply category, parental and text predicates in SQLite for large playlist catalogs.
-    val baseFiltered = remember(series, filter, parental.lockedIds) {
-        series.inCategory(filter).withoutIds(parental.lockedIds)
-    }
-    val filtered = remember(baseFiltered, searchQuery) {
-        baseFiltered.matchingText(searchQuery)
+    val categoryEntries = remember(categories, series) { buildLibraryCategoryEntries(categories, series) }
+    val filtered = remember(series, filter, parental.lockedIds, searchQuery) {
+        val base = if (searchQuery.isNotBlank()) series else series.inCategory(filter)
+        base.withoutIds(parental.lockedIds).matchingText(searchQuery)
     }
     val watchedById = remember(watch) { watch.filter { it.kind == MediaKind.EPISODE || it.kind == MediaKind.SERIES }.associateBy { it.contentId } }
     val continueSectionVisible = "continueWatching" in visibleSections
@@ -891,55 +1067,138 @@ private fun SeriesScreen(
         else series.onlyIds(watchedById.keys + watchedSeriesIds)
             .sortedByDescending { watchedById[it.id]?.lastWatchedMs ?: 0L }
     }
+    val showContinue = searchQuery.isBlank() && continueItems.isNotEmpty()
+    val showTrending = searchQuery.isBlank()
+    val visibleContentSections = if (searchQuery.isNotBlank()) visibleSections.filter { it == "search" } else visibleSections
+    val groupAfterSearch = libSettings.groupUIStyle != "espansibile" && visibleSections.firstOrNull() == "search"
+    val listState = rememberLazyListState()
+    val scrollScope = rememberCoroutineScope()
 
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("Serie", color = glassForeground(), fontSize = 28.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-            TextButton(onClick = onCustomize) { Icon(Icons.Default.Tune, null, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(5.dp)); Text("Modifica") }
-        }
-        var categoryHeaderShown = false
-        visibleSections.forEach { section ->
-            key(section) {
-            when (section) {
-                "search" -> EpgStyleSearchField(value = searchQuery, onValueChange = { searchQuery = it }, modifier = Modifier.fillMaxWidth(), placeholder = "Cerca per nome della serie")
-                "categories" -> {
-                    LibraryHeader("Serie", categories, series, filter, { filter = it }, libSettings, vm, allowPoster = true, showGroups = true)
-                    categoryHeaderShown = true
-                }
-                "continueWatching" -> if (searchQuery.isBlank() && continueItems.isNotEmpty()) Section("Continua a guardare", null) {
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        items(continueItems.take(24), key = { it.id }) { item -> MediaCard(item, item.id in favorite.series, onClick = { selected = item }, onToggleFavorite = { vm.toggleFavorite(item) }) }
+        LibraryScreenTitle("Serie TV", onCustomize)
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+            val tileColumns = ((maxWidth.value + 9f) / 159f).toInt().coerceAtLeast(1)
+            val tileWidth = ((maxWidth.value - 9f * (tileColumns - 1)) / tileColumns).dp.coerceAtMost(220.dp)
+            val categoryRowCount = if (categoryEntries.isEmpty()) 0 else (categoryEntries.size + tileColumns - 1) / tileColumns
+            val gridMin = libraryGridMin(libSettings, false)
+            val gridColumns = ((maxWidth.value + 14f) / (gridMin.value + 14f)).toInt().coerceAtLeast(1)
+            val cellWidth = ((maxWidth.value - 14f * (gridColumns - 1)) / gridColumns).dp
+            val preferredCardWidth = when {
+                libSettings.density == "poster" -> 200.dp
+                libSettings.density == "compact" || libSettings.density == "compatta" -> 128.dp
+                else -> 160.dp
+            }
+            val cardWidth = cellWidth.coerceAtMost(preferredCardWidth)
+            val mediaRowCount = if (filtered.isEmpty()) 0 else (filtered.size + gridColumns - 1) / gridColumns
+            val showGroupChips = searchQuery.isBlank()
+            val resultStartIndex = remember(
+                visibleContentSections, groupAfterSearch, categoryEntries.size, categoryRowCount,
+                showContinue, showTrending, searchQuery
+            ) {
+                var index = if (groupAfterSearch) 0 else 1
+                visibleContentSections.forEach { section ->
+                    when (section) {
+                        "search" -> { index++; if (groupAfterSearch) index++ }
+                        "categories" -> if (categoryEntries.isNotEmpty()) index += 1 + categoryRowCount
+                        "continueWatching" -> if (showContinue) index++
+                        "trendingSeries" -> if (showTrending) index++
                     }
                 }
-                "trendingSeries" -> if (searchQuery.isBlank()) Section("Serie di tendenza", null) {
-                    if (libSettings.tmdbApiKey.isBlank()) Text("Configura la chiave TMDB nelle impostazioni per vedere le tendenze.", color = glassForeground(.6f), fontSize = 12.sp)
-                    else if (trending.isEmpty()) Text("Tendenze non disponibili: controlla la rete e la chiave TMDB.", color = glassForeground(.6f), fontSize = 12.sp)
-                    else LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        items(trending.take(16), key = { it.id }) { trend ->
-                            TrendingCard(trend, true) {
-                                val match = series.firstOrNull { it.title.equals(trend.title, ignoreCase = true) }
-                                    ?: series.firstOrNull { it.title.contains(trend.title, ignoreCase = true) }
-                                if (match != null) selected = match else showTrendUnavailable = true
+                index
+            }
+
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = PaddingValues(bottom = 40.dp)
+            ) {
+                if (!groupAfterSearch) {
+                    item(key = "library-groups-series-before") {
+                        LibraryHeader("Serie TV", categories, series, filter, { filter = it }, libSettings, vm, allowPoster = true, showGroups = showGroupChips)
+                    }
+                }
+
+                visibleContentSections.forEach { section ->
+                    when (section) {
+                        "search" -> {
+                            item(key = "library-search-series") {
+                                EpgStyleSearchField(value = searchQuery, onValueChange = { searchQuery = it }, modifier = Modifier.fillMaxWidth(), placeholder = "Cerca per nome della serie")
+                            }
+                            if (groupAfterSearch) {
+                                item(key = "library-groups-series-after-search") {
+                                    LibraryHeader("Serie TV", categories, series, filter, { filter = it }, libSettings, vm, allowPoster = true, showGroups = showGroupChips)
+                                }
+                            }
+                        }
+                        "categories" -> if (categoryEntries.isNotEmpty()) {
+                            item(key = "library-category-title-series") {
+                                Text("Categorie", color = glassForeground().copy(.72f), fontSize = 18.sp, fontWeight = FontWeight.Medium)
+                            }
+                            items(count = categoryRowCount, key = { rowIndex -> "library-category-row-series-$rowIndex" }) { rowIndex ->
+                                Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                                    val firstIndex = rowIndex * tileColumns
+                                    for (index in firstIndex until minOf(categoryEntries.size, firstIndex + tileColumns)) {
+                                        val entry = categoryEntries[index]
+                                        LibraryCategoryTile(entry.name, filter == entry.filterId, tileWidth) {
+                                            filter = if (filter == entry.filterId) null else entry.filterId
+                                            scrollScope.launch { listState.animateScrollToItem(resultStartIndex.coerceAtLeast(0)) }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        "continueWatching" -> if (showContinue) {
+                            item(key = "library-continue-series") {
+                                Section("Continua a guardare", null) {
+                                    LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                        items(continueItems.take(24), key = { it.id }) { item ->
+                                            MediaCard(item, item.id in favorite.series, onClick = { selected = item }, onToggleFavorite = { vm.toggleFavorite(item) })
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        "trendingSeries" -> if (showTrending) {
+                            item(key = "library-trending-series") {
+                                Section("Serie di tendenza", null) {
+                                    if (libSettings.tmdbApiKey.isBlank()) Text("Configura la chiave TMDB nelle impostazioni per vedere le tendenze.", color = glassForeground(.6f), fontSize = 12.sp)
+                                    else if (trending.isEmpty()) Text("Tendenze non disponibili: controlla la rete e la chiave TMDB.", color = glassForeground(.6f), fontSize = 12.sp)
+                                    else LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                        items(trending.take(16), key = { it.id }) { trend ->
+                                            TrendingCard(trend, true) {
+                                                val match = series.firstOrNull { it.title.equals(trend.title, ignoreCase = true) }
+                                                    ?: series.firstOrNull { it.title.contains(trend.title, ignoreCase = true) }
+                                                if (match != null) selected = match else showTrendUnavailable = true
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (filtered.isEmpty()) {
+                    item(key = "library-empty-series") {
+                        EmptyHint(when {
+                            series.isEmpty() -> "Nessuna serie: controlla la sorgente e ricarica."
+                            searchQuery.isNotBlank() -> "Nessun risultato per ‘${searchQuery.trim()}’."
+                            else -> "Nessun risultato per questo gruppo."
+                        })
+                    }
+                } else {
+                    items(count = mediaRowCount, key = { rowIndex -> "library-media-row-series-$rowIndex" }) { rowIndex ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                            val firstIndex = rowIndex * gridColumns
+                            for (index in firstIndex until minOf(filtered.size, firstIndex + gridColumns)) {
+                                val item = filtered[index]
+                                MediaCard(item, item.id in favorite.series, onClick = { selected = item }, onToggleFavorite = { vm.toggleFavorite(item) }, widthOverride = cardWidth)
                             }
                         }
                     }
                 }
             }
-            }
-        }
-        if (!categoryHeaderShown) LibraryHeader("Serie", categories, series, filter, { filter = it }, libSettings, vm, allowPoster = true, showGroups = false)
-        if (filtered.isEmpty()) EmptyHint(when {
-            series.isEmpty() -> "Nessuna serie: controlla la sorgente e ricarica."
-            searchQuery.isNotBlank() -> "Nessun risultato per ‘${searchQuery.trim()}’."
-            else -> "Nessun risultato per questo gruppo."
-        }) else LazyVerticalGrid(
-            GridCells.Adaptive(libraryGridMin(libSettings, false)),
-            modifier = Modifier.weight(1f),
-            contentPadding = PaddingValues(bottom = 40.dp),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            items(filtered, key = { it.id }) { item -> MediaCard(item, item.id in favorite.series, onClick = { selected = item }, onToggleFavorite = { vm.toggleFavorite(item) }) }
         }
     }
     if (showTrendUnavailable) AlertDialog(onDismissRequest = { showTrendUnavailable = false }, confirmButton = { TextButton(onClick = { showTrendUnavailable = false }) { Text("OK") } }, title = { Text("Non disponibile nella sorgente") }, text = { Text("Questa serie di tendenza non è presente nella playlist attiva.") })
@@ -1320,10 +1579,18 @@ private fun TraktScreen(app: GassPlayerApplication, settings: AppSettings, vm: M
 
 @Composable
 @OptIn(ExperimentalFoundationApi::class)
-private fun HomeCustomizationScreen(vm: MainViewModel, scopeKey: String = "home", onBack: () -> Unit = {}) {
+private fun HomeCustomizationScreen(vm: MainViewModel, scopeKey: String = "home", onBack: () -> Unit = {}, isTv: Boolean = false) {
     val settings by vm.settings.collectAsStateWithLifecycle()
     var local by remember(settings, scopeKey) { mutableStateOf(settings) }
     var continueMenu by remember { mutableStateOf(false) }
+    var addMenu by remember { mutableStateOf(false) }
+    var tvMoveMenuFor by remember { mutableStateOf<String?>(null) }
+    var dragId by remember(scopeKey) { mutableStateOf<String?>(null) }
+    var dragStartIndex by remember(scopeKey) { mutableStateOf(0) }
+    var dragTranslationPx by remember(scopeKey) { mutableStateOf(0f) }
+    var dragOriginalOrder by remember(scopeKey) { mutableStateOf<List<String>>(emptyList()) }
+    var dragOrder by remember(scopeKey) { mutableStateOf<List<String>?>(null) }
+
     val defaults = when (scopeKey) {
         "live" -> defaultLiveSections
         "movies" -> defaultMovieSections
@@ -1343,11 +1610,13 @@ private fun HomeCustomizationScreen(vm: MainViewModel, scopeKey: String = "home"
         else -> s.hiddenHomeSections
     }
     fun saveLayout(order: List<String>, hidden: Set<String>, continueKind: String? = local.homeContinueKind) {
+        val normalizedOrder = (order + defaults).distinct()
+        val normalizedHidden = hidden.intersect(normalizedOrder.toSet())
         val next = when (scopeKey) {
-            "live" -> local.copy(liveSectionOrder = order, hiddenLiveSections = hidden)
-            "movies" -> local.copy(movieSectionOrder = order, hiddenMovieSections = hidden)
-            "series" -> local.copy(seriesSectionOrder = order, hiddenSeriesSections = hidden)
-            else -> local.copy(homeSectionOrder = order, hiddenHomeSections = hidden, homeContinueKind = continueKind)
+            "live" -> local.copy(liveSectionOrder = normalizedOrder, hiddenLiveSections = normalizedHidden)
+            "movies" -> local.copy(movieSectionOrder = normalizedOrder, hiddenMovieSections = normalizedHidden)
+            "series" -> local.copy(seriesSectionOrder = normalizedOrder, hiddenSeriesSections = normalizedHidden)
+            else -> local.copy(homeSectionOrder = normalizedOrder, hiddenHomeSections = normalizedHidden, homeContinueKind = continueKind)
         }
         local = next
         vm.updateSettings(next)
@@ -1357,70 +1626,239 @@ private fun HomeCustomizationScreen(vm: MainViewModel, scopeKey: String = "home"
     val hiddenSet = readHidden(local).intersect(completeOrder.toSet())
     val visible = completeOrder.filterNot { it in hiddenSet }
     val hidden = completeOrder.filter { it in hiddenSet }
-    val title = when (scopeKey) { "live" -> "Sezioni Live TV"; "movies" -> "Sezioni Film"; "series" -> "Sezioni Serie TV"; else -> "Sezioni Home" }
+    val displayOrder = dragOrder ?: visible
+    val title = when (scopeKey) {
+        "live" -> "Sezioni Live TV"
+        "movies" -> "Sezioni VOD"
+        "series" -> "Sezioni Serie TV"
+        else -> "Sezioni home"
+    }
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val rowPitchPx = with(density) { 64.dp.toPx() }
 
-    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius = 20.dp, contentPadding = 16.dp) {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Indietro", tint = glassForeground()) }
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                        Text(title, color = glassForeground(), fontSize = 21.sp, fontWeight = FontWeight.Bold)
-                        Text("Riordina, nascondi o riaggiungi le sezioni. Le modifiche si applicano subito.", color = glassForeground().copy(.63f), fontSize = 12.sp)
-                    }
-                    Icon(Icons.Default.Tune, null, tint = Color(0xFF9ABEFF), modifier = Modifier.size(24.dp))
-                }
-                OutlinedButton(onClick = { saveLayout(defaults, emptySet(), null) }) {
-                    Icon(Icons.Default.RestartAlt, null); Spacer(Modifier.width(6.dp)); Text("Ripristina ordine iOS")
-                }
+    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.Default.ArrowBack, "Indietro", tint = glassForeground())
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(title, color = glassForeground(), fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Trascina ☰ per riordinare · Cestino per nascondere",
+                    color = glassForeground().copy(.60f),
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
-        Text("VISIBILI · ${visible.size}", color = glassForeground().copy(.58f), fontSize = 11.sp, fontWeight = FontWeight.Bold)
-        LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(bottom = 30.dp)) {
-            items(visible, key = { it }) { id ->
-                val index = visible.indexOf(id)
-                LiquidGlassSurface(Modifier.fillMaxWidth().animateItem(), cornerRadius = 17.dp, contentPadding = 10.dp) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Icon(Icons.Default.DragHandle, null, tint = glassForeground().copy(.45f))
-                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                            Text(homeSectionTitles[id] ?: id, color = glassForeground(), fontWeight = FontWeight.Medium)
-                            if (scopeKey == "home" && id == "continueWatching") {
-                                Box {
-                                    TextButton(onClick = { continueMenu = true }, contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp)) {
-                                        Icon(Icons.Default.Tune, null, modifier = Modifier.size(14.dp)); Spacer(Modifier.width(4.dp))
-                                        Text("Filtro: ${when (local.homeContinueKind) { "live" -> "Live TV"; "movie" -> "Film"; "series" -> "Serie TV"; else -> "Tutti" }}", fontSize = 12.sp)
-                                    }
-                                    DropdownMenu(continueMenu, { continueMenu = false }) {
-                                        listOf(null to "Tutti", "live" to "Live TV", "movie" to "Film", "series" to "Serie TV").forEach { (value, label) ->
-                                            DropdownMenuItem(text = { Text(label) }, onClick = { saveLayout(completeOrder, hiddenSet, value); continueMenu = false })
+
+        LazyColumn(
+            Modifier.weight(1f).fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(9.dp),
+            contentPadding = PaddingValues(horizontal = 16.dp, top = 4.dp, bottom = 8.dp)
+        ) {
+            items(displayOrder, key = { it }) { id ->
+                val index = displayOrder.indexOf(id)
+                val isDragging = dragId == id
+                val residualOffset = if (isDragging) dragTranslationPx - (index - dragStartIndex) * rowPitchPx else 0f
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(55.dp)
+                        .animateItem()
+                        .graphicsLayer {
+                            translationY = residualOffset
+                            scaleX = if (isDragging) 1.02f else 1f
+                            scaleY = if (isDragging) 1.02f else 1f
+                        }
+                        .zIndex(if (isDragging) 1f else 0f)
+                        .clip(RoundedCornerShape(50))
+                        .background(MaterialTheme.colorScheme.onBackground.copy(if (isDragging) .13f else .085f))
+                        .border(BorderStroke(.65.dp, glassForeground().copy(if (isDragging) .20f else .09f)), RoundedCornerShape(50)),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Default.DragHandle,
+                        contentDescription = "Trascina per spostare ${homeSectionTitles[id] ?: id}",
+                        tint = glassForeground().copy(.58f),
+                        modifier = Modifier
+                            .width(44.dp)
+                            .fillMaxHeight()
+                            .pointerInput(scopeKey, id) {
+                                detectDragGestures(
+                                    onDragStart = {
+                                        dragId = id
+                                        dragOriginalOrder = visible
+                                        dragStartIndex = visible.indexOf(id).coerceAtLeast(0)
+                                        dragTranslationPx = 0f
+                                        dragOrder = visible
+                                    },
+                                    onDrag = { change, dragAmount ->
+                                        change.consume()
+                                        val nextTranslation = dragTranslationPx + dragAmount.y
+                                        dragTranslationPx = nextTranslation
+                                        val target = (dragStartIndex + (nextTranslation / rowPitchPx).roundToInt()).coerceIn(0, (dragOriginalOrder.size - 1).coerceAtLeast(0))
+                                        val originalIndex = dragOriginalOrder.indexOf(id)
+                                        if (originalIndex >= 0) {
+                                            val preview = dragOriginalOrder.toMutableList().apply {
+                                                removeAt(originalIndex)
+                                                add(target.coerceIn(0, size), id)
+                                            }
+                                            dragOrder = preview
                                         }
+                                    },
+                                    onDragEnd = {
+                                        val reordered = dragOrder
+                                        if (reordered != null && reordered != dragOriginalOrder) {
+                                            saveLayout(reordered + hidden, hiddenSet)
+                                        }
+                                        dragId = null
+                                        dragTranslationPx = 0f
+                                        dragOriginalOrder = emptyList()
+                                        dragOrder = null
+                                    },
+                                    onDragCancel = {
+                                        dragId = null
+                                        dragTranslationPx = 0f
+                                        dragOriginalOrder = emptyList()
+                                        dragOrder = null
                                     }
+                                )
+                            }
+                    )
+                    Column(
+                        Modifier.weight(1f).padding(start = 2.dp),
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Text(
+                            homeSectionTitles[id] ?: id,
+                            color = glassForeground(),
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (id == "continueWatching" && scopeKey == "home" && local.homeContinueKind != null) {
+                            Text(
+                                when (local.homeContinueKind) {
+                                    "live" -> "Solo Live TV"
+                                    "movie" -> "Solo film"
+                                    "series" -> "Solo serie TV"
+                                    else -> ""
+                                },
+                                color = glassForeground().copy(.58f),
+                                fontSize = 12.sp,
+                                maxLines = 1
+                            )
+                        }
+                    }
+                    if (id == "continueWatching" && scopeKey == "home") {
+                        Box {
+                            IconButton(onClick = { continueMenu = true }, modifier = Modifier.size(40.dp)) {
+                                Icon(Icons.Default.Tune, "Opzioni", tint = glassForeground().copy(.75f), modifier = Modifier.size(19.dp))
+                            }
+                            DropdownMenu(continueMenu, { continueMenu = false }) {
+                                listOf(null to "Tutti", "movie" to "Film", "series" to "Serie TV", "live" to "Live TV").forEach { (value, label) ->
+                                    DropdownMenuItem(
+                                        text = { Text(label) },
+                                        onClick = {
+                                            saveLayout(completeOrder, hiddenSet, value)
+                                            continueMenu = false
+                                        }
+                                    )
                                 }
-                            } else Text("Posizione ${index + 1}", color = glassForeground().copy(.48f), fontSize = 11.sp)
+                            }
                         }
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            IconButton(enabled = index > 0, onClick = {
-                                val nextVisible = visible.toMutableList(); val value = nextVisible.removeAt(index); nextVisible.add(index - 1, value)
-                                saveLayout(nextVisible + hidden, hiddenSet)
-                            }) { Icon(Icons.Default.KeyboardArrowUp, "Sposta su", tint = if (index > 0) glassForeground() else glassForeground(.18f)) }
-                            IconButton(enabled = index < visible.lastIndex, onClick = {
-                                val nextVisible = visible.toMutableList(); val value = nextVisible.removeAt(index); nextVisible.add(index + 1, value)
-                                saveLayout(nextVisible + hidden, hiddenSet)
-                            }) { Icon(Icons.Default.KeyboardArrowDown, "Sposta giù", tint = if (index < visible.lastIndex) glassForeground() else glassForeground(.18f)) }
+                    }
+                    if (isTv) {
+                        Box {
+                            IconButton(onClick = { tvMoveMenuFor = id }, modifier = Modifier.size(40.dp)) {
+                                Icon(Icons.Default.MoreVert, "Riordina", tint = glassForeground().copy(.75f), modifier = Modifier.size(19.dp))
+                            }
+                            DropdownMenu(expanded = tvMoveMenuFor == id, onDismissRequest = { tvMoveMenuFor = null }) {
+                                DropdownMenuItem(
+                                    text = { Text("Sposta su") },
+                                    leadingIcon = { Icon(Icons.Default.KeyboardArrowUp, null) },
+                                    enabled = index > 0,
+                                    onClick = {
+                                        val reordered = displayOrder.toMutableList()
+                                        val moved = reordered.removeAt(index)
+                                        reordered.add(index - 1, moved)
+                                        saveLayout(reordered + hidden, hiddenSet)
+                                        tvMoveMenuFor = null
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Sposta giù") },
+                                    leadingIcon = { Icon(Icons.Default.KeyboardArrowDown, null) },
+                                    enabled = index < displayOrder.lastIndex,
+                                    onClick = {
+                                        val reordered = displayOrder.toMutableList()
+                                        val moved = reordered.removeAt(index)
+                                        reordered.add(index + 1, moved)
+                                        saveLayout(reordered + hidden, hiddenSet)
+                                        tvMoveMenuFor = null
+                                    }
+                                )
+                            }
                         }
-                        IconButton(onClick = { saveLayout(completeOrder, hiddenSet + id) }) { Icon(Icons.Default.VisibilityOff, "Nascondi", tint = glassForeground().copy(.72f)) }
+                    }
+                    Surface(
+                        onClick = {
+                            val newHidden = hiddenSet + id
+                            val newOrder = visible.filterNot { it == id } + hidden + id
+                            saveLayout(newOrder, newHidden)
+                        },
+                        modifier = Modifier.padding(end = 7.dp).size(40.dp),
+                        shape = RoundedCornerShape(50),
+                        color = Color.Transparent,
+                        contentColor = glassForeground()
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            LiquidGlassSurface(Modifier.fillMaxSize(), cornerRadius = 50.dp, contentPadding = 0.dp) {
+                                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Default.DeleteOutline, "Nascondi ${homeSectionTitles[id] ?: id}", tint = glassForeground().copy(.78f), modifier = Modifier.size(19.dp))
+                                }
+                            }
+                        }
                     }
                 }
             }
-            if (hidden.isNotEmpty()) {
-                item { Spacer(Modifier.height(8.dp)); Text("NASCOSTE · ${hidden.size}", color = glassForeground().copy(.58f), fontSize = 11.sp, fontWeight = FontWeight.Bold) }
-                items(hidden, key = { "hidden-$it" }) { id ->
-                    LiquidGlassSurface(Modifier.fillMaxWidth().animateItem(), cornerRadius = 17.dp, contentPadding = 10.dp) {
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Icon(Icons.Default.VisibilityOff, null, tint = glassForeground().copy(.38f))
-                            Text(homeSectionTitles[id] ?: id, color = glassForeground().copy(.75f), modifier = Modifier.weight(1f))
-                            TextButton(onClick = { saveLayout(completeOrder, hiddenSet - id) }) {
-                                Icon(Icons.Default.Add, null); Spacer(Modifier.width(4.dp)); Text("Aggiungi")
+
+            item {
+                Box(Modifier.fillMaxWidth().padding(top = 8.dp), contentAlignment = Alignment.Center) {
+                    Box {
+                        Surface(
+                            onClick = { addMenu = true },
+                            enabled = hidden.isNotEmpty(),
+                            modifier = Modifier.size(44.dp),
+                            shape = RoundedCornerShape(50),
+                            color = Color.Transparent,
+                            contentColor = glassForeground()
+                        ) {
+                            LiquidGlassSurface(Modifier.fillMaxSize(), cornerRadius = 50.dp, contentPadding = 0.dp) {
+                                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Default.Add, "Aggiungi sezione", tint = glassForeground().copy(if (hidden.isEmpty()) .28f else .9f), modifier = Modifier.size(22.dp))
+                                }
+                            }
+                        }
+                        DropdownMenu(expanded = addMenu, onDismissRequest = { addMenu = false }) {
+                            hidden.forEach { id ->
+                                DropdownMenuItem(
+                                    text = { Text(homeSectionTitles[id] ?: id) },
+                                    leadingIcon = { Icon(Icons.Default.Add, null) },
+                                    onClick = {
+                                        val newVisible = visible + id
+                                        val newOrder = newVisible + hidden.filterNot { it == id }
+                                        saveLayout(newOrder, hiddenSet - id)
+                                        addMenu = false
+                                    }
+                                )
                             }
                         }
                     }

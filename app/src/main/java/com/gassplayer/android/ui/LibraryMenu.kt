@@ -89,7 +89,7 @@ internal fun LibraryHeader(
         } else {
             // The scrollable playlist groups use the same neutral glass capsule as Home → Personalizza.
             LazyRow(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                item(key = "group-all") { PlaylistGroupGlassPill("Tutto", filter == null) { onFilter(null) } }
+                item(key = "group-all") { PlaylistGroupGlassPill("Tutti", filter == null) { onFilter(null) } }
                 if (uncategorized > 0) item(key = "group-none") { PlaylistGroupGlassPill("Senza categoria", filter == GROUP_NONE) { onFilter(GROUP_NONE) } }
                 items(ordered, key = { it.id }) { c -> PlaylistGroupGlassPill(c.name, filter == c.id) { onFilter(c.id) } }
             }
