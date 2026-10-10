@@ -19,7 +19,8 @@ class EpgGuideTest {
         assertEquals(utc, XmlTvParser.xmlTvTime("20260101070000 -0500"))
         assertEquals(utc, XmlTvParser.xmlTvTime("20260101130000 +01"))
         assertNotNull(XmlTvParser.xmlTvTime("20260101120000")) // senza fuso: fuso del dispositivo
-        assertNotNull(XmlTvParser.xmlTvTime("202601011200 +0000")) // senza secondi
+        assertEquals(utc, XmlTvParser.xmlTvTime("202601011200 +0000")) // senza secondi, fuso ancora rispettato
+        assertNotNull(XmlTvParser.xmlTvTime("202601011200")) // senza secondi né fuso: fuso del dispositivo
         assertNull(XmlTvParser.xmlTvTime("garbage"))
         assertNull(XmlTvParser.xmlTvTime("20261301120000 +0000")) // mese 13
     }

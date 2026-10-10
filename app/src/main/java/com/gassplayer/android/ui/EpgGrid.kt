@@ -42,9 +42,6 @@ import coil3.compose.AsyncImage
 import com.gassplayer.android.GassPlayerApplication
 import com.gassplayer.android.data.*
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -63,14 +60,15 @@ import java.util.Locale
  *  - densities "compatta" (row 66, banner 80x58, header 40) / "comoda" (row 96, banner 86x76, header 44)
  *  - 160 dp every 30 minutes (5.333 dp/min), window = 30 min past .. 180 min future (day views centred on 12:00)
  *  - fixed channel column + horizontally scrolling programme tiles, live axis, quality badge pill, catch-up/favourite marks
- *  - "…" menu: Aspetto EPG, Assetti EPG, Colori EPG, Aggiorna guida, Solo preferiti, Ieri/Oggi/Domani
- *  - 32 channels per page with "Carica altri N canali" (hard cap 250), 24 concurrent short-EPG requests
+ *  - menu: aspetto/layout/colori, aggiornamento guida, preferiti e selezione del giorno
+ *  - lista completa lazy (senza hard cap); caricamento limitato alle righe visibili e al margine,
+ *    con concorrenza di rete contenuta per ridurre i picchi di memoria
  */
 /** Canali di cui si precarica la guida prima/dopo quelli visibili; all'apertura, prima del primo layout. */
 private const val INITIAL_LOAD = 40
 private const val PREFETCH_BEHIND = 8
 private const val PREFETCH_AHEAD = 24
-private const val MAX_CONCURRENT = 24
+private const val MAX_CONCURRENT = 6
 private const val SHORT_LIMIT = 24
 /** Giorni diversi da oggi: servono molti piu' programmi per coprire la finestra scelta. */
 private const val DAY_LIMIT = 150
@@ -102,7 +100,7 @@ private fun pastelFor(item: MediaItem): Color {
         "dazn" in n || "sport" in n -> Color(0.82f, 0.74f, 0.28f)
         "cinema" in n || "film" in n || "movie" in n -> Color(0.72f, 0.32f, 0.58f)
         "private" in n -> Color(0.85f, 0.30f, 0.36f)
-        else -> PastelPalette[Math.abs(item.title.hashCode() xor item.id.hashCode()) % PastelPalette.size]
+        else -> PastelPalette[Math.floorMod(item.title.hashCode() xor item.id.hashCode(), PastelPalette.size)]
     }
 }
 
@@ -272,16 +270,17 @@ fun EpgGridScreen(
     // Prima: tetto rigido di 250 canali con "Carica altri". Ora la lista e' completa (LazyColumn compone
     // solo le righe visibili) e la guida si scarica per le righe vicine alla finestra visibile.
     val listState = rememberLazyListState()
-    val channelIndex = remember(channels) {
-        HashMap<Any, Int>(channels.size * 2).also { m -> channels.forEachIndexed { i, c -> m[c.id] = i } }
-    }
+    // Evita di materializzare ogni canale per costruire una mappa degli indici: channels può essere
+    // un DbList su SQLite con centinaia di migliaia di righe. Gli indici LazyColumn sono già stabili;
+    // i primi due item sono ricerca e timeline, quindi i canali iniziano dall'indice 2.
     var loadRange by remember(channels) { mutableStateOf(0..(minOf(channels.size, INITIAL_LOAD) - 1)) }
     LaunchedEffect(channels, listState) {
         snapshotFlow {
             var lo = Int.MAX_VALUE
             var hi = -1
             for (info in listState.layoutInfo.visibleItemsInfo) {
-                val i = channelIndex[info.key] ?: continue
+                val i = info.index - 2
+                if (i < 0 || i >= channels.size) continue
                 if (i < lo) lo = i
                 if (i > hi) hi = i
             }
@@ -305,8 +304,13 @@ fun EpgGridScreen(
     val indexCounter = remember { intArrayOf(0) }
     val xmltvIndex by produceState(XmlTvIndex.EMPTY, external, sources, live, manualTick, refreshTick / INDEX_REFRESH_TICKS) {
         val version = ++indexCounter[0]
-        value = runCatching { app.epg.buildIndex(external, sources, live, version) }
-            .getOrElse { XmlTvIndex(emptyMap(), emptyMap(), version, ready = true) }
+        value = try {
+            app.epg.buildIndex(external, sources, live, version)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            XmlTvIndex(emptyMap(), emptyMap(), version, ready = true)
+        }
     }
 
     val dayKey = dayOffset

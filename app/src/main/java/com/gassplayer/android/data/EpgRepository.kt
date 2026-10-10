@@ -60,11 +60,16 @@ class EpgRepository(private val context: Context, private val api: NetworkApi) {
         val auth = "username=${enc(source.username.orEmpty())}&password=${enc(source.password.orEmpty())}"
         var anySuccess = false
         var lastError: Throwable? = null
-        suspend fun attempt(action: String, extra: String): List<EpgProgram> =
-            runCatching { parse(api.getJson("$base/player_api.php?$auth&action=$action&stream_id=${enc(streamId)}$extra"), streamId) }
-                .onSuccess { anySuccess = true }
-                .onFailure { lastError = it }
-                .getOrDefault(emptyList())
+        suspend fun attempt(action: String, extra: String): List<EpgProgram> = try {
+            parse(api.getJson("$base/player_api.php?$auth&action=$action&stream_id=${enc(streamId)}$extra"), streamId)
+                .also { anySuccess = true }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            // Non trasformare la cancellazione (cambio schermata/player) in un retry di rete.
+            throw cancelled
+        } catch (error: Throwable) {
+            lastError = error
+            emptyList()
+        }
 
         val order = if (preferTable) listOf("get_simple_data_table" to "", "get_short_epg" to "&limit=$limit")
         else listOf("get_short_epg" to "&limit=$limit", "get_simple_data_table" to "")
@@ -107,7 +112,13 @@ class EpgRepository(private val context: Context, private val api: NetworkApi) {
             if (cached != null && cached.programs.isNotEmpty() && System.currentTimeMillis() - cached.updatedAt < XMLTV_TTL_MS) {
                 return@withLock XmlTvData(cached.programs, cached.aliases).also { xmltvMemory[memKey] = cached.updatedAt to it }
             }
-            val downloaded = runCatching { api.getXmlTv(url) { XmlTvParser.parseFull(it, filter) } }.getOrNull()
+            val downloaded = try {
+                api.getXmlTv(url) { XmlTvParser.parseFull(it, filter) }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                null
+            }
             if (downloaded != null && downloaded.programs.isNotEmpty()) {
                 runCatching {
                     // Una sola copia su disco per sorgente: le firme obsolete (playlist cambiata) si eliminano.
@@ -138,13 +149,29 @@ class EpgRepository(private val context: Context, private val api: NetworkApi) {
         if (live.isEmpty()) return@withContext XmlTvIndex(emptyMap(), emptyMap(), version, ready = true)
         val filter = XmlTvFilter.forChannels(live)
         val all = ArrayList<XmlTvData>()
-        for (e in external.filter { it.isEnabled }) {
-            runCatching { xmltvData(e.urlString, e.id, filter) }.getOrNull()?.takeIf { it.programs.isNotEmpty() }?.let(all::add)
+        for (e in external) {
+            if (!e.isEnabled) continue
+            val data = try {
+                xmltvData(e.urlString, e.id, filter)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                null
+            }
+            data?.takeIf { it.programs.isNotEmpty() }?.let(all::add)
         }
         if (all.isEmpty()) {
             val used = live.mapTo(HashSet()) { it.sourceId }
-            for (s in sources.filter { it.type == SourceType.XTREAM && it.id in used && it.isEnabled }) {
-                runCatching { xtreamXmltvData(s, filter) }.getOrNull()?.takeIf { it.programs.isNotEmpty() }?.let(all::add)
+            for (s in sources) {
+                if (s.type != SourceType.XTREAM || s.id !in used || !s.isEnabled) continue
+                val data = try {
+                    xtreamXmltvData(s, filter)
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (_: Throwable) {
+                    null
+                }
+                data?.takeIf { it.programs.isNotEmpty() }?.let(all::add)
             }
         }
         XmlTvIndex.build(all, version)
@@ -401,8 +428,11 @@ object XmlTvParser {
         val d = num(6, 2) ?: return null
         val h = num(8, 2) ?: return null
         val mi = num(10, 2) ?: return null
-        val sec = if (raw.length >= 14) (num(12, 2) ?: 0) else 0
-        val zone = if (raw.length > 14) raw.substring(14).trim() else ""
+        // Alcuni feed omettono i secondi: `yyyyMMddHHmm +0000` non deve essere
+        // interpretato come ora locale solo perché lo spazio cade alle posizioni 12-13.
+        val hasSeconds = raw.length >= 14 && raw[12] in '0'..'9' && raw[13] in '0'..'9'
+        val sec = if (hasSeconds) num(12, 2) ?: return null else 0
+        val zone = raw.substring(if (hasSeconds) 14 else 12).trim()
         return runCatching {
             val local = LocalDateTime.of(y, mo, d, h, mi, sec)
             val offset = offsetSeconds(zone)
@@ -429,4 +459,5 @@ object XmlTvParser {
 
 private fun JsonElement?.jsonArrayOrEmpty(): JsonArray = this as? JsonArray ?: JsonArray(emptyList())
 private fun JsonElement.jsonObjectOrNull(): JsonObject? = runCatching { jsonObject }.getOrNull()
-private fun JsonObject.valueString(key: String): String? = this[key]?.jsonPrimitive?.contentOrNull
+private fun JsonObject.valueString(key: String): String? =
+    (this[key] as? JsonPrimitive)?.contentOrNull

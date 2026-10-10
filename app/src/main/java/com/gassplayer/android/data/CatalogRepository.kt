@@ -22,15 +22,13 @@ class CatalogRepository(private val context: Context, private val prefs: AppPref
     private val refreshMutex = Mutex()
     /** Big playlists are parsed one or two at a time: N parallel 100 MB parses is what exhausts the heap. */
     private val loadPermits = Semaphore(2)
-    private val legacyCachesCleaned = java.util.concurrent.atomic.AtomicBoolean(false)
     /** Disk-backed store: the heap only ever holds the page currently on screen. */
-    // Opening SQLite and sweeping the filesystem are deferred until catalog work runs on IO.
-    // Constructing the application graph must stay cheap and must not touch the database on main.
-    val db: CatalogDb by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { CatalogDb(context) }
+    val db: CatalogDb = CatalogDb(context)
+
+    init { deleteLegacyCaches() }
 
     suspend fun loadAll(force: Boolean = false): CatalogState = refreshMutex.withLock {
         withContext(Dispatchers.IO) {
-        if (legacyCachesCleaned.compareAndSet(false, true)) runCatching { deleteLegacyCaches() }
         val configured = prefs.sourcesFlow.first()
         val sources = configured.filter { it.isEnabled }
         val appSettings = prefs.settingsFlow.first()

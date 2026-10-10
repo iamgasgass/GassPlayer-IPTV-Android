@@ -12,7 +12,6 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.CancellationException
 
 class MainViewModel(val app: GassPlayerApplication) : ViewModel() {
     val sources = app.sources.sources.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
@@ -33,24 +32,8 @@ class MainViewModel(val app: GassPlayerApplication) : ViewModel() {
 
     init {
         viewModelScope.launch {
-            // Preferences are external storage: a damaged/unreadable file must degrade to
-            // defaults instead of throwing out of ViewModel initialization and killing launch.
-            val initialSettings = try {
-                settings.first()
-            } catch (cancel: CancellationException) {
-                throw cancel
-            } catch (error: Exception) {
-                android.util.Log.w("GassPlayerStartup", "Unable to read initial settings; using defaults", error)
-                AppSettings()
-            }
-            val last = try {
-                app.prefs.lastRefreshFlow().first()
-            } catch (cancel: CancellationException) {
-                throw cancel
-            } catch (error: Exception) {
-                android.util.Log.w("GassPlayerStartup", "Unable to read catalog refresh timestamp", error)
-                null
-            }
+            val initialSettings = settings.first()
+            val last = app.prefs.lastRefreshFlow().first()
             val interval = RefreshInterval.from(initialSettings.catalogRefreshInterval).millis
             val intervalDue = interval != null && (last == null || System.currentTimeMillis() - last >= interval)
             refresh(force = initialSettings.catalogRefreshOnLaunch || intervalDue)
@@ -59,28 +42,14 @@ class MainViewModel(val app: GassPlayerApplication) : ViewModel() {
 
     fun refresh(force: Boolean = true) = viewModelScope.launch {
         _loading.value = true
-        val result = try {
-            Result.success(app.catalog.loadAll(force))
-        } catch (cancel: CancellationException) {
-            throw cancel
-        } catch (error: Throwable) {
-            Result.failure(error)
-        } finally {
-            _loading.value = false
-        }
+        val result = runCatching { app.catalog.loadAll(force) }
         _catalog.value = result.getOrNull()
         _message.value = result.exceptionOrNull()?.message ?: result.getOrNull()?.errors?.firstOrNull()
+        _loading.value = false
         // Il timestamp rappresenta un aggiornamento realmente riuscito, non
         // un semplice tentativo fallito/parziale.
         if (force && result.isSuccess && result.getOrNull()?.errors.orEmpty().isEmpty()) {
-            try {
-                app.prefs.saveLastRefresh(System.currentTimeMillis())
-            } catch (cancel: CancellationException) {
-                throw cancel
-            } catch (error: Exception) {
-                // Timestamp persistence is housekeeping; don't crash the UI after a successful load.
-                android.util.Log.w("GassPlayerStartup", "Unable to persist catalog refresh timestamp", error)
-            }
+            app.prefs.saveLastRefresh(System.currentTimeMillis())
         }
     }
 
@@ -112,7 +81,7 @@ class MainViewModel(val app: GassPlayerApplication) : ViewModel() {
 
     fun updateSettings(s: AppSettings) = viewModelScope.launch {
         app.prefs.saveSettings(s)
-        app.updatePlaybackSettingsIfInitialized(s)
+        app.playback.setSettings(s)
     }
 
     class Factory(private val app: GassPlayerApplication) : ViewModelProvider.Factory {
