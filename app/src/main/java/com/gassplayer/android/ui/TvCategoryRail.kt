@@ -1,0 +1,205 @@
+package com.gassplayer.android.ui
+
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
+
+internal const val TV_CATEGORY_ALL = "__tv_all__"
+internal const val TV_CATEGORY_FAVORITES = "__tv_favorites__"
+internal const val TV_CATEGORY_NONE = "__none__"
+
+internal data class TvCategoryRailOption(
+    val id: String,
+    val label: String,
+    val count: Int,
+    val icon: ImageVector? = null,
+    val pinned: Boolean = false,
+)
+
+/** LiquidGlass vertical group rail shared by Android TV and mobile "Categorie TV" layouts. */
+@Composable
+internal fun TvCategoryRail(
+    options: List<TvCategoryRailOption>,
+    selectedId: String,
+    expanded: Boolean,
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    expandedWidth: Dp = 236.dp,
+) {
+    val width by animateDpAsState(if (expanded) expandedWidth else 0.dp, label = "tv-category-rail-width")
+    val state = rememberLazyListState()
+    val firstOptionFocus = remember { FocusRequester() }
+    varWasExpandedEffect(expanded, firstOptionFocus)
+
+    Box(
+        modifier
+            .width(width)
+            .fillMaxHeight()
+            .clipToBounds()
+    ) {
+        if (width > 1.dp) {
+            LiquidGlassSurface(
+                modifier = Modifier.fillMaxSize(),
+                cornerRadius = 22.dp,
+                contentPadding = 10.dp,
+            ) {
+                Column(Modifier.fillMaxSize()) {
+                    Text(
+                        "Categorie TV",
+                        color = glassForeground(),
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(start = 8.dp, top = 7.dp, end = 6.dp, bottom = 10.dp),
+                    )
+                    LazyColumn(
+                        state = state,
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(5.dp),
+                    ) {
+                        itemsIndexed(options, key = { _, item -> item.id }) { index, item ->
+                            if (index > 0 && item.pinned.not() && options.getOrNull(index - 1)?.pinned == true) {
+                                HorizontalDivider(
+                                    color = glassForeground(.14f),
+                                    modifier = Modifier.padding(vertical = 4.dp, horizontal = 7.dp),
+                                )
+                            }
+                            val selected = item.id == selectedId
+                            Surface(
+                                onClick = { onSelect(item.id) },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .then(if (index == 0) Modifier.focusRequester(firstOptionFocus) else Modifier),
+                                shape = RoundedCornerShape(14.dp),
+                                color = Color.Transparent,
+                                border = BorderStroke(
+                                    if (selected) 1.2.dp else .45.dp,
+                                    if (selected) Color(0xFF8FB3FF).copy(.88f) else glassForeground(.12f),
+                                ),
+                            ) {
+                                LiquidGlassSurface(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    cornerRadius = 14.dp,
+                                    contentPadding = 0.dp,
+                                    highlighted = selected,
+                                    suppressTopHighlight = true,
+                                ) {
+                                    Row(
+                                        Modifier.fillMaxWidth().height(48.dp).padding(horizontal = 11.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(9.dp),
+                                    ) {
+                                        Icon(
+                                            item.icon ?: Icons.Default.FolderOpen,
+                                            contentDescription = null,
+                                            tint = if (selected) Color(0xFFBBD0FF) else glassForeground(.67f),
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                        Text(
+                                            item.label,
+                                            color = glassForeground(if (selected) 1f else .82f),
+                                            fontSize = 14.sp,
+                                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f),
+                                        )
+                                        Text(
+                                            item.count.toString(),
+                                            color = glassForeground(.48f),
+                                            fontSize = 11.sp,
+                                            maxLines = 1,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun varWasExpandedEffect(expanded: Boolean, focusRequester: FocusRequester) {
+    // After the rail reappears on DPAD LEFT, restore focus to its first reachable group.
+    var previousExpanded by remember { mutableStateOf(expanded) }
+    LaunchedEffect(expanded) {
+        if (expanded && !previousExpanded) {
+            delay(70)
+            runCatching { focusRequester.requestFocus() }
+        }
+        previousExpanded = expanded
+    }
+}
+
+internal fun buildTvCategoryRailOptions(
+    categories: List<com.gassplayer.android.data.Category>,
+    items: List<com.gassplayer.android.data.MediaItem>,
+    favoriteIds: Set<String>,
+): List<TvCategoryRailOption> {
+    val counts = items.categoryCounts()
+    val visibleCategories = categories.distinctBy { it.id }
+        .filter { (counts[it.id] ?: 0) > 0 }
+        .map { TvCategoryRailOption(it.id, it.name, counts[it.id] ?: 0) }
+    val knownIds = visibleCategories.mapTo(HashSet()) { it.id }
+    val other = counts.keys.filterNotNull()
+        .filter { (counts[it] ?: 0) > 0 && it !in knownIds }
+        .map { TvCategoryRailOption(it, it, counts[it] ?: 0) }
+    val uncategorizedCount = counts[null] ?: 0
+    return buildList {
+        add(TvCategoryRailOption(TV_CATEGORY_FAVORITES, "Preferiti", items.onlyIds(favoriteIds).size, Icons.Default.Star, pinned = true))
+        add(TvCategoryRailOption(TV_CATEGORY_ALL, "Tutti", items.size, Icons.Default.Apps, pinned = true))
+        if (uncategorizedCount > 0) add(TvCategoryRailOption(TV_CATEGORY_NONE, "Senza categoria", uncategorizedCount, Icons.Default.FolderOpen))
+        addAll(visibleCategories)
+        addAll(other)
+    }.distinctBy { it.id }
+}

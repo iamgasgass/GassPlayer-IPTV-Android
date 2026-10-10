@@ -1,5 +1,6 @@
 package com.gassplayer.android.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -23,6 +24,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
@@ -39,6 +49,14 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.text.rememberTextMeasurer
 import coil3.compose.AsyncImage
+import android.view.ViewGroup
+import androidx.media3.common.MediaItem as ExoMediaItem
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
 import com.gassplayer.android.GassPlayerApplication
 import com.gassplayer.android.data.*
 import kotlinx.coroutines.CancellationException
@@ -117,7 +135,7 @@ private class EpgStore {
     val failed: SnapshotStateMap<String, Boolean> = mutableStateMapOf()
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, UnstableApi::class)
 @Composable
 fun EpgGridScreen(
     app: GassPlayerApplication,
@@ -126,9 +144,34 @@ fun EpgGridScreen(
     categories: List<Category>,
     favorites: FavoriteState,
     settings: AppSettings,
-    onPlay: (MediaItem) -> Unit
+    onPlay: (MediaItem) -> Unit,
+    tvCategoryMode: Boolean = false,
+    playerActive: Boolean = false,
 ) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    var categoryRailExpanded by remember(tvCategoryMode) { mutableStateOf(true) }
+    BackHandler(enabled = tvCategoryMode && !categoryRailExpanded) { categoryRailExpanded = true }
+    LaunchedEffect(playerActive, tvCategoryMode) {
+        if (tvCategoryMode && !playerActive) categoryRailExpanded = true
+    }
+    var previewChannelId by remember { mutableStateOf<String?>(null) }
+    val previewHttpFactory = remember(context) { DefaultHttpDataSource.Factory().setUserAgent(app.network.userAgent) }
+    val previewPlayer = remember(context, tvCategoryMode) {
+        if (!tvCategoryMode) null else ExoPlayer.Builder(context)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(context).setDataSourceFactory(previewHttpFactory))
+            .build().apply { volume = 0f }
+    }
+    fun stopPreviewPlayback() {
+        previewPlayer?.apply {
+            playWhenReady = false
+            stop()
+            clearMediaItems()
+        }
+    }
+    DisposableEffect(previewPlayer) {
+        onDispose { previewPlayer?.release() }
+    }
     val store = remember { EpgStore() }
     val sources by app.sources.sources.collectAsState(emptyList())
     val external by app.externalEpg.flow.collectAsState(emptyList())
@@ -147,14 +190,24 @@ fun EpgGridScreen(
     val lastManualGuideRefresh = remember { intArrayOf(0) }
 
     val compact = settings.epgLayoutDensity == "compatta"
+    val compactCategoryLayout = tvCategoryMode && LocalConfiguration.current.screenWidthDp < 700
+    val mobileRailWidth = (LocalConfiguration.current.screenWidthDp - 136).dp.coerceIn(160.dp, 236.dp)
+    val mobileContentWidth = (LocalConfiguration.current.screenWidthDp - 136).coerceAtLeast(180).dp
+    val mobileBannerColumnW = (mobileContentWidth.value * .48f).dp.coerceIn(112.dp, 170.dp)
     val cardStyleGrid = settings.epgChannelCardStyle != "scheda"
     val darkTiles = settings.epgTileColor == "dark"
     val bannerInset = if (compact) 10.dp else 12.dp
-    val bannerW = if (compact) 80.dp else 86.dp
+    // The shared Guide stays compact. Categorie TV expands the channel banner on large
+    // screens and uses a responsive banner column on phones so the timeline remains visible.
+    val bannerW = if (tvCategoryMode) {
+        if (compactCategoryLayout) (mobileBannerColumnW - 4.dp).coerceAtLeast(100.dp) else 324.dp
+    } else if (compact) 80.dp else 86.dp
     val bannerH = if (compact) 58.dp else 76.dp
     val rowH = if (compact) 66.dp else 96.dp
     val headerH = if (compact) 40.dp else 44.dp
-    val bannerColumnW = if (cardStyleGrid) bannerInset + bannerW + bannerInset else bannerInset + bannerW
+    val bannerColumnW = if (tvCategoryMode) {
+        if (compactCategoryLayout) mobileBannerColumnW else 348.dp
+    } else if (cardStyleGrid) bannerInset + bannerW + bannerInset else bannerInset + bannerW
     val ppm = 160.dp / 30f
     val tileGap = 4.dp
     val cornerRadius = if (compact) 12.dp else 18.dp
@@ -205,7 +258,7 @@ fun EpgGridScreen(
     val liveAxisX = xFor(windowCenter)
 
     // --- group filter -----------------------------------------------------------------------
-    fun keyOf(i: MediaItem) = i.categoryId ?: i.group
+    fun keyOf(i: MediaItem) = (i.categoryId ?: i.group)?.takeIf { it.isNotBlank() }
     val counts = remember(live) { live.categoryCounts() }
     val groups = remember(categories, live) {
         val present = counts.keys.filterNotNull().toSet()
@@ -233,8 +286,54 @@ fun EpgGridScreen(
         if (normalizedSearch.isEmpty()) grouped
         else grouped.matchingTitle(normalizedSearch)
     }
-    LaunchedEffect(groupId, favoritesOnly, normalizedSearch, dayOffset) { renderLimit = PAGE }
+    LaunchedEffect(groupId, favoritesOnly, normalizedSearch, dayOffset) {
+        renderLimit = PAGE
+        previewChannelId = channels.firstOrNull()?.id
+    }
     val visible = channels.take(minOf(renderLimit, HARD_CAP))
+    val previewChannel = remember(channels, previewChannelId) {
+        channels.firstOrNull { it.id == previewChannelId } ?: channels.firstOrNull()
+    }
+    LaunchedEffect(previewPlayer, previewChannel?.id, tvCategoryMode, playerActive) {
+        val player = previewPlayer
+        val channel = previewChannel
+        if (player == null || channel == null || !tvCategoryMode) {
+            player?.stop()
+            return@LaunchedEffect
+        }
+        if (playerActive) {
+            stopPreviewPlayback()
+            return@LaunchedEffect
+        }
+        // Debounce rapid DPAD movement so only the finally focused channel opens a stream.
+        player.stop()
+        player.clearMediaItems()
+        delay(180L)
+        runCatching {
+            val headers = LinkedHashMap(channel.streamHeaders)
+            if (headers.keys.none { it.equals("User-Agent", ignoreCase = true) }) headers["User-Agent"] = app.network.userAgent
+            previewHttpFactory.setDefaultRequestProperties(headers)
+            player.stop()
+            player.clearMediaItems()
+            val media = ExoMediaItem.Builder().setUri(channel.streamUrl).apply {
+                channel.streamMimeType?.let { setMimeType(it) }
+            }.build()
+            player.setMediaItem(media)
+            player.prepare()
+            player.volume = 0f
+            player.playWhenReady = true
+        }.onFailure { player.stop() }
+    }
+    val previewPrograms = previewChannel?.let { store.programs[it.id].orEmpty().sortedBy { p -> p.startMs } }.orEmpty()
+    val previewCurrent = previewPrograms.firstOrNull { it.isCurrent(now) }
+    val previewNext = previewPrograms.firstOrNull { it.startMs >= (previewCurrent?.endMs ?: now) && it.startMs > now }
+
+    val tvRailOptions = remember(categories, live, favorites.live) { buildTvCategoryRailOptions(categories, live, favorites.live) }
+    val selectedTvRailId = when {
+        favoritesOnly -> TV_CATEGORY_FAVORITES
+        groupId == null -> TV_CATEGORY_ALL
+        else -> groupId!!
+    }
 
     // --- XMLTV index: show disk cache immediately, then revalidate every enabled feed. --------
     // Track entry refreshes per feed so late catalog/source emissions refresh only the newly
@@ -388,7 +487,7 @@ fun EpgGridScreen(
     val hScroll = rememberScrollState()
     val density = LocalDensity.current
     val scrollOffsetDp = with(density) { hScroll.value.toDp() }
-    val bleed = if (cardStyleGrid) 0.dp else bannerW / 2f
+    val bleed = if (cardStyleGrid || tvCategoryMode) 0.dp else bannerW / 2f
     val dayTitle = when (dayOffset) {
         0 -> "Oggi"
         1 -> "Domani"
@@ -396,31 +495,102 @@ fun EpgGridScreen(
         else -> SimpleDateFormat("EEEE d MMM", Locale.ITALIAN).format(Date(windowCenter))
     }
 
-    Column(Modifier.fillMaxSize()) {
-        EpgTopBar(
-            groupName = groupName, groups = groups, counts = counts, uncategorized = uncategorized,
-            onGroup = { groupId = it; searchQuery = ""; favoritesOnly = false },
-            settings = settings, favoritesOnly = favoritesOnly,
-            onSettings = { vm.updateSettings(it) },
-            onRefresh = {
-                toast = "Aggiornamento guida in corso…"
-                store.programs.clear()
-                store.loading.clear()
-                store.failed.clear()
-                manualGuideRefreshTick++
-                refreshTick++
-            },
-            onFavoritesOnly = { favoritesOnly = !favoritesOnly },
-            onDay = {
-                if (dayOffset != it) {
+    Box(Modifier.fillMaxSize()) {
+    Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(if (tvCategoryMode && categoryRailExpanded && !compactCategoryLayout) 12.dp else 0.dp)) {
+        if (tvCategoryMode && !compactCategoryLayout) {
+            TvCategoryRail(
+                options = tvRailOptions,
+                selectedId = selectedTvRailId,
+                expanded = categoryRailExpanded,
+                onSelect = { id ->
+                    favoritesOnly = id == TV_CATEGORY_FAVORITES
+                    groupId = when (id) {
+                        TV_CATEGORY_ALL, TV_CATEGORY_FAVORITES -> null
+                        else -> id
+                    }
+                    searchQuery = ""
+                    debouncedSearch = ""
+                    renderLimit = PAGE
+                    previewChannelId = null
+                }
+            )
+        }
+        Column(
+            Modifier.weight(1f).fillMaxHeight().onPreviewKeyEvent { event ->
+                if (tvCategoryMode && !categoryRailExpanded && event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft) {
+                    categoryRailExpanded = true
+                    true
+                } else false
+            }
+        ) {
+        if (!tvCategoryMode) {
+            EpgTopBar(
+                groupName = groupName, groups = groups, counts = counts, uncategorized = uncategorized,
+                onGroup = { groupId = it; searchQuery = ""; favoritesOnly = false },
+                settings = settings, favoritesOnly = favoritesOnly,
+                onSettings = { vm.updateSettings(it) },
+                onRefresh = {
+                    toast = "Aggiornamento guida in corso…"
                     store.programs.clear()
                     store.loading.clear()
                     store.failed.clear()
-                    dayOffset = it
+                    manualGuideRefreshTick++
+                    refreshTick++
+                },
+                onFavoritesOnly = { favoritesOnly = !favoritesOnly },
+                tvCategoryMode = false,
+                onDay = {
+                    if (dayOffset != it) {
+                        store.programs.clear()
+                        store.loading.clear()
+                        store.failed.clear()
+                        dayOffset = it
+                    }
+                    if (it == 0) now = System.currentTimeMillis()
                 }
-                if (it == 0) now = System.currentTimeMillis()
-            }
-        )
+            )
+        }
+        if (tvCategoryMode) {
+            TvEpgPreviewPanel(
+                channel = previewChannel,
+                current = previewCurrent,
+                next = previewNext,
+                now = now,
+                player = previewPlayer,
+                groupName = groupName,
+                groups = groups,
+                counts = counts,
+                uncategorized = uncategorized,
+                settings = settings,
+                favoritesOnly = favoritesOnly,
+                onGroup = { groupId = it; searchQuery = ""; favoritesOnly = false },
+                onSettings = { vm.updateSettings(it) },
+                onRefresh = {
+                    toast = "Aggiornamento guida in corso…"
+                    store.programs.clear()
+                    store.loading.clear()
+                    store.failed.clear()
+                    manualGuideRefreshTick++
+                    refreshTick++
+                },
+                onFavoritesOnly = { favoritesOnly = !favoritesOnly },
+                onDay = {
+                    if (dayOffset != it) {
+                        store.programs.clear()
+                        store.loading.clear()
+                        store.failed.clear()
+                        dayOffset = it
+                    }
+                    if (it == 0) now = System.currentTimeMillis()
+                },
+                onWatch = {
+                    stopPreviewPlayback()
+                    previewChannel?.let(onPlay)
+                },
+                compactLayout = compactCategoryLayout,
+                modifier = Modifier.fillMaxWidth().onFocusChanged { if (it.hasFocus) categoryRailExpanded = false }
+            )
+        }
         toast?.let { msg ->
             LaunchedEffect(msg) { delay(2500); toast = null }
             Text(msg, color = glassForeground().copy(.85f), fontSize = 12.sp, modifier = Modifier.padding(vertical = 4.dp))
@@ -428,9 +598,7 @@ fun EpgGridScreen(
 
         if (live.isEmpty()) {
             Text("Nessun canale live disponibile. Aggiungi una sorgente e attendi il caricamento.", color = glassForeground().copy(.6f), modifier = Modifier.padding(16.dp))
-            return@Column
-        }
-
+        } else {
         val listState = rememberLazyListState()
         LazyColumn(
             state = listState,
@@ -442,7 +610,8 @@ fun EpgGridScreen(
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
                     compact = compact,
-                    horizontalInset = bannerInset
+                    horizontalInset = bannerInset,
+                    onFocus = { if (tvCategoryMode) categoryRailExpanded = false }
                 )
             }
             // Like iOS, the day + time header is part of the vertical scroll content (not sticky).
@@ -506,23 +675,29 @@ fun EpgGridScreen(
                     }
                 }
             }
-            itemsIndexed(visible, key = { _, c -> c.id }) { _, ch ->
+            itemsIndexed(visible, key = { _, c -> c.id }) { visibleIndex, ch ->
                 val programs = store.programs[ch.id].orEmpty().sortedBy { it.startMs }
                 Row(Modifier.fillMaxWidth().height(rowH)) {
                     ChannelBanner(
                         ch,
                         favorite = ch.id in favorites.live,
+                        selected = tvCategoryMode && ch.id == previewChannel?.id,
                         hasCatchup = programs.any { it.hasArchive && it.endMs > windowStart && it.startMs < windowEnd },
                         width = bannerColumnW,
                         bannerW = bannerW,
                         bannerH = bannerH,
                         rowHeight = rowH,
                         inset = bannerInset,
-                        centered = cardStyleGrid,
+                        centered = if (tvCategoryMode) true else cardStyleGrid,
                         dark = darkTiles,
                         compact = compact,
-                        onClick = { onPlay(ch) },
-                        onLongClick = { vm.toggleFavorite(ch) }
+                        showChannelDetails = tvCategoryMode,
+                        compactDetails = compactCategoryLayout,
+                        displayNumber = ch.number ?: (visibleIndex + 1),
+                        onClick = { stopPreviewPlayback(); onPlay(ch) },
+                        onLongClick = { vm.toggleFavorite(ch) },
+                        onFocus = { if (tvCategoryMode) { previewChannelId = ch.id; categoryRailExpanded = false } },
+                        onExitLeft = { if (tvCategoryMode && !categoryRailExpanded) { categoryRailExpanded = true; true } else false }
                     )
                     Box(
                         Modifier.weight(1f).fillMaxHeight().offset(x = -bleed).clipToBounds().horizontalScroll(hScroll)
@@ -578,7 +753,10 @@ fun EpgGridScreen(
                                         brightWidth = brightWidth,
                                         color = base,
                                         dark = darkTiles,
-                                        onClick = { selectedProgram = ch to program }
+                                        selected = tvCategoryMode && ch.id == previewChannel?.id && program.isCurrent(now),
+                                        onClick = { selectedProgram = ch to program; if (tvCategoryMode) previewChannelId = ch.id },
+                                        onFocus = { if (tvCategoryMode) { previewChannelId = ch.id; categoryRailExpanded = false } },
+                                        onExitLeft = { if (tvCategoryMode && !categoryRailExpanded) { categoryRailExpanded = true; true } else false }
                                     )
                                 }
                             }
@@ -593,6 +771,30 @@ fun EpgGridScreen(
                 }
             }
         }
+        }
+        }
+    }
+    if (tvCategoryMode && compactCategoryLayout) {
+        TvCategoryRail(
+            options = tvRailOptions,
+            selectedId = selectedTvRailId,
+            expanded = categoryRailExpanded,
+            expandedWidth = mobileRailWidth,
+            modifier = Modifier.align(Alignment.CenterStart).zIndex(30f),
+            onSelect = { id ->
+                favoritesOnly = id == TV_CATEGORY_FAVORITES
+                groupId = when (id) {
+                    TV_CATEGORY_ALL, TV_CATEGORY_FAVORITES -> null
+                    else -> id
+                }
+                searchQuery = ""
+                debouncedSearch = ""
+                renderLimit = PAGE
+                previewChannelId = null
+                categoryRailExpanded = false
+            }
+        )
+    }
     }
 
     selectedProgram?.let { (ch, p) ->
@@ -614,16 +816,123 @@ fun EpgGridScreen(
                             val src = sources.firstOrNull { it.id == ch.sourceId }
                             if (src != null) {
                                 val url = app.epg.catchUpUrl(src, ch.id.substringAfterLast(':'), p.startMs, p.endMs)
+                                stopPreviewPlayback()
                                 onPlay(ch.copy(streamUrl = url, title = "${ch.title} · ${p.title}", kind = MediaKind.EPISODE))
                             }
                             selectedProgram = null
                         }
                     }) { Text("Catch-up") }
-                    Button({ onPlay(ch); selectedProgram = null }) { Text("Guarda") }
+                    Button({ stopPreviewPlayback(); onPlay(ch); selectedProgram = null }) { Text("Guarda") }
                 }
             },
             dismissButton = { TextButton({ selectedProgram = null }) { Text("Chiudi") } }
         )
+    }
+}
+
+@OptIn(UnstableApi::class)
+@Composable
+private fun TvEpgPreviewPanel(
+    channel: MediaItem?,
+    current: EpgProgram?,
+    next: EpgProgram?,
+    now: Long,
+    player: ExoPlayer?,
+    groupName: String,
+    groups: List<Category>,
+    counts: Map<String?, Int>,
+    uncategorized: Int,
+    settings: AppSettings,
+    favoritesOnly: Boolean,
+    onGroup: (String?) -> Unit,
+    onSettings: (AppSettings) -> Unit,
+    onRefresh: () -> Unit,
+    onFavoritesOnly: () -> Unit,
+    onDay: (Int) -> Unit,
+    onWatch: () -> Unit,
+    compactLayout: Boolean = false,
+    modifier: Modifier = Modifier,
+) {
+    val timeFormat = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
+    Row(
+        modifier.fillMaxWidth()
+            .height(if (compactLayout) 154.dp else 212.dp)
+            .padding(horizontal = if (compactLayout) 4.dp else 16.dp, vertical = if (compactLayout) 6.dp else 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(if (compactLayout) 8.dp else 18.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Surface(
+            onClick = onWatch,
+            modifier = if (compactLayout) Modifier.width(108.dp).aspectRatio(16f / 9f) else Modifier.fillMaxHeight().aspectRatio(16f / 9f),
+            shape = RoundedCornerShape(14.dp),
+            color = Color.Black,
+            border = BorderStroke(.8.dp, Color.White.copy(.16f)),
+        ) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                if (!channel?.logoUrl.isNullOrBlank()) {
+                    AsyncImage(channel?.logoUrl, contentDescription = channel?.title, modifier = Modifier.fillMaxSize(.60f), contentScale = ContentScale.Fit)
+                } else Icon(Icons.Default.LiveTv, null, tint = Color.White.copy(.75f), modifier = Modifier.size(36.dp))
+                if (player != null && channel != null) {
+                    AndroidView(
+                        modifier = Modifier.fillMaxSize(),
+                        factory = { ctx -> PlayerView(ctx).apply {
+                            useController = false
+                            resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                            setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
+                            setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                            this.player = player
+                            layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+                        } },
+                        update = { view -> view.player = player },
+                    )
+                }
+                Row(
+                    Modifier.align(Alignment.BottomStart).padding(9.dp)
+                        .background(Color.Black.copy(.58f), RoundedCornerShape(8.dp))
+                        .padding(horizontal = 8.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Default.PlayArrow, null, tint = Color.White, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Guarda", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
+        Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(if (compactLayout) 1.dp else 4.dp)) {
+            EpgTopBar(
+                groupName = groupName,
+                groups = groups,
+                counts = counts,
+                uncategorized = uncategorized,
+                onGroup = onGroup,
+                settings = settings,
+                favoritesOnly = favoritesOnly,
+                onSettings = onSettings,
+                onRefresh = onRefresh,
+                onFavoritesOnly = onFavoritesOnly,
+                tvCategoryMode = true,
+                onDay = onDay,
+            )
+            Text(channel?.title ?: "Seleziona un canale", color = glassForeground(), fontSize = if (compactLayout) 13.sp else 22.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (current != null) {
+                Text(
+                    "${timeFormat.format(Date(current.startMs))}–${timeFormat.format(Date(current.endMs))}   ${current.title}",
+                    color = glassForeground(), fontSize = if (compactLayout) 10.sp else 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+                LinearProgressIndicator(
+                    progress = { current.progress(now).toFloat().coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth().height(4.dp),
+                    color = Color(0xFF89A8FF), trackColor = Color.White.copy(.18f),
+                )
+                Text(current.description?.takeIf { it.isNotBlank() } ?: "Descrizione del programma non disponibile.", color = glassForeground(.76f), fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            } else {
+                Text("Programma in onda non disponibile", color = glassForeground(.74f), fontSize = if (compactLayout) 10.sp else 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Text(
+                next?.let { "Prossimo ${timeFormat.format(Date(it.startMs))}  ${it.title}" } ?: "Prossimo programma non disponibile",
+                color = glassForeground(.6f), fontSize = if (compactLayout) 9.sp else 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 
@@ -632,6 +941,7 @@ fun EpgGridScreen(
 private fun ChannelBanner(
     ch: MediaItem,
     favorite: Boolean,
+    selected: Boolean,
     hasCatchup: Boolean,
     width: Dp,
     bannerW: Dp,
@@ -641,8 +951,13 @@ private fun ChannelBanner(
     centered: Boolean,
     dark: Boolean,
     compact: Boolean,
+    showChannelDetails: Boolean = false,
+    compactDetails: Boolean = false,
+    displayNumber: Int? = null,
     onClick: () -> Unit,
-    onLongClick: () -> Unit
+    onLongClick: () -> Unit,
+    onFocus: () -> Unit = {},
+    onExitLeft: () -> Boolean = { false },
 ) {
     val cardLeft = if (centered) (width - bannerW) / 2 else inset
     val badgeSize = if (compact) 26.dp else 30.dp
@@ -650,32 +965,128 @@ private fun ChannelBanner(
         Box(
             Modifier.offset(x = cardLeft, y = (rowHeight - bannerH) / 2f).width(bannerW).height(bannerH)
                 .clip(RoundedCornerShape(if (compact) 14.dp else 16.dp))
-                .background(if (dark) DarkBanner else pastelFor(ch))
+                .then(if (selected) Modifier.border(BorderStroke(1.2.dp, Color(0xFF8FB3FF)), RoundedCornerShape(if (compact) 14.dp else 16.dp)) else Modifier)
+                .onFocusChanged { if (it.isFocused) onFocus() }
+                .onPreviewKeyEvent { e -> e.type == KeyEventType.KeyDown && e.key == Key.DirectionLeft && onExitLeft() }
                 .combinedClickable(onClick = onClick, onLongClick = onLongClick)
         ) {
-            if (!ch.logoUrl.isNullOrBlank()) {
-                AsyncImage(
-                    model = ch.logoUrl,
-                    contentDescription = ch.title,
-                    modifier = Modifier.fillMaxSize().padding(if (compact) 8.dp else 12.dp),
-                    contentScale = ContentScale.Fit
+            LiquidGlassSurface(
+                modifier = Modifier.fillMaxSize(),
+                cornerRadius = if (compact) 14.dp else 16.dp,
+                contentPadding = 0.dp,
+                highlighted = selected,
+                suppressTopHighlight = true,
+            ) {}
+            Box(
+                Modifier.fillMaxSize().background(
+                    if (selected) Color(0xFF5265BA).copy(alpha = .48f)
+                    else if (dark) DarkBanner.copy(alpha = .30f)
+                    else pastelFor(ch).copy(alpha = .33f)
                 )
+            )
+            if (showChannelDetails && compactDetails) {
+                val (baseName, quality) = remember(ch.title) { splitQuality(ch.title) }
+                Column(
+                    Modifier.fillMaxSize().padding(horizontal = 6.dp, vertical = 3.dp),
+                    verticalArrangement = Arrangement.SpaceEvenly,
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(displayNumber?.toString().orEmpty(), color = glassForeground(.68f), fontSize = 10.sp, maxLines = 1)
+                        Box(Modifier.size(23.dp).clip(RoundedCornerShape(5.dp)).background(Color.White.copy(.10f)), contentAlignment = Alignment.Center) {
+                            if (!ch.logoUrl.isNullOrBlank()) {
+                                AsyncImage(model = ch.logoUrl, contentDescription = ch.title, modifier = Modifier.fillMaxSize().padding(1.dp), contentScale = ContentScale.Fit)
+                            } else Icon(Icons.Default.LiveTv, contentDescription = "Canale TV", tint = glassForeground(.8f), modifier = Modifier.size(15.dp))
+                        }
+                        Spacer(Modifier.weight(1f))
+                        Icon(if (favorite) Icons.Default.Star else Icons.Default.StarBorder, contentDescription = if (favorite) "Canale preferito" else "Aggiungi ai preferiti con pressione prolungata", tint = if (favorite) Color(0xFFFFD60A) else glassForeground(.58f), modifier = Modifier.size(13.dp))
+                    }
+                    Text(
+                        baseName + (quality?.let { " $it" } ?: ""),
+                        color = glassForeground(), fontSize = 10.sp, fontWeight = FontWeight.SemiBold,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            } else if (showChannelDetails) {
+                val (baseName, quality) = remember(ch.title) { splitQuality(ch.title) }
+                Row(
+                    Modifier.fillMaxSize().padding(horizontal = 10.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(9.dp),
+                ) {
+                    Text(
+                        displayNumber?.toString().orEmpty(),
+                        color = glassForeground(.68f),
+                        fontSize = if (compact) 12.sp else 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        modifier = Modifier.widthIn(min = 25.dp),
+                    )
+                    Box(
+                        Modifier.size(if (compact) 36.dp else 44.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color.White.copy(.10f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (!ch.logoUrl.isNullOrBlank()) {
+                            AsyncImage(
+                                model = ch.logoUrl,
+                                contentDescription = ch.title,
+                                modifier = Modifier.fillMaxSize().padding(2.dp),
+                                contentScale = ContentScale.Fit,
+                            )
+                        } else {
+                            Icon(Icons.Default.LiveTv, contentDescription = "Canale TV", tint = glassForeground(.8f), modifier = Modifier.size(24.dp))
+                        }
+                    }
+                    Column(
+                        Modifier.weight(1f),
+                        verticalArrangement = Arrangement.Center,
+                    ) {
+                        Text(
+                            baseName,
+                            color = glassForeground(),
+                            fontSize = if (compact) 13.sp else 16.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        if (quality != null) QualityBadge(quality, compact = compact)
+                    }
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Icon(
+                            if (favorite) Icons.Default.Star else Icons.Default.StarBorder,
+                            contentDescription = if (favorite) "Canale preferito" else "Aggiungi ai preferiti con pressione prolungata",
+                            tint = if (favorite) Color(0xFFFFD60A) else glassForeground(.58f),
+                            modifier = Modifier.size(if (compact) 18.dp else 22.dp),
+                        )
+                        if (hasCatchup) Icon(Icons.Default.History, contentDescription = "Catch-up disponibile", tint = glassForeground(.7f), modifier = Modifier.size(14.dp))
+                    }
+                }
             } else {
-                Icon(
-                    Icons.Default.LiveTv,
-                    contentDescription = "Canale TV",
-                    tint = glassForeground(),
-                    modifier = Modifier.size(if (compact) 22.dp else 26.dp).align(Alignment.Center)
-                )
-            }
-            if (favorite) {
-                Box(Modifier.align(Alignment.TopEnd).padding(4.dp).size(if (compact) 18.dp else 20.dp)
-                    .clip(RoundedCornerShape(50)).background(Color.Black.copy(.34f)), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Default.Star, null, tint = Color(0xFFFFD60A), modifier = Modifier.size(if (compact) 11.dp else 12.dp))
+                if (!ch.logoUrl.isNullOrBlank()) {
+                    AsyncImage(
+                        model = ch.logoUrl,
+                        contentDescription = ch.title,
+                        modifier = Modifier.fillMaxSize().padding(if (compact) 8.dp else 12.dp),
+                        contentScale = ContentScale.Fit
+                    )
+                } else {
+                    Icon(
+                        Icons.Default.LiveTv,
+                        contentDescription = "Canale TV",
+                        tint = glassForeground(),
+                        modifier = Modifier.size(if (compact) 22.dp else 26.dp).align(Alignment.Center)
+                    )
+                }
+                if (favorite) {
+                    Box(Modifier.align(Alignment.TopEnd).padding(4.dp).size(if (compact) 18.dp else 20.dp)
+                        .clip(RoundedCornerShape(50)).background(Color.Black.copy(.34f)), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Default.Star, null, tint = Color(0xFFFFD60A), modifier = Modifier.size(if (compact) 11.dp else 12.dp))
+                    }
                 }
             }
         }
-        if (hasCatchup) {
+        if (hasCatchup && !showChannelDetails) {
             Box(
                 Modifier.offset(x = cardLeft + bannerW - badgeSize / 2f + bannerW * .14f, y = (rowHeight - badgeSize) / 2f)
                     .size(badgeSize).clip(RoundedCornerShape(50)).background(Color(0xFF4D4D4D)),
@@ -692,13 +1103,15 @@ private fun EpgSearchHeader(
     value: String,
     onValueChange: (String) -> Unit,
     compact: Boolean,
-    horizontalInset: Dp
+    horizontalInset: Dp,
+    onFocus: (() -> Unit)? = null,
 ) {
     EpgStyleSearchField(
         value = value,
         onValueChange = onValueChange,
         modifier = Modifier.fillMaxWidth().padding(horizontal = horizontalInset).padding(top = 10.dp, bottom = if (compact) 16.dp else 18.dp),
-        placeholder = "Cerca per nome del programma"
+        placeholder = "Cerca per nome del programma",
+        onFocus = onFocus
     )
 }
 
@@ -719,7 +1132,10 @@ private fun EpgProgramTile(
     brightWidth: Dp,
     color: Color,
     dark: Boolean,
-    onClick: () -> Unit
+    selected: Boolean = false,
+    onClick: () -> Unit,
+    onFocus: () -> Unit = {},
+    onExitLeft: () -> Boolean = { false },
 ) {
     val (baseName, quality) = remember(channel.title) { splitQuality(channel.title) }
     val textMeasurer = rememberTextMeasurer()
@@ -744,11 +1160,29 @@ private fun EpgProgramTile(
     val startLabel = remember(program.startMs) { SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(program.startMs)) }
     val radius = if (compact) 12.dp else 18.dp
 
-    Box(Modifier.offset(x = startX, y = verticalInset).width(fullWidth).height(height).combinedClickable(onClick = onClick, onLongClick = onClick)) {
+    Box(
+        Modifier.offset(x = startX, y = verticalInset).width(fullWidth).height(height)
+            .onFocusChanged { if (it.isFocused) onFocus() }
+            .onPreviewKeyEvent { e -> e.type == KeyEventType.KeyDown && e.key == Key.DirectionLeft && onExitLeft() }
+            .combinedClickable(onClick = onClick, onLongClick = onClick)
+    ) {
         Box(Modifier.width(visibleWidth).height(height).clip(RoundedCornerShape(radius))) {
-            Box(Modifier.fillMaxSize().background(if (dark) DarkTileBase else color.copy(alpha = if (compact) .18f else .22f).compositeOver(Color(0.10f, 0.10f, 0.10f))))
+            LiquidGlassSurface(
+                modifier = Modifier.fillMaxSize(),
+                cornerRadius = radius,
+                contentPadding = 0.dp,
+                highlighted = selected,
+                suppressTopHighlight = true,
+            ) {}
+            Box(
+                Modifier.fillMaxSize().background(
+                    if (selected) Color(0xFF5265BA).copy(alpha = .48f)
+                    else if (dark) DarkTileBase.copy(alpha = .26f)
+                    else color.copy(alpha = if (compact) .16f else .18f).compositeOver(Color(0.10f, 0.10f, 0.10f))
+                )
+            )
             if (brightWidth > 0.dp) {
-                Box(Modifier.width(brightWidth).fillMaxHeight().background(if (dark) Color(0.20f, 0.20f, 0.22f) else color.copy(alpha = if (compact) .38f else .45f)))
+                Box(Modifier.width(brightWidth).fillMaxHeight().background(if (selected) Color(0xFF7487DF).copy(alpha = .32f) else if (dark) Color(0.20f, 0.20f, 0.22f).copy(alpha = .46f) else color.copy(alpha = if (compact) .30f else .34f)))
             }
             if (compact) {
                 Column(Modifier.fillMaxSize().padding(horizontal = 10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
@@ -807,13 +1241,14 @@ private fun QualityBadge(text: String, compact: Boolean) {
 private fun EpgTopBar(
     groupName: String, groups: List<Category>, counts: Map<String?, Int>, uncategorized: Int, onGroup: (String?) -> Unit,
     settings: AppSettings, favoritesOnly: Boolean,
-    onSettings: (AppSettings) -> Unit, onRefresh: () -> Unit, onFavoritesOnly: () -> Unit, onDay: (Int) -> Unit
+    onSettings: (AppSettings) -> Unit, onRefresh: () -> Unit, onFavoritesOnly: () -> Unit, onDay: (Int) -> Unit,
+    tvCategoryMode: Boolean = false,
 ) {
     var groupOpen by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
     var page by remember { mutableStateOf<String?>(null) }
     Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box {
+        if (!tvCategoryMode) Box {
             Row(Modifier.clip(RoundedCornerShape(50)).background(MaterialTheme.colorScheme.surfaceVariant.copy(.65f)).combinedClickableSafe { groupOpen = true }.padding(horizontal = 16.dp, vertical = 9.dp),
                 verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.GridView, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(8.dp))
@@ -833,6 +1268,10 @@ private fun EpgTopBar(
             DropdownMenu(menuOpen, { menuOpen = false; page = null }) {
                 when (page) {
                     null -> {
+                        if (tvCategoryMode) {
+                            DropdownMenuItem({ Text("UI Gruppi") }, { page = "gruppi" }, leadingIcon = { Icon(Icons.Default.ViewAgenda, null) }, trailingIcon = { Icon(Icons.Default.ChevronRight, null) })
+                            HorizontalDivider()
+                        }
                         DropdownMenuItem({ Text("Aspetto EPG") }, { page = "aspetto" }, leadingIcon = { Icon(Icons.Default.AspectRatio, null) }, trailingIcon = { Icon(Icons.Default.ChevronRight, null) })
                         DropdownMenuItem({ Text("Assetti EPG") }, { page = "assetti" }, leadingIcon = { Icon(Icons.Default.ViewAgenda, null) }, trailingIcon = { Icon(Icons.Default.ChevronRight, null) })
                         DropdownMenuItem({ Text("Colori EPG") }, { page = "colori" }, leadingIcon = { Icon(Icons.Default.Palette, null) }, trailingIcon = { Icon(Icons.Default.ChevronRight, null) })
@@ -844,6 +1283,13 @@ private fun EpgTopBar(
                         DropdownMenuItem({ Text("Ieri") }, { onDay(-1); menuOpen = false }, leadingIcon = { Icon(Icons.Default.ChevronLeft, null) })
                         DropdownMenuItem({ Text("Oggi") }, { onDay(0); menuOpen = false }, leadingIcon = { Icon(Icons.Default.CalendarToday, null) })
                         DropdownMenuItem({ Text("Domani") }, { onDay(1); menuOpen = false }, leadingIcon = { Icon(Icons.Default.ChevronRight, null) })
+                    }
+                    "gruppi" -> {
+                        DropdownMenuItem({ Text("UI Gruppi") }, { page = null }, leadingIcon = { Icon(Icons.Default.ArrowBack, null) })
+                        HorizontalDivider()
+                        CheckItem("Categorie TV", settings.groupUIStyle == "categorie_tv") { onSettings(settings.copy(groupUIStyle = "categorie_tv")); menuOpen = false; page = null }
+                        CheckItem("Scorrevole", settings.groupUIStyle == "scorrevole") { onSettings(settings.copy(groupUIStyle = "scorrevole")); menuOpen = false; page = null }
+                        CheckItem("Espansibile", settings.groupUIStyle == "espansibile") { onSettings(settings.copy(groupUIStyle = "espansibile")); menuOpen = false; page = null }
                     }
                     "aspetto" -> {
                         DropdownMenuItem({ Text("Aspetto EPG") }, { page = null }, leadingIcon = { Icon(Icons.Default.ArrowBack, null) })

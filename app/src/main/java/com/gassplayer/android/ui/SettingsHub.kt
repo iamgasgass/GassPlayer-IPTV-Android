@@ -125,7 +125,19 @@ internal fun SettingsHub(app: GassPlayerApplication, settings: AppSettings, vm: 
                     } }
                     item { HubSection("Libreria", "Griglia di canali, film e serie", Icons.Default.GridView) {
                         HubChoice("Densità griglia", when (local.density) { "compact" -> "Compatta"; "poster" -> "Poster"; else -> "Comoda" }, listOf("Compatta", "Comoda", "Poster")) { save(local.copy(density = when (it) { "Compatta" -> "compact"; "Poster" -> "poster"; else -> "comfortable" })) }
-                        HubChoice("UI Gruppi", if (local.groupUIStyle == "espansibile") "Espansibile" else "Scorrevole", listOf("Scorrevole", "Espansibile")) { save(local.copy(groupUIStyle = it.lowercase())) }
+                        val groupChoices = listOf("Categorie TV", "Scorrevole", "Espansibile")
+                        val selectedGroupLabel = when (local.groupUIStyle) {
+                            "categorie_tv" -> "Categorie TV"
+                            "espansibile" -> "Espansibile"
+                            else -> "Scorrevole"
+                        }
+                        HubChoice("UI Gruppi", selectedGroupLabel, groupChoices) { selected ->
+                            save(local.copy(groupUIStyle = when (selected) {
+                                "Categorie TV" -> "categorie_tv"
+                                "Espansibile" -> "espansibile"
+                                else -> "scorrevole"
+                            }))
+                        }
                         HubToggle("Mostra numero canale", null, local.showChannelNumbers) { save(local.copy(showChannelNumbers = it)) }
                     } }
                     item { HubSection("Guida EPG", "Aspetto della griglia", Icons.Default.CalendarMonth) {

@@ -8,6 +8,7 @@ import android.content.res.Configuration
 import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -156,10 +157,13 @@ fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
     AdaptiveShell(contentRoute, tv, loading, message, onRetry = { vm.refresh(true) }, onRoute = { route = it }, title = shellTitle) {
         when (contentRoute) {
             "home" -> HomeScreen(vm, catalog, favorite, watch, sources, onRoute = { route = it }, onPlay = { playerItem = it })
-            "live" -> CatalogScreen("Live TV", catalog?.live.orEmpty(), catalog?.liveCategories.orEmpty(), favorite, parental, vm, onPlay = { playerItem = it }, showNumbers = settings.showChannelNumbers, scopeKey = "live", onCustomize = { route = "live-customize" })
-            "movies" -> CatalogScreen("Film (VOD)", catalog?.movies.orEmpty(), catalog?.vodCategories.orEmpty(), favorite, parental, vm, onPlay = { playerItem = it }, detail = true, scopeKey = "movies", onCustomize = { route = "movies-customize" })
-            "series" -> SeriesScreen(catalog?.series.orEmpty(), catalog?.episodes.orEmpty(), catalog?.seriesCategories.orEmpty(), favorite, parental, vm, onPlay = { playerItem = it }, onCustomize = { route = "series-customize" })
-            "epg" -> EpgGridScreen(app, vm, catalog?.live.orEmpty(), catalog?.liveCategories.orEmpty(), favorite, settings, onPlay = { playerItem = it })
+            "live" -> if (settings.groupUIStyle == "categorie_tv") {
+                // The TV category layout embeds the exact same EPG screen/index used by Guida.
+                EpgGridScreen(app, vm, catalog?.live.orEmpty(), catalog?.liveCategories.orEmpty(), favorite, settings, onPlay = { playerItem = it }, tvCategoryMode = true, playerActive = playerActive)
+            } else CatalogScreen("Live TV", catalog?.live.orEmpty(), catalog?.liveCategories.orEmpty(), favorite, parental, vm, onPlay = { playerItem = it }, showNumbers = settings.showChannelNumbers, scopeKey = "live", onCustomize = { route = "live-customize" }, isTelevision = tv)
+            "movies" -> CatalogScreen("Film (VOD)", catalog?.movies.orEmpty(), catalog?.vodCategories.orEmpty(), favorite, parental, vm, onPlay = { playerItem = it }, detail = true, scopeKey = "movies", onCustomize = { route = "movies-customize" }, isTelevision = tv)
+            "series" -> SeriesScreen(catalog?.series.orEmpty(), catalog?.episodes.orEmpty(), catalog?.seriesCategories.orEmpty(), favorite, parental, vm, onPlay = { playerItem = it }, onCustomize = { route = "series-customize" }, isTelevision = tv)
+            "epg" -> EpgGridScreen(app, vm, catalog?.live.orEmpty(), catalog?.liveCategories.orEmpty(), favorite, settings, onPlay = { playerItem = it }, playerActive = playerActive)
             "epg-manage" -> ExternalEpgManageScreen(app, onBack = { route = epgManageReturnRoute })
             "merged" -> MergedPlaylistScreen(app)
             "trakt" -> TraktScreen(app, settings, vm)
@@ -708,8 +712,8 @@ private fun HomeDestinationCard(title: String, metric: String, subtitle: String,
 }
 
 @Composable
-private fun TrendingCard(item: MetadataResult, isSeries: Boolean, onClick: () -> Unit) {
-    Surface(onClick = onClick, modifier = Modifier.width(156.dp).height(270.dp), color = Color.Transparent, shape = RoundedCornerShape(18.dp)) {
+private fun TrendingCard(item: MetadataResult, isSeries: Boolean, onClick: () -> Unit, onFocus: (() -> Unit)? = null) {
+    Surface(onClick = onClick, modifier = Modifier.width(156.dp).height(270.dp).onFocusChanged { if (it.isFocused || it.hasFocus) onFocus?.invoke() }, color = Color.Transparent, shape = RoundedCornerShape(18.dp)) {
         LiquidGlassSurface(modifier = Modifier.fillMaxSize(), cornerRadius = 18.dp, contentPadding = 0.dp) {
             Column(Modifier.fillMaxSize()) {
                 Box(Modifier.fillMaxWidth().height(205.dp).background(Color(0xFF101010))) {
@@ -750,7 +754,8 @@ private fun MediaCard(
     favorite: Boolean,
     onClick: () -> Unit,
     onToggleFavorite: (() -> Unit)? = null,
-    widthOverride: Dp? = null
+    widthOverride: Dp? = null,
+    onFocus: (() -> Unit)? = null,
 ) {
     val w = widthOverride ?: if (item.kind == MediaKind.LIVE) 190.dp else 160.dp
     val h = w * if (item.kind == MediaKind.LIVE) (108f / 190f) else (220f / 160f)
@@ -759,7 +764,7 @@ private fun MediaCard(
     Surface(
         modifier = Modifier.width(w)
             .graphicsLayer { scaleX = scale; scaleY = scale }
-            .onFocusChanged { focused = it.isFocused }
+            .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus?.invoke() }
             .combinedClickable(
                 interactionSource = null,
                 indication = androidx.compose.foundation.LocalIndication.current,
@@ -822,7 +827,7 @@ private fun buildLibraryCategoryEntries(categories: List<Category>, items: List<
 }
 
 @Composable
-private fun LibraryScreenTitle(title: String, onCustomize: () -> Unit) {
+private fun LibraryScreenTitle(title: String, onCustomize: () -> Unit, onFocus: (() -> Unit)? = null) {
     Row(
         Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -837,7 +842,7 @@ private fun LibraryScreenTitle(title: String, onCustomize: () -> Unit) {
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
-        Surface(onClick = onCustomize, shape = RoundedCornerShape(50), color = Color.Transparent) {
+        Surface(onClick = onCustomize, modifier = Modifier.onFocusChanged { if (it.isFocused) onFocus?.invoke() }, shape = RoundedCornerShape(50), color = Color.Transparent) {
             LiquidGlassPill {
                 Row(
                     Modifier.height(26.dp),
@@ -902,24 +907,31 @@ private fun CatalogScreen(
     showNumbers: Boolean = false,
     detail: Boolean = false,
     scopeKey: String = if (detail) "movies" else "live",
-    onCustomize: () -> Unit = {}
+    onCustomize: () -> Unit = {},
+    isTelevision: Boolean = false,
 ) {
     var selected by remember { mutableStateOf<MediaItem?>(null) }
     var filter by remember { mutableStateOf<String?>(null) }
     var searchQuery by remember(scopeKey) { mutableStateOf("") }
     var trending by remember { mutableStateOf<List<MetadataResult>>(emptyList()) }
     var showTrendUnavailable by remember { mutableStateOf(false) }
-    if (detail && selected != null) {
-        MovieDetailScreen(vm.app, selected!!, vm.catalog.value?.movies.orEmpty(), favorite, onBack = { selected = null }, onPlay = { i, pos -> onPlayWithPosition(onPlay, i, pos) })
-        return
-    }
     val libSettings by vm.settings.collectAsStateWithLifecycle()
     val watch by vm.watch.collectAsStateWithLifecycle()
+    val tvCategoryMode = libSettings.groupUIStyle == "categorie_tv"
+    val compactCategoryLayout = tvCategoryMode && LocalConfiguration.current.screenWidthDp < 700
+    val mobileRailWidth = (LocalConfiguration.current.screenWidthDp - 136).dp.coerceIn(160.dp, 236.dp)
+    var categoryRailExpanded by remember(scopeKey) { mutableStateOf(true) }
+    val favoriteIds = if (scopeKey == "live") favorite.live else favorite.movies
+    if (detail && selected != null) {
+        MovieDetailScreen(vm.app, selected!!, vm.catalog.value?.movies.orEmpty(), favorite, onBack = { selected = null; if (tvCategoryMode) categoryRailExpanded = true }, onPlay = { i, pos -> onPlayWithPosition(onPlay, i, pos) })
+        return
+    }
+    BackHandler(enabled = tvCategoryMode && !categoryRailExpanded) { categoryRailExpanded = true }
     val defaults = if (scopeKey == "live") defaultLiveSections else defaultMovieSections
     val rawOrder = if (scopeKey == "live") libSettings.liveSectionOrder else libSettings.movieSectionOrder
     val hiddenSections = if (scopeKey == "live") libSettings.hiddenLiveSections else libSettings.hiddenMovieSections
     val sectionOrder = remember(rawOrder, defaults) { (rawOrder + defaults).distinct() }
-    val visibleSections = sectionOrder.filterNot { it in hiddenSections }
+    val visibleSections = sectionOrder.filterNot { it in hiddenSections || ((isTelevision || tvCategoryMode) && it == "categories") }
     // The "Categorie" tile grid is a configurable content section, separate from
     // the playlist group selector in LibraryHeader (like iOS ChannelGridView).
     // Hiding/reordering that grid must not reset the currently selected group.
@@ -933,8 +945,12 @@ private fun CatalogScreen(
 
     val categoryEntries = remember(categories, items) { buildLibraryCategoryEntries(categories, items) }
     // Searching spans the whole library, independently of the selected group, as in iOS.
-    val filtered = remember(items, filter, parental.lockedIds, searchQuery) {
-        val base = if (searchQuery.isNotBlank()) items else items.inCategory(filter)
+    val filtered = remember(items, filter, parental.lockedIds, searchQuery, favoriteIds) {
+        val base = when {
+            searchQuery.isNotBlank() -> items
+            filter == TV_CATEGORY_FAVORITES -> items.onlyIds(favoriteIds)
+            else -> items.inCategory(filter)
+        }
         base.withoutIds(parental.lockedIds).matchingText(searchQuery)
     }
     val watchedIds = remember(watch) { watch.filter { it.kind == MediaKind.MOVIE }.associateBy { it.contentId } }
@@ -947,10 +963,38 @@ private fun CatalogScreen(
     val showContinue = detail && searchQuery.isBlank() && continueItems.isNotEmpty()
     val showTrending = detail && searchQuery.isBlank()
     val visibleContentSections = if (searchQuery.isNotBlank()) visibleSections.filter { it == "search" } else visibleSections
-    val groupAfterSearch = libSettings.groupUIStyle != "espansibile" && visibleSections.firstOrNull() == "search"
+    val groupAfterSearch = libSettings.groupUIStyle == "scorrevole" && visibleSections.firstOrNull() == "search" && !tvCategoryMode
+    val railOptions = remember(categories, items, favoriteIds) { buildTvCategoryRailOptions(categories, items, favoriteIds) }
+    val selectedRailId = when {
+        filter == TV_CATEGORY_FAVORITES -> TV_CATEGORY_FAVORITES
+        filter == null -> TV_CATEGORY_ALL
+        else -> filter!!
+    }
 
-    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        LibraryScreenTitle(title, onCustomize)
+    Box(Modifier.fillMaxSize()) {
+    Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(if (tvCategoryMode && categoryRailExpanded && !compactCategoryLayout) 12.dp else 0.dp)) {
+        if (tvCategoryMode && !compactCategoryLayout) {
+            TvCategoryRail(
+                options = railOptions,
+                selectedId = selectedRailId,
+                expanded = categoryRailExpanded,
+                onSelect = { id ->
+                    filter = when (id) { TV_CATEGORY_ALL -> null; TV_CATEGORY_FAVORITES -> TV_CATEGORY_FAVORITES; else -> id }
+                    searchQuery = ""
+                    scrollScope.launch { listState.scrollToItem(0) }
+                }
+            )
+        }
+        Column(
+            Modifier.weight(1f).fillMaxHeight().onPreviewKeyEvent { event ->
+                if (tvCategoryMode && !categoryRailExpanded && event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft) {
+                    categoryRailExpanded = true
+                    true
+                } else false
+            },
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+        LibraryScreenTitle(title, onCustomize, onFocus = { if (tvCategoryMode) categoryRailExpanded = false })
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             val tileColumns = ((maxWidth.value + 9f) / 159f).toInt().coerceAtLeast(1)
             val tileWidth = ((maxWidth.value - 9f * (tileColumns - 1)) / tileColumns).dp.coerceAtMost(220.dp)
@@ -994,7 +1038,7 @@ private fun CatalogScreen(
             ) {
                 if (!groupAfterSearch) {
                     item(key = "library-groups-$scopeKey-before") {
-                        LibraryHeader(title, categories, items, filter, { filter = it }, libSettings, vm, allowPoster = detail, showGroups = showGroupChips)
+                        LibraryHeader(title, categories, items, filter, { filter = it }, libSettings, vm, allowPoster = detail, showGroups = showGroupChips && !tvCategoryMode, isTelevision = isTelevision, onContentFocus = { if (tvCategoryMode) categoryRailExpanded = false })
                     }
                 }
 
@@ -1006,12 +1050,13 @@ private fun CatalogScreen(
                                     value = searchQuery,
                                     onValueChange = { searchQuery = it },
                                     modifier = Modifier.fillMaxWidth(),
-                                    placeholder = if (scopeKey == "live") "Cerca per nome del canale" else "Cerca per nome del film"
+                                    placeholder = if (scopeKey == "live") "Cerca per nome del canale" else "Cerca per nome del film",
+                                    onFocus = { if (tvCategoryMode) categoryRailExpanded = false }
                                 )
                             }
                             if (groupAfterSearch) {
                                 item(key = "library-groups-$scopeKey-after-search") {
-                                    LibraryHeader(title, categories, items, filter, { filter = it }, libSettings, vm, allowPoster = detail, showGroups = showGroupChips)
+                                    LibraryHeader(title, categories, items, filter, { filter = it }, libSettings, vm, allowPoster = detail, showGroups = showGroupChips && !tvCategoryMode, isTelevision = isTelevision, onContentFocus = { if (tvCategoryMode) categoryRailExpanded = false })
                                 }
                             }
                         }
@@ -1037,7 +1082,7 @@ private fun CatalogScreen(
                                 Section("Continua a guardare", null) {
                                     LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                         items(continueItems.take(24), key = { it.id }) { item ->
-                                            MediaCard(item, vm.appFavorite(favorite, item), onClick = { selected = item }, onToggleFavorite = { vm.toggleFavorite(item) })
+                                            MediaCard(item, vm.appFavorite(favorite, item), onClick = { selected = item }, onToggleFavorite = { vm.toggleFavorite(item) }, onFocus = { if (tvCategoryMode) categoryRailExpanded = false })
                                         }
                                     }
                                 }
@@ -1050,11 +1095,11 @@ private fun CatalogScreen(
                                     else if (trending.isEmpty()) Text("Tendenze non disponibili: controlla la rete e la chiave TMDB.", color = glassForeground(.6f), fontSize = 12.sp)
                                     else LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                         items(trending.take(16), key = { it.id }) { trend ->
-                                            TrendingCard(trend, false) {
+                                            TrendingCard(trend, false, onClick = {
                                                 val match = items.firstOrNull { it.title.equals(trend.title, ignoreCase = true) }
                                                     ?: items.firstOrNull { it.title.contains(trend.title, ignoreCase = true) }
                                                 if (match != null) selected = match else showTrendUnavailable = true
-                                            }
+                                            }, onFocus = { if (tvCategoryMode) categoryRailExpanded = false })
                                         }
                                     }
                                 }
@@ -1082,7 +1127,8 @@ private fun CatalogScreen(
                                     vm.appFavorite(favorite, item),
                                     onClick = { if (detail) selected = item else onPlay(item) },
                                     onToggleFavorite = { vm.toggleFavorite(item) },
-                                    widthOverride = cardWidth
+                                    widthOverride = cardWidth,
+                                    onFocus = { if (tvCategoryMode) categoryRailExpanded = false }
                                 )
                             }
                         }
@@ -1090,6 +1136,23 @@ private fun CatalogScreen(
                 }
             }
         }
+        }
+    }
+    if (tvCategoryMode && compactCategoryLayout) {
+        TvCategoryRail(
+            options = railOptions,
+            selectedId = selectedRailId,
+            expanded = categoryRailExpanded,
+            expandedWidth = mobileRailWidth,
+            modifier = Modifier.align(Alignment.CenterStart).zIndex(30f),
+            onSelect = { id ->
+                filter = when (id) { TV_CATEGORY_ALL -> null; TV_CATEGORY_FAVORITES -> TV_CATEGORY_FAVORITES; else -> id }
+                searchQuery = ""
+                categoryRailExpanded = false
+                scrollScope.launch { listState.scrollToItem(0) }
+            }
+        )
+    }
     }
 
     if (showTrendUnavailable) AlertDialog(
@@ -1109,22 +1172,29 @@ private fun SeriesScreen(
     parental: ParentalState,
     vm: MainViewModel,
     onPlay: (MediaItem) -> Unit,
-    onCustomize: () -> Unit = {}
+    onCustomize: () -> Unit = {},
+    isTelevision: Boolean = false,
 ) {
     var selected by remember { mutableStateOf<MediaItem?>(null) }
     var filter by remember { mutableStateOf<String?>(null) }
     var searchQuery by remember { mutableStateOf("") }
     var trending by remember { mutableStateOf<List<MetadataResult>>(emptyList()) }
     var showTrendUnavailable by remember { mutableStateOf(false) }
-    if (selected != null) {
-        SeriesDetailScreen(vm.app, selected!!, episodes, favorite, onBack = { selected = null }, onPlay = { i, pos -> onPlayWithPosition(onPlay, i, pos) }, allSeries = series, onOpenAlternateSeries = { selected = it })
-        return
-    }
     val libSettings by vm.settings.collectAsStateWithLifecycle()
     val watch by vm.watch.collectAsStateWithLifecycle()
+    val tvCategoryMode = libSettings.groupUIStyle == "categorie_tv"
+    val compactCategoryLayout = tvCategoryMode && LocalConfiguration.current.screenWidthDp < 700
+    val mobileRailWidth = (LocalConfiguration.current.screenWidthDp - 136).dp.coerceIn(160.dp, 236.dp)
+    var categoryRailExpanded by remember { mutableStateOf(true) }
+    val favoriteIds = favorite.series
+    if (selected != null) {
+        SeriesDetailScreen(vm.app, selected!!, episodes, favorite, onBack = { selected = null; if (tvCategoryMode) categoryRailExpanded = true }, onPlay = { i, pos -> onPlayWithPosition(onPlay, i, pos) }, allSeries = series, onOpenAlternateSeries = { selected = it })
+        return
+    }
+    BackHandler(enabled = tvCategoryMode && !categoryRailExpanded) { categoryRailExpanded = true }
     val defaults = defaultSeriesSections
     val sectionOrder = remember(libSettings.seriesSectionOrder) { (libSettings.seriesSectionOrder + defaults).distinct() }
-    val visibleSections = sectionOrder.filterNot { it in libSettings.hiddenSeriesSections }
+    val visibleSections = sectionOrder.filterNot { it in libSettings.hiddenSeriesSections || ((isTelevision || tvCategoryMode) && it == "categories") }
     // Keep the group filter independent from the visibility of the configurable
     // category-tile section, matching iOS: the group selector remains usable
     // even when the standalone "Categorie" grid is hidden.
@@ -1137,8 +1207,12 @@ private fun SeriesScreen(
     }
 
     val categoryEntries = remember(categories, series) { buildLibraryCategoryEntries(categories, series) }
-    val filtered = remember(series, filter, parental.lockedIds, searchQuery) {
-        val base = if (searchQuery.isNotBlank()) series else series.inCategory(filter)
+    val filtered = remember(series, filter, parental.lockedIds, searchQuery, favoriteIds) {
+        val base = when {
+            searchQuery.isNotBlank() -> series
+            filter == TV_CATEGORY_FAVORITES -> series.onlyIds(favoriteIds)
+            else -> series.inCategory(filter)
+        }
         base.withoutIds(parental.lockedIds).matchingText(searchQuery)
     }
     val watchedById = remember(watch) { watch.filter { it.kind == MediaKind.EPISODE || it.kind == MediaKind.SERIES }.associateBy { it.contentId } }
@@ -1155,12 +1229,40 @@ private fun SeriesScreen(
     val showContinue = searchQuery.isBlank() && continueItems.isNotEmpty()
     val showTrending = searchQuery.isBlank()
     val visibleContentSections = if (searchQuery.isNotBlank()) visibleSections.filter { it == "search" } else visibleSections
-    val groupAfterSearch = libSettings.groupUIStyle != "espansibile" && visibleSections.firstOrNull() == "search"
+    val groupAfterSearch = libSettings.groupUIStyle == "scorrevole" && visibleSections.firstOrNull() == "search" && !tvCategoryMode
     val listState = rememberLazyListState()
     val scrollScope = rememberCoroutineScope()
+    val railOptions = remember(categories, series, favoriteIds) { buildTvCategoryRailOptions(categories, series, favoriteIds) }
+    val selectedRailId = when {
+        filter == TV_CATEGORY_FAVORITES -> TV_CATEGORY_FAVORITES
+        filter == null -> TV_CATEGORY_ALL
+        else -> filter!!
+    }
 
-    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        LibraryScreenTitle("Serie TV", onCustomize)
+    Box(Modifier.fillMaxSize()) {
+    Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(if (tvCategoryMode && categoryRailExpanded && !compactCategoryLayout) 12.dp else 0.dp)) {
+        if (tvCategoryMode && !compactCategoryLayout) {
+            TvCategoryRail(
+                options = railOptions,
+                selectedId = selectedRailId,
+                expanded = categoryRailExpanded,
+                onSelect = { id ->
+                    filter = when (id) { TV_CATEGORY_ALL -> null; else -> id }
+                    searchQuery = ""
+                    scrollScope.launch { listState.scrollToItem(0) }
+                }
+            )
+        }
+        Column(
+            Modifier.weight(1f).fillMaxHeight().onPreviewKeyEvent { event ->
+                if (tvCategoryMode && !categoryRailExpanded && event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft) {
+                    categoryRailExpanded = true
+                    true
+                } else false
+            },
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+        LibraryScreenTitle("Serie TV", onCustomize, onFocus = { if (tvCategoryMode) categoryRailExpanded = false })
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             val tileColumns = ((maxWidth.value + 9f) / 159f).toInt().coerceAtLeast(1)
             val tileWidth = ((maxWidth.value - 9f * (tileColumns - 1)) / tileColumns).dp.coerceAtMost(220.dp)
@@ -1200,7 +1302,7 @@ private fun SeriesScreen(
             ) {
                 if (!groupAfterSearch) {
                     item(key = "library-groups-series-before") {
-                        LibraryHeader("Serie TV", categories, series, filter, { filter = it }, libSettings, vm, allowPoster = true, showGroups = showGroupChips)
+                        LibraryHeader("Serie TV", categories, series, filter, { filter = it }, libSettings, vm, allowPoster = true, showGroups = showGroupChips && !tvCategoryMode, isTelevision = isTelevision, onContentFocus = { if (tvCategoryMode) categoryRailExpanded = false })
                     }
                 }
 
@@ -1208,11 +1310,11 @@ private fun SeriesScreen(
                     when (section) {
                         "search" -> {
                             item(key = "library-search-series") {
-                                EpgStyleSearchField(value = searchQuery, onValueChange = { searchQuery = it }, modifier = Modifier.fillMaxWidth(), placeholder = "Cerca per nome della serie")
+                                EpgStyleSearchField(value = searchQuery, onValueChange = { searchQuery = it }, modifier = Modifier.fillMaxWidth(), placeholder = "Cerca per nome della serie", onFocus = { if (tvCategoryMode) categoryRailExpanded = false })
                             }
                             if (groupAfterSearch) {
                                 item(key = "library-groups-series-after-search") {
-                                    LibraryHeader("Serie TV", categories, series, filter, { filter = it }, libSettings, vm, allowPoster = true, showGroups = showGroupChips)
+                                    LibraryHeader("Serie TV", categories, series, filter, { filter = it }, libSettings, vm, allowPoster = true, showGroups = showGroupChips && !tvCategoryMode, isTelevision = isTelevision, onContentFocus = { if (tvCategoryMode) categoryRailExpanded = false })
                                 }
                             }
                         }
@@ -1238,7 +1340,7 @@ private fun SeriesScreen(
                                 Section("Continua a guardare", null) {
                                     LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                         items(continueItems.take(24), key = { it.id }) { item ->
-                                            MediaCard(item, item.id in favorite.series, onClick = { selected = item }, onToggleFavorite = { vm.toggleFavorite(item) })
+                                            MediaCard(item, item.id in favorite.series, onClick = { selected = item }, onToggleFavorite = { vm.toggleFavorite(item) }, onFocus = { if (tvCategoryMode) categoryRailExpanded = false })
                                         }
                                     }
                                 }
@@ -1251,11 +1353,11 @@ private fun SeriesScreen(
                                     else if (trending.isEmpty()) Text("Tendenze non disponibili: controlla la rete e la chiave TMDB.", color = glassForeground(.6f), fontSize = 12.sp)
                                     else LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                         items(trending.take(16), key = { it.id }) { trend ->
-                                            TrendingCard(trend, true) {
+                                            TrendingCard(trend, true, onClick = {
                                                 val match = series.firstOrNull { it.title.equals(trend.title, ignoreCase = true) }
                                                     ?: series.firstOrNull { it.title.contains(trend.title, ignoreCase = true) }
                                                 if (match != null) selected = match else showTrendUnavailable = true
-                                            }
+                                            }, onFocus = { if (tvCategoryMode) categoryRailExpanded = false })
                                         }
                                     }
                                 }
@@ -1278,13 +1380,30 @@ private fun SeriesScreen(
                             val firstIndex = rowIndex * gridColumns
                             for (index in firstIndex until minOf(filtered.size, firstIndex + gridColumns)) {
                                 val item = filtered[index]
-                                MediaCard(item, item.id in favorite.series, onClick = { selected = item }, onToggleFavorite = { vm.toggleFavorite(item) }, widthOverride = cardWidth)
+                                MediaCard(item, item.id in favorite.series, onClick = { selected = item }, onToggleFavorite = { vm.toggleFavorite(item) }, widthOverride = cardWidth, onFocus = { if (tvCategoryMode) categoryRailExpanded = false })
                             }
                         }
                     }
                 }
             }
         }
+        }
+    }
+    if (tvCategoryMode && compactCategoryLayout) {
+        TvCategoryRail(
+            options = railOptions,
+            selectedId = selectedRailId,
+            expanded = categoryRailExpanded,
+            expandedWidth = mobileRailWidth,
+            modifier = Modifier.align(Alignment.CenterStart).zIndex(30f),
+            onSelect = { id ->
+                filter = when (id) { TV_CATEGORY_ALL -> null; else -> id }
+                searchQuery = ""
+                categoryRailExpanded = false
+                scrollScope.launch { listState.scrollToItem(0) }
+            }
+        )
+    }
     }
     if (showTrendUnavailable) AlertDialog(onDismissRequest = { showTrendUnavailable = false }, confirmButton = { TextButton(onClick = { showTrendUnavailable = false }) { Text("OK") } }, title = { Text("Non disponibile nella sorgente") }, text = { Text("Questa serie di tendenza non è presente nella playlist attiva.") })
 }
@@ -1686,7 +1805,7 @@ private fun HomeCustomizationSheet(
         "movies" -> defaultMovieSections
         "series" -> defaultSeriesSections
         else -> defaultHomeSections
-    }
+    }.let { sectionIds -> if (isTv && scopeKey in setOf("live", "movies", "series")) sectionIds.filterNot { it == "categories" } else sectionIds }
     fun readOrder(s: AppSettings): List<String> = when (scopeKey) {
         "live" -> s.liveSectionOrder
         "movies" -> s.movieSectionOrder
@@ -1694,7 +1813,7 @@ private fun HomeCustomizationSheet(
         // The iOS Home layout has no playlist "Categorie" tile grid. That
         // configurable section belongs only to Live TV / Film / Serie TV.
         else -> s.homeSectionOrder.filter { it in defaultHomeSections }
-    }
+    }.let { sectionIds -> if (isTv && scopeKey in setOf("live", "movies", "series")) sectionIds.filterNot { it == "categories" } else sectionIds }
     fun readHidden(s: AppSettings): Set<String> = when (scopeKey) {
         "live" -> s.hiddenLiveSections
         "movies" -> s.hiddenMovieSections

@@ -187,7 +187,8 @@ fun EpgStyleSearchField(
     onValueChange: (String) -> Unit,
     modifier: Modifier = Modifier,
     placeholder: String = "Cerca per nome del programma",
-    onSubmit: (() -> Unit)? = null
+    onSubmit: (() -> Unit)? = null,
+    onFocus: (() -> Unit)? = null,
 ) {
     Row(
         modifier = modifier
@@ -211,7 +212,7 @@ fun EpgStyleSearchField(
                 onSearch = { onSubmit?.invoke() },
                 onDone = { onSubmit?.invoke() }
             ),
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(1f).onFocusChanged { if (it.isFocused) onFocus?.invoke() },
             decorationBox = { inner ->
                 Box {
                     if (value.isEmpty()) Text(placeholder, color = glassForeground().copy(.55f), fontSize = 16.sp, fontFamily = FontFamily.SansSerif, maxLines = 1, overflow = TextOverflow.Ellipsis)

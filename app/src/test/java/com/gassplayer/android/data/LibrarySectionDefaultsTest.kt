@@ -6,6 +6,21 @@ import org.junit.Test
 
 class LibrarySectionDefaultsTest {
     @Test
+    fun freshInstallGroupLayoutDefaultsToCategorieTvOnEveryPlatform() {
+        assertEquals("categorie_tv", defaultGroupUIStyle(isTelevision = true))
+        assertEquals("categorie_tv", defaultGroupUIStyle(isTelevision = false))
+        assertEquals("categorie_tv", AppSettings().groupUIStyle)
+    }
+
+    @Test
+    fun oldMobileFactoryDefaultMigratesWhileVersionedAndCustomLayoutsArePreserved() {
+        assertEquals("categorie_tv", migratedGroupUIStyle("scorrevole", isTelevision = false, hasDefaultsVersion = false))
+        assertEquals("scorrevole", migratedGroupUIStyle("scorrevole", isTelevision = false, hasDefaultsVersion = true))
+        assertEquals("espansibile", migratedGroupUIStyle("espansibile", isTelevision = false, hasDefaultsVersion = false))
+        assertEquals("scorrevole", migratedGroupUIStyle("scorrevole", isTelevision = true, hasDefaultsVersion = false))
+    }
+
+    @Test
     fun categoryGridIsHiddenByDefaultAcrossAllLibraries() {
         val settings = AppSettings()
         assertEquals(setOf("categories"), settings.hiddenLiveSections)

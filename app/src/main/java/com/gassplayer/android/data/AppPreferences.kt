@@ -1,6 +1,7 @@
 package com.gassplayer.android.data
 
 import android.content.Context
+import android.content.res.Configuration
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
@@ -35,7 +36,19 @@ class AppPreferences(private val context: Context) {
         val stored = decodedSettings?.let { decoded ->
             runCatching { JsonStore.json.decodeFromString<AppSettings>(decoded) }.getOrNull()
         }
-        var value = stored ?: AppSettings()
+        val isTelevision = (context.resources.configuration.uiMode and Configuration.UI_MODE_TYPE_MASK) == Configuration.UI_MODE_TYPE_TELEVISION
+        var value = stored ?: AppSettings(groupUIStyle = defaultGroupUIStyle(isTelevision))
+
+        // The previous mobile factory layout was Scorrevole and older settings had no marker to
+        // distinguish that default from an old manual choice. Apply the new app-wide default to
+        // unversioned mobile settings; preserve non-default styles and versioned user selections.
+        val hasGroupUiDefaultsVersion = decodedSettings?.contains("\"groupUIStyleDefaultsVersion\"") == true
+        if (stored != null && !hasGroupUiDefaultsVersion) {
+            value = stored.copy(
+                groupUIStyle = migratedGroupUIStyle(stored.groupUIStyle, isTelevision, hasGroupUiDefaultsVersion),
+                groupUIStyleDefaultsVersion = 1,
+            )
+        }
 
         // Older versions stored the library sections as visible by default. Because those saved
         // JSON documents contain explicit empty hidden-sets, changing Kotlin defaults alone is not
@@ -43,7 +56,7 @@ class AppPreferences(private val context: Context) {
         // user who later re-enables Categorie is never overridden by this migration again.
         val hasSectionDefaultsVersion = decodedSettings?.contains("\"librarySectionDefaultsVersion\"") == true
         if (stored != null && !hasSectionDefaultsVersion) {
-            value = stored.copy(
+            value = value.copy(
                 hiddenLiveSections = migratedLegacyLibraryHiddenSections(stored.liveSectionOrder, stored.hiddenLiveSections, defaultLiveSections),
                 hiddenMovieSections = migratedLegacyLibraryHiddenSections(stored.movieSectionOrder, stored.hiddenMovieSections, defaultMovieSections),
                 hiddenSeriesSections = migratedLegacyLibraryHiddenSections(stored.seriesSectionOrder, stored.hiddenSeriesSections, defaultSeriesSections),

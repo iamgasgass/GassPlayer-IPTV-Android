@@ -130,7 +130,9 @@ data class AppSettings(
     val epgLayoutDensity: String = "comoda",
     val epgChannelCardStyle: String = "griglia",
     val epgTileColor: String = "dynamic",
-    val groupUIStyle: String = "scorrevole",
+    val groupUIStyle: String = "categorie_tv",
+    /** Preference migration marker for the app-wide Categorie TV default. */
+    val groupUIStyleDefaultsVersion: Int = 1,
     val playerStartBufferSec: Int = 1,
     val historyLimit: Int = 20,
     val homeSectionOrder: List<String> = defaultHomeSections,
@@ -149,6 +151,20 @@ data class AppSettings(
     /** Bumped when library section defaults change, so upgrades can migrate only legacy layouts. */
     val librarySectionDefaultsVersion: Int = 2
 )
+
+/** Categorie TV is the default UI on Android TV and Android mobile alike. */
+@Suppress("UNUSED_PARAMETER")
+internal fun defaultGroupUIStyle(isTelevision: Boolean): String = "categorie_tv"
+
+/**
+ * Migrate the previous mobile factory value once, while preserving other explicit layouts.
+ * Earlier releases used Scorrevole as the mobile default and did not carry a version marker.
+ */
+internal fun migratedGroupUIStyle(
+    current: String,
+    isTelevision: Boolean,
+    hasDefaultsVersion: Boolean,
+): String = if (!hasDefaultsVersion && !isTelevision && current == "scorrevole") "categorie_tv" else current
 
 val defaultHomeSections = listOf("heading", "search", "continueWatching", "sourceCard", "sources", "liveTV", "guidaTV", "onDemand", "favoriteChannels", "favoriteSeries", "favoriteMovies", "trendingSeries", "trendingMovies")
 val defaultLiveSections = listOf("search", "categories")

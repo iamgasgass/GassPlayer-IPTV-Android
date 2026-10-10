@@ -17,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -56,7 +57,9 @@ internal fun LibraryHeader(
     settings: AppSettings,
     vm: MainViewModel,
     allowPoster: Boolean,
-    showGroups: Boolean = true
+    showGroups: Boolean = true,
+    isTelevision: Boolean = false,
+    onContentFocus: (() -> Unit)? = null,
 ) {
     val counts = remember(items) { items.categoryCounts() }
     val ordered = remember(categories, counts) {
@@ -164,7 +167,7 @@ internal fun LibraryHeader(
         Box(Modifier.size(44.dp).zIndex(2f), contentAlignment = Alignment.Center) {
             Surface(
                 onClick = { sub = null; menuOpen = true },
-                modifier = Modifier.size(44.dp),
+                modifier = Modifier.size(44.dp).onFocusChanged { if (it.isFocused) onContentFocus?.invoke() },
                 shape = RoundedCornerShape(50),
                 color = Color.Transparent,
                 contentColor = glassForeground()
@@ -216,7 +219,8 @@ internal fun LibraryHeader(
                     "groups" -> {
                         DropdownMenuItem(text = { Text("UI Gruppi") }, onClick = { sub = null }, leadingIcon = { Icon(Icons.Default.ArrowBack, null) })
                         HorizontalDivider()
-                        CheckItem("Scorrevole", settings.groupUIStyle != "espansibile") { vm.updateSettings(settings.copy(groupUIStyle = "scorrevole")); menuOpen = false; sub = null }
+                        CheckItem("Categorie TV", settings.groupUIStyle == "categorie_tv") { vm.updateSettings(settings.copy(groupUIStyle = "categorie_tv")); menuOpen = false; sub = null }
+                        CheckItem("Scorrevole", settings.groupUIStyle == "scorrevole") { vm.updateSettings(settings.copy(groupUIStyle = "scorrevole")); menuOpen = false; sub = null }
                         CheckItem("Espansibile", settings.groupUIStyle == "espansibile") { vm.updateSettings(settings.copy(groupUIStyle = "espansibile")); menuOpen = false; sub = null }
                     }
                 }
