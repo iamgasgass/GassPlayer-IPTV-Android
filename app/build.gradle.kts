@@ -9,8 +9,8 @@ android {
     compileSdk = 37
     defaultConfig {
         applicationId = "com.gassgass.gassplayer"
-        // Keep the same Android/Fire OS floor as GassTV. Fire OS 5 (API 22) is not targeted.
-        minSdk = 23
+        // Navigation 2.10.2 requires API 24+. Fire OS 6 (API 25+) and later Android-based Fire TV devices remain supported.
+        minSdk = 24
         // Match GassTV’s tested target while compiling against the newer SDK needed by current dependencies.
         targetSdk = 35
         versionCode = 1000
@@ -20,7 +20,7 @@ android {
     }
     buildFeatures { compose = true; buildConfig = true }
     compileOptions {
-        // java.time is used by the XMLTV parser; desugar it for Android API 23–25.
+        // java.time is used by the XMLTV parser; desugar it for older Android-based Fire TV devices.
         isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

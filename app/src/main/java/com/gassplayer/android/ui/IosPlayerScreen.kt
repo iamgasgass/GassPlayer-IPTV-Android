@@ -16,6 +16,8 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -46,6 +48,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.C
@@ -57,9 +60,11 @@ import androidx.media3.ui.PlayerView
 import coil3.compose.AsyncImage
 import com.gassplayer.android.GassPlayerApplication
 import com.gassplayer.android.data.*
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.roundToInt
 
@@ -137,6 +142,27 @@ fun IosPlayerScreen(
     val originalWindowBrightness = remember { context.findActivity()?.window?.attributes?.screenBrightness ?: -1f }
     var hudTimerKey by remember(item.id) { mutableIntStateOf(0) }
     val playerFocusRequester = remember(item.id) { FocusRequester() }
+    // Like GassTV, LEFT opens the live channel browser while immersive. Keep its state
+    // independent from item.id so zapping channels does not collapse the rail on every tune.
+    var showLiveCategoryRail by remember { mutableStateOf(false) }
+    var playerLiveGroupId by remember { mutableStateOf(TV_CATEGORY_ALL) }
+    val liveFavorites by app.favorites.flow.collectAsStateWithLifecycle(FavoriteState())
+    val liveChannels = catalog?.live.orEmpty()
+    val liveGroupOptions = rememberTvCategoryRailOptions(
+        catalog?.liveCategories.orEmpty(), liveChannels, liveFavorites.live
+    )
+    val playerLiveChannels by produceState<List<MediaItem>>(
+        initialValue = emptyList(), catalog?.updatedAt, playerLiveGroupId, liveFavorites.live
+    ) {
+        value = withContext(Dispatchers.IO) {
+            when (playerLiveGroupId) {
+                TV_CATEGORY_ALL -> liveChannels
+                TV_CATEGORY_FAVORITES -> liveChannels.onlyIds(liveFavorites.live)
+                TV_CATEGORY_NONE -> liveChannels.inCategory(CATEGORY_NONE)
+                else -> liveChannels.inCategory(playerLiveGroupId)
+            }
+        }
+    }
 
     LaunchedEffect(item.id) {
         runCatching { playerFocusRequester.requestFocus() }
@@ -146,6 +172,11 @@ fun IosPlayerScreen(
     // poteva chiudere l'intera app): torna alla schermata da cui e' stato aperto.
     BackHandler(enabled = true) {
         when {
+            showLiveCategoryRail && item.kind == MediaKind.LIVE -> {
+                showLiveCategoryRail = false
+                showControls = false
+                runCatching { playerFocusRequester.requestFocus() }
+            }
             dialog != null -> dialog = null
             locked -> { toast = "Sblocca per uscire"; showControls = true }
             else -> onBack()
@@ -362,7 +393,16 @@ fun IosPlayerScreen(
             .focusable()
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown || locked || dialog != null) return@onPreviewKeyEvent false
-                when (event.key) {
+                // When the channel browser is visible, let its focused lists consume the DPAD,
+                // but keep hardware/media play-pause available on remotes that expose those keys.
+                if (showLiveCategoryRail && item.kind == MediaKind.LIVE) {
+                    when (event.key) {
+                        Key.MediaPlayPause, Key.MediaPlay, Key.MediaPause, Key.Spacebar -> {
+                            app.playback.togglePlayPause(); true
+                        }
+                        else -> return@onPreviewKeyEvent false
+                    }
+                } else when (event.key) {
                     Key.MediaPlayPause, Key.MediaPlay, Key.MediaPause, Key.Spacebar -> {
                         app.playback.togglePlayPause()
                         showControls = true
@@ -375,7 +415,13 @@ fun IosPlayerScreen(
                         } else false
                     }
                     Key.DirectionLeft, Key.MediaRewind -> {
-                        if (showControls && event.key == Key.DirectionLeft) false else {
+                        if (event.key == Key.DirectionLeft && item.kind == MediaKind.LIVE && liveChannels.isNotEmpty()) {
+                            val currentGroup = item.categoryId ?: item.group?.takeIf { it.isNotBlank() }
+                            playerLiveGroupId = liveGroupOptions.firstOrNull { it.id == currentGroup }?.id ?: TV_CATEGORY_ALL
+                            showLiveCategoryRail = true
+                            showControls = false
+                            true
+                        } else if (showControls && event.key == Key.DirectionLeft) false else {
                             showControls = true
                             if (item.kind != MediaKind.LIVE) app.playback.skipBack(10_000L)
                             true
@@ -738,6 +784,29 @@ fun IosPlayerScreen(
                 }
             )
         }
+
+        if (showLiveCategoryRail && item.kind == MediaKind.LIVE) {
+            PlayerLiveCategoryRail(
+                options = liveGroupOptions,
+                selectedGroupId = playerLiveGroupId,
+                channels = playerLiveChannels,
+                currentChannelId = item.id,
+                currentProgramTitle = currentLiveProgram?.title,
+                favoriteIds = liveFavorites.live,
+                onGroupSelected = { playerLiveGroupId = it },
+                onChannelSelected = { selected ->
+                    // Keep the glass browser and selected group open while zapping, as GassTV does.
+                    onNavigateToItem(selected)
+                    showControls = false
+                },
+                onDismiss = {
+                    showLiveCategoryRail = false
+                    showControls = false
+                    runCatching { playerFocusRequester.requestFocus() }
+                },
+                modifier = Modifier.align(Alignment.CenterStart).fillMaxSize().zIndex(50f)
+            )
+        }
     }
 
     when (dialog) {
@@ -836,6 +905,215 @@ fun IosPlayerScreen(
             }
         )
         null -> Unit
+    }
+}
+
+@Composable
+private fun PlayerLiveCategoryRail(
+    options: List<TvCategoryRailOption>,
+    selectedGroupId: String,
+    channels: List<MediaItem>,
+    currentChannelId: String,
+    currentProgramTitle: String?,
+    favoriteIds: Set<String>,
+    onGroupSelected: (String) -> Unit,
+    onChannelSelected: (MediaItem) -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val selectedGroupFocus = remember { FocusRequester() }
+    val firstChannelFocus = remember { FocusRequester() }
+    val groupListState = rememberLazyListState()
+    val channelListState = rememberLazyListState()
+    LaunchedEffect(options, selectedGroupId) {
+        if (options.isNotEmpty()) {
+            val selectedIndex = options.indexOfFirst { it.id == selectedGroupId }.coerceAtLeast(0)
+            runCatching { groupListState.scrollToItem(selectedIndex) }
+            delay(70L)
+            runCatching { selectedGroupFocus.requestFocus() }
+        }
+    }
+    val focusChannelId = channels.firstOrNull { it.id == currentChannelId }?.id ?: channels.firstOrNull()?.id
+    LaunchedEffect(currentChannelId, channels) {
+        val activeIndex = channels.indexOfFirst { it.id == currentChannelId }
+        runCatching { channelListState.scrollToItem(activeIndex.coerceAtLeast(0)) }
+    }
+
+    BoxWithConstraints(modifier) {
+        // A light scrim keeps the moving video visible through the LiquidGlass surface.
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(if (maxWidth < 700.dp) .30f else .12f)))
+        val panelWidth = if (maxWidth < 700.dp) maxWidth * .96f else (maxWidth * .72f).coerceAtMost(760.dp)
+        val groupWidth = if (maxWidth < 700.dp) 126.dp else 224.dp
+        Row(
+            Modifier
+                .align(Alignment.CenterStart)
+                .padding(start = if (maxWidth < 700.dp) 6.dp else 22.dp, top = 12.dp, bottom = 12.dp)
+                .width(panelWidth)
+                .fillMaxHeight(.94f)
+                .focusGroup(),
+            horizontalArrangement = Arrangement.spacedBy(0.dp)
+        ) {
+            // Semi-transparent glass base keeps live video visible through the rail; its
+            // rows still use the app's shared LiquidGlass surfaces and focus treatment.
+            Surface(
+                modifier = Modifier.fillMaxSize(),
+                shape = RoundedCornerShape(25.dp),
+                color = Color.Black.copy(alpha = if (maxWidth < 700.dp) .58f else .46f),
+                border = BorderStroke(1.dp, Brush.verticalGradient(listOf(Color.White.copy(.20f), Color.White.copy(.055f)))),
+                shadowElevation = 12.dp,
+            ) {
+                Column(Modifier.fillMaxSize().padding(if (maxWidth < 700.dp) 8.dp else 12.dp)) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(9.dp)
+                    ) {
+                        Icon(Icons.Default.LiveTv, contentDescription = null, tint = Color(0xFFBBD0FF), modifier = Modifier.size(23.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Categorie TV", color = glassForeground(), fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(currentProgramTitle?.takeIf { it.isNotBlank() } ?: "Gruppi e canali", color = glassForeground(.62f), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        PlayerGlassButton(Icons.Default.Close, "Chiudi categorie", size = 38.dp, onClick = onDismiss)
+                    }
+                    HorizontalDivider(color = glassForeground(.13f), modifier = Modifier.padding(vertical = 5.dp))
+                    Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Column(
+                            Modifier.width(groupWidth).fillMaxHeight().focusGroup()
+                                .onPreviewKeyEvent { event ->
+                                    if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionRight) {
+                                        runCatching { firstChannelFocus.requestFocus() }
+                                        true
+                                    } else if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft) {
+                                        onDismiss(); true
+                                    } else false
+                                }
+                        ) {
+                            Text("GRUPPI", color = glassForeground(.55f), fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 7.dp, bottom = 5.dp))
+                            LazyColumn(
+                                state = groupListState,
+                                modifier = Modifier.weight(1f).fillMaxWidth().focusGroup(),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                itemsIndexed(options, key = { _, opt -> opt.id }) { index, option ->
+                                    val selected = option.id == selectedGroupId
+                                    Surface(
+                                        onClick = { onGroupSelected(option.id) },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .then(if (option.id == selectedGroupId) Modifier.focusRequester(selectedGroupFocus) else Modifier)
+                                            .remoteFocusOutline(cornerRadius = 12.dp)
+                                            .onPreviewKeyEvent { event ->
+                                                if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionRight) {
+                                                    runCatching { firstChannelFocus.requestFocus() }; true
+                                                } else false
+                                            },
+                                        shape = RoundedCornerShape(12.dp),
+                                        color = Color.Transparent,
+                                        border = BorderStroke(if (selected) 1.2.dp else .45.dp, if (selected) Color(0xFF8CB7FF).copy(.85f) else glassForeground(.12f)),
+                                    ) {
+                                        LiquidGlassSurface(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            cornerRadius = 12.dp,
+                                            contentPadding = 0.dp,
+                                            highlighted = selected,
+                                            suppressTopHighlight = true,
+                                        ) {
+                                            Row(
+                                                Modifier.fillMaxWidth().height(if (maxWidth < 700.dp) 40.dp else 44.dp).padding(horizontal = 8.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                Icon(option.icon ?: Icons.Default.FolderOpen, null, tint = if (selected) Color(0xFFBBD0FF) else glassForeground(.62f), modifier = Modifier.size(15.dp))
+                                                Text(option.label, color = glassForeground(if (selected) 1f else .82f), fontSize = if (maxWidth < 700.dp) 10.sp else 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                                                Text(option.count.toString(), color = glassForeground(.48f), fontSize = 9.sp, maxLines = 1)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        VerticalDivider(color = glassForeground(.12f), modifier = Modifier.fillMaxHeight())
+                        Column(
+                            Modifier.weight(1f).fillMaxHeight().focusGroup()
+                                .onPreviewKeyEvent { event ->
+                                    if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft) {
+                                        runCatching { selectedGroupFocus.requestFocus() }; true
+                                    } else false
+                                }
+                        ) {
+                            Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text("CANALI", color = glassForeground(.55f), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                Spacer(Modifier.weight(1f))
+                                Text(channels.size.toString(), color = glassForeground(.48f), fontSize = 10.sp)
+                            }
+                            if (channels.isEmpty()) {
+                                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    Text("Nessun canale nel gruppo", color = glassForeground(.62f), fontSize = 12.sp)
+                                }
+                            } else {
+                                LazyColumn(
+                                    state = channelListState,
+                                    modifier = Modifier.weight(1f).fillMaxWidth().focusGroup(),
+                                    verticalArrangement = Arrangement.spacedBy(5.dp),
+                                ) {
+                                    itemsIndexed(channels, key = { _, channel -> channel.id }) { index, channel ->
+                                        val playing = channel.id == currentChannelId
+                                        Surface(
+                                            onClick = { onChannelSelected(channel) },
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .then(if (channel.id == focusChannelId) Modifier.focusRequester(firstChannelFocus) else Modifier)
+                                                .remoteFocusOutline(cornerRadius = 13.dp),
+                                            shape = RoundedCornerShape(13.dp),
+                                            color = Color.Transparent,
+                                            border = BorderStroke(if (playing) 1.2.dp else .45.dp, if (playing) Color(0xFF8CB7FF).copy(.9f) else glassForeground(.12f)),
+                                        ) {
+                                            LiquidGlassSurface(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                cornerRadius = 13.dp,
+                                                contentPadding = 0.dp,
+                                                highlighted = playing,
+                                                suppressTopHighlight = true,
+                                            ) {
+                                                Row(
+                                                    Modifier.fillMaxWidth().height(if (maxWidth < 700.dp) 48.dp else 54.dp).padding(horizontal = 8.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                ) {
+                                                    Box(Modifier.width(22.dp), contentAlignment = Alignment.Center) {
+                                                        Text(channel.number?.toString() ?: (index + 1).toString(), color = glassForeground(.50f), fontSize = 10.sp, maxLines = 1)
+                                                    }
+                                                    if (!channel.logoUrl.isNullOrBlank()) {
+                                                        AsyncImage(
+                                                            model = channel.logoUrl,
+                                                            contentDescription = null,
+                                                            modifier = Modifier.size(if (maxWidth < 700.dp) 28.dp else 38.dp),
+                                                            contentScale = ContentScale.Fit,
+                                                        )
+                                                    } else {
+                                                        Icon(Icons.Default.LiveTv, contentDescription = null, tint = glassForeground(.55f), modifier = Modifier.size(22.dp))
+                                                    }
+                                                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
+                                                        Text(channel.title, color = glassForeground(if (playing) 1f else .86f), fontSize = if (maxWidth < 700.dp) 11.sp else 13.sp, fontWeight = if (playing) FontWeight.SemiBold else FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                        if (playing) Text("IN RIPRODUZIONE", color = Color(0xFFBBD0FF), fontSize = 8.sp, maxLines = 1)
+                                                    }
+                                                    if (channel.id in favoriteIds) Icon(Icons.Default.Star, null, tint = Color(0xFFFFD166), modifier = Modifier.size(13.dp))
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    currentProgramTitle?.takeIf { it.isNotBlank() }?.let { program ->
+                        HorizontalDivider(color = glassForeground(.13f), modifier = Modifier.padding(vertical = 6.dp))
+                        Text("IN ONDA", color = Color(0xFFBBD0FF), fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                        Text(program, color = glassForeground(.86f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            }
+        }
     }
 }
 

@@ -1058,6 +1058,13 @@ private fun CatalogScreen(
     val mobileRailWidth = (LocalConfiguration.current.screenWidthDp - 136).dp.coerceIn(160.dp, 236.dp)
     var categoryRailExpanded by remember(scopeKey) { mutableStateOf(true) }
     val favoriteIds = if (scopeKey == "live") favorite.live else favorite.movies
+    LaunchedEffect(screenActive) {
+        if (!screenActive) {
+            // A hidden VOD tab must not reopen a stale detail sheet when the tab is tapped again.
+            selected = null
+            showTrendUnavailable = false
+        }
+    }
     if (detail && selected != null && screenActive) {
         MovieDetailScreen(vm.app, selected!!, vm.catalog.value?.movies.orEmpty(), favorite, onBack = { selected = null; if (tvCategoryMode) categoryRailExpanded = true }, onPlay = { i, pos -> onPlayWithPosition(onPlay, i, pos) })
         return
@@ -1339,6 +1346,13 @@ private fun SeriesScreen(
     val mobileRailWidth = (LocalConfiguration.current.screenWidthDp - 136).dp.coerceIn(160.dp, 236.dp)
     var categoryRailExpanded by remember { mutableStateOf(true) }
     val favoriteIds = favorite.series
+    LaunchedEffect(screenActive) {
+        if (!screenActive) {
+            // Returning to Serie TV should always start from its library, never a stale detail.
+            selected = null
+            showTrendUnavailable = false
+        }
+    }
     if (selected != null && screenActive) {
         SeriesDetailScreen(vm.app, selected!!, episodes, favorite, onBack = { selected = null; if (tvCategoryMode) categoryRailExpanded = true }, onPlay = { i, pos -> onPlayWithPosition(onPlay, i, pos) }, allSeries = series, onOpenAlternateSeries = { selected = it })
         return
