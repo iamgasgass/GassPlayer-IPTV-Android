@@ -41,6 +41,7 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import coil3.compose.AsyncImage
 import com.gassplayer.android.GassPlayerApplication
 import com.gassplayer.android.data.*
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -141,6 +142,9 @@ fun EpgGridScreen(
     var selectedProgram by remember { mutableStateOf<Pair<MediaItem, EpgProgram>?>(null) }
     var toast by remember { mutableStateOf<String?>(null) }
     var refreshTick by remember { mutableIntStateOf(0) }
+    var manualGuideRefreshTick by remember { mutableIntStateOf(0) }
+    // Plain remembered holder avoids triggering composition just to remember the last manual refresh.
+    val lastManualGuideRefresh = remember { intArrayOf(0) }
 
     val compact = settings.epgLayoutDensity == "compatta"
     val cardStyleGrid = settings.epgChannelCardStyle != "scheda"
@@ -167,6 +171,11 @@ fun EpgGridScreen(
         if (settings.epgAutoUpdateEnabled) {
             while (true) {
                 delay(5 * 60_000L)
+                // Re-resolve visible rows as well as the feed index; changing only the index
+                // left already-populated rows permanently stale until the user changed screens.
+                store.programs.clear()
+                store.loading.clear()
+                store.failed.clear()
                 refreshTick++
             }
         }
@@ -227,23 +236,53 @@ fun EpgGridScreen(
     LaunchedEffect(groupId, favoritesOnly, normalizedSearch, dayOffset) { renderLimit = PAGE }
     val visible = channels.take(minOf(renderLimit, HARD_CAP))
 
-    // --- XMLTV fallback index (external sources + each Xtream source's xmltv.php), loaded lazily ----
-    val xmltvIndex by produceState<Map<String, List<EpgProgram>>>(emptyMap(), external, sources, refreshTick) {
+    // --- XMLTV index: merge every enabled feed (external AND provider XMLTV), not just the first
+    // non-empty one. Each guide retains its channel aliases so IDs can be matched by name too.
+    val xmltvIndex by produceState<EpgGuideIndex?>(null, external, sources, refreshTick, manualGuideRefreshTick) {
+        val forceNetworkRefresh = manualGuideRefreshTick != lastManualGuideRefresh[0]
+        lastManualGuideRefresh[0] = manualGuideRefreshTick
         value = withContext(Dispatchers.IO) {
-            val all = ArrayList<EpgProgram>()
-            for (e in external.filter { it.isEnabled }) runCatching { app.epg.xmltv(e.urlString, e.id) }.getOrNull()?.let(all::addAll)
-            if (all.isEmpty()) {
-                val used = live.sourceIds()
-                for (s in sources.filter { it.type == SourceType.XTREAM && it.id in used && it.isEnabled }) {
-                    runCatching { app.epg.xtreamXmltv(s) }.getOrNull()?.let(all::addAll)
-                }
+            val usedSourceIds = live.sourceIds()
+            val externalFeeds = external.filter { it.isEnabled }
+            val providerFeeds = sources.filter {
+                it.type == SourceType.XTREAM && it.id in usedSourceIds && it.isEnabled
             }
-            all.groupBy { it.streamId.lowercase(Locale.ROOT) }
+            val downloadSemaphore = Semaphore(3)
+            val loadedGuides = coroutineScope {
+                val externalJobs = externalFeeds.map { feed ->
+                    async(Dispatchers.IO) {
+                        downloadSemaphore.withPermit {
+                            try {
+                                feed.id to app.epg.xmltvGuide(feed.urlString, feed.id, forceNetworkRefresh)
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (_: Exception) {
+                                null
+                            }
+                        }
+                    }
+                }
+                val providerJobs = providerFeeds.map { source ->
+                    async(Dispatchers.IO) {
+                        downloadSemaphore.withPermit {
+                            try {
+                                source.id to app.epg.xtreamXmltvGuide(source, forceNetworkRefresh)
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (_: Exception) {
+                                null
+                            }
+                        }
+                    }
+                }
+                (externalJobs + providerJobs).awaitAll().filterNotNull()
+            }
+            EpgGuideIndex.build(loadedGuides.filter { it.second.programs.isNotEmpty() })
         }
     }
 
     // --- per-channel loading ----------------------------------------------------------------------
-    LaunchedEffect(visible.map { it.id }, refreshTick, xmltvIndex, dayOffset) {
+    LaunchedEffect(visible.map { it.id }, xmltvIndex, dayOffset) {
         val sem = Semaphore(MAX_CONCURRENT)
         coroutineScope {
             visible.filter { store.programs[it.id] == null }.map { ch ->
@@ -254,15 +293,25 @@ fun EpgGridScreen(
                         var found = emptyList<EpgProgram>()
                         var requestFailed = false
                         if (source?.type == SourceType.XTREAM) {
-                            val result = runCatching { app.epg.shortEpg(source, ch.id.substringAfterLast(':'), SHORT_LIMIT) }
+                            val result = try {
+                                Result.success(app.epg.shortEpg(source, ch.id.substringAfterLast(':'), SHORT_LIMIT))
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (error: Exception) {
+                                Result.failure(error)
+                            }
                             found = result.getOrDefault(emptyList())
                             requestFailed = result.isFailure
                         }
-                        if (found.isEmpty()) {
-                            val key = (ch.metadataTag?.takeIf { it.isNotBlank() } ?: ch.id.substringAfterLast(':')).lowercase(Locale.ROOT)
-                            found = xmltvIndex[key]
-                                ?: xmltvIndex[ch.title.lowercase(Locale.ROOT)]
-                                ?: emptyList()
+                        val streamId = ch.id.substringAfterLast(':')
+                        val fullGuidePrograms = xmltvIndex?.find(ch.sourceId, ch.metadataTag, streamId, ch.title).orEmpty()
+                        if (fullGuidePrograms.isNotEmpty()) {
+                            // Short EPG endpoints are often sparse. Merge them with XMLTV and let
+                            // the source-specific result win when two feeds start at the same time.
+                            val mergedByStart = LinkedHashMap<Long, EpgProgram>()
+                            fullGuidePrograms.forEach { mergedByStart[it.startMs] = it }
+                            found.forEach { mergedByStart[it.startMs] = it }
+                            found = mergedByStart.values.sortedBy { it.startMs }
                         }
                         store.programs[ch.id] = found.sortedBy { it.startMs }
                         if (requestFailed && found.isEmpty()) store.failed[ch.id] = true else store.failed.remove(ch.id)
@@ -298,6 +347,7 @@ fun EpgGridScreen(
                 store.programs.clear()
                 store.loading.clear()
                 store.failed.clear()
+                manualGuideRefreshTick++
                 refreshTick++
             },
             onFavoritesOnly = { favoritesOnly = !favoritesOnly },
