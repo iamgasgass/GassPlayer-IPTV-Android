@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.media.AudioManager
 import android.content.res.Configuration
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -112,6 +113,10 @@ fun IosPlayerScreen(
     val playerEpoch by app.playback.playerEpoch.collectAsStateWithLifecycle()
 
     var showControls by remember(item.id) { mutableStateOf(true) }
+    // Un solo avanzamento per episodio (tasto "Prossimo episodio" + fine naturale non devono scattare entrambi).
+    var advancedToNext by remember(item.id) { mutableStateOf(false) }
+    // "Prossimo episodio" esiste SOLO per le serie TV (mai per canali live, film o altro).
+    val isSeriesEpisode = item.kind == MediaKind.EPISODE
     var locked by remember(item.id) { mutableStateOf(false) }
     var toast by remember(item.id) { mutableStateOf<String?>(null) }
     var dialog by remember(item.id) { mutableStateOf<IosPlayerDialog?>(null) }
@@ -135,6 +140,16 @@ fun IosPlayerScreen(
 
     LaunchedEffect(item.id) {
         runCatching { playerFocusRequester.requestFocus() }
+    }
+
+    // Il tasto Indietro di sistema/telecomando chiude SOLO il player (prima non era gestito e
+    // poteva chiudere l'intera app): torna alla schermata da cui e' stato aperto.
+    BackHandler(enabled = true) {
+        when {
+            dialog != null -> dialog = null
+            locked -> { toast = "Sblocca per uscire"; showControls = true }
+            else -> onBack()
+        }
     }
 
     val source = remember(sources, item.sourceId) {
@@ -175,9 +190,19 @@ fun IosPlayerScreen(
     }
 
     LaunchedEffect(item.id, showControls, nextItem?.id, item.kind, localSettings.autoplayNextEpisode) {
+        // Le tracce cambiano raramente: i formati video/audio si rileggono solo quando cambia
+        // l'istanza Tracks, non a ogni tick (prima si scorrevano tutti i gruppi 4 volte al secondo).
+        var lastTracks: Tracks? = null
+        var video: Format? = null
+        var audioChannels = 0
         while (true) {
             val p = app.playback.player
-            val video = selectedVideoFormat(p)
+            val tracks = p.currentTracks
+            if (tracks !== lastTracks) {
+                lastTracks = tracks
+                video = selectedVideoFormat(p)
+                audioChannels = selectedAudioChannels(p)
+            }
             val nextSnapshot = PlayerSnapshot(
                 duration = p.duration.coerceAtLeast(0L),
                 isPlaying = p.isPlaying,
@@ -186,14 +211,14 @@ fun IosPlayerScreen(
                 videoWidth = video?.width ?: 0,
                 videoHeight = video?.height ?: 0,
                 frameRate = video?.frameRate ?: 0f,
-                audioChannels = selectedAudioChannels(p)
+                audioChannels = audioChannels
             )
-            // Metadata changes infrequently; don't invalidate the whole player every 500 ms.
+            // Metadata changes infrequently; don't invalidate the whole player every tick.
             if (snapshot != nextSnapshot) snapshot = nextSnapshot
 
             // The timeline is only sampled at interactive rate while visible. When hidden,
             // keep a slower clock only if we need the next-episode affordance/autoplay timing.
-            val needsHiddenProgress = item.kind == MediaKind.EPISODE &&
+            val needsHiddenProgress = isSeriesEpisode &&
                 nextItem != null && localSettings.autoplayNextEpisode
             if (showControls || needsHiddenProgress) {
                 val nextProgress = PlaybackProgress(
@@ -201,7 +226,14 @@ fun IosPlayerScreen(
                 )
                 if (progressState.value != nextProgress) progressState.value = nextProgress
             }
-            delay(if (showControls) 250L else 1_200L)
+            delay(
+                when {
+                    showControls -> 250L
+                    // 500 ms: il pulsante compare entro mezzo secondo dal minuto finale.
+                    needsHiddenProgress -> 500L
+                    else -> 1_200L
+                }
+            )
         }
     }
 
@@ -245,11 +277,13 @@ fun IosPlayerScreen(
 
     LaunchedEffect(item.id, snapshot.state, localSettings.autoplayNextEpisode, nextItem?.id) {
         if (
-            item.kind == MediaKind.EPISODE &&
+            isSeriesEpisode &&
             localSettings.autoplayNextEpisode &&
             snapshot.state == Player.STATE_ENDED &&
-            nextItem != null
+            nextItem != null &&
+            !advancedToNext
         ) {
+            advancedToNext = true
             onNavigateToItem(nextItem)
         }
     }
@@ -693,11 +727,16 @@ fun IosPlayerScreen(
             )
         }
 
-        if (!explicitResume && nextItem != null && localSettings.autoplayNextEpisode && snapshot.duration > 0L) {
+        // Come iOS: solo serie TV, preferenza attiva, e solo nell'ultimo minuto dell'episodio.
+        if (isSeriesEpisode && nextItem != null && localSettings.autoplayNextEpisode && !advancedToNext) {
             NextEpisodePrompt(
                 duration = snapshot.duration,
                 progressState = progressState,
-                onClick = { nextItem?.let(onNavigateToItem) }
+                onClick = {
+                    advancedToNext = true
+                    app.playback.pause()
+                    onNavigateToItem(nextItem)
+                }
             )
         }
     }
@@ -1016,8 +1055,12 @@ private fun NextEpisodePrompt(
     progressState: State<PlaybackProgress>,
     onClick: () -> Unit
 ) {
-    val progress = progressState.value
-    if (duration - progress.position > 60_000L) return
+    // Stessa logica di iOS (PlayerView.showNextEpisodeButton): durata > 60 s, riproduzione
+    // iniziata, e compare quando mancano esattamente 60 s (fino a 0,4 s dalla fine).
+    val position = progressState.value.position
+    if (duration <= 60_000L || position <= 0L) return
+    val remaining = duration - position
+    if (remaining > 60_000L || remaining <= 400L) return
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomEnd) {
         Surface(
             onClick = onClick,

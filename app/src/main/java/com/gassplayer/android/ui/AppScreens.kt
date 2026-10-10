@@ -48,6 +48,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.viewinterop.AndroidView
@@ -98,10 +99,12 @@ fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
         onDispose { if (playerItem != null) activity?.exitPlayerMode() }
     }
 
-    if (playerItem != null) {
-        IosPlayerScreen(app, playerItem!!, settings, catalog, onBack = { playerItem = null }, onPip = { (context as? MainActivity)?.enterPlayerPip() }, onNavigateToItem = { playerItem = it }, onOpenSearch = { playerItem = null; route = "search" })
-        return
-    }
+    // Il player NON sostituisce piu' la schermata: la libreria resta in composizione sotto di lui
+    // (invisibile e non focusabile). Prima un `return` rimuoveva tutto l'albero, quindi gruppo,
+    // playlist, canale selezionato, ricerca, scroll e dettaglio aperto andavano persi e alla
+    // chiusura si tornava alla vista di default. Cosi' all'uscita si riprende esattamente da dove
+    // il player era stato aperto.
+    val playerActive = playerItem != null
 
     val loading by vm.loading.collectAsStateWithLifecycle()
     val message by vm.message.collectAsStateWithLifecycle()
@@ -142,6 +145,14 @@ fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
         "merged" -> "Playlist unificate"
         else -> "GassPlayer"
     }
+    Box(Modifier.fillMaxSize()) {
+    Box(
+        Modifier
+            .fillMaxSize()
+            // alpha 0 = il layer sotto il player non viene nemmeno disegnato (nessun overdraw).
+            .graphicsLayer { alpha = if (playerActive) 0f else 1f }
+            .then(if (playerActive) Modifier.focusProperties { canFocus = false } else Modifier)
+    ) {
     AdaptiveShell(contentRoute, tv, loading, message, onRetry = { vm.refresh(true) }, onRoute = { route = it }, title = shellTitle) {
         when (contentRoute) {
             "home" -> HomeScreen(vm, catalog, favorite, watch, sources, onRoute = { route = it }, onPlay = { playerItem = it })
@@ -178,6 +189,25 @@ fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
                 isTv = tv
             )
         }
+    }
+    }
+    playerItem?.let { current ->
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(Color.Black)
+                // Assorbe i tocchi: niente click "attraverso" il player sulla libreria sottostante.
+                .pointerInput(Unit) {}
+        ) {
+            IosPlayerScreen(
+                app, current, settings, catalog,
+                onBack = { playerItem = null },
+                onPip = { (context as? MainActivity)?.enterPlayerPip() },
+                onNavigateToItem = { playerItem = it },
+                onOpenSearch = { playerItem = null; route = "search" }
+            )
+        }
+    }
     }
 }
 
