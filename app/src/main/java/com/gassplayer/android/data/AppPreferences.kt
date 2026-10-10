@@ -31,16 +31,30 @@ class AppPreferences(private val context: Context) {
     }
 
     val settingsFlow: Flow<AppSettings> = context.gassDataStore.data.map { prefs ->
-        val stored = prefs[Keys.json]?.let { encoded ->
-            reveal(encoded)?.let { decoded ->
-                runCatching { JsonStore.json.decodeFromString<AppSettings>(decoded) }.getOrNull()
-            }
+        val decodedSettings = prefs[Keys.json]?.let { reveal(it) }
+        val stored = decodedSettings?.let { decoded ->
+            runCatching { JsonStore.json.decodeFromString<AppSettings>(decoded) }.getOrNull()
         }
-        val value = stored ?: AppSettings()
+        var value = stored ?: AppSettings()
+
+        // Older versions stored the library sections as visible by default. Because those saved
+        // JSON documents contain explicit empty hidden-sets, changing Kotlin defaults alone is not
+        // enough. Migrate legacy, untouched section layouts once; the version marker ensures a
+        // user who later re-enables Categorie is never overridden by this migration again.
+        val hasSectionDefaultsVersion = decodedSettings?.contains("\"librarySectionDefaultsVersion\"") == true
+        if (stored != null && !hasSectionDefaultsVersion) {
+            value = stored.copy(
+                hiddenLiveSections = migratedLegacyLibraryHiddenSections(stored.liveSectionOrder, stored.hiddenLiveSections, defaultLiveSections),
+                hiddenMovieSections = migratedLegacyLibraryHiddenSections(stored.movieSectionOrder, stored.hiddenMovieSections, defaultMovieSections),
+                hiddenSeriesSections = migratedLegacyLibraryHiddenSections(stored.seriesSectionOrder, stored.hiddenSeriesSections, defaultSeriesSections),
+                librarySectionDefaultsVersion = 2
+            )
+        }
+
         // The previous app release shipped 15/90 seconds as factory defaults.
         // Migrate that exact old default pair so upgrades also receive the new 3/30 defaults.
-        if (stored != null && stored.minBufferSec == 15 && stored.maxBufferSec == 90) {
-            stored.copy(minBufferSec = 3, maxBufferSec = 30)
+        if (stored != null && value.minBufferSec == 15 && value.maxBufferSec == 90) {
+            value.copy(minBufferSec = 3, maxBufferSec = 30)
         } else value
     }
     val sourcesFlow: Flow<List<MediaSourceConfig>> = context.gassDataStore.data.map { it[Keys.sourcesJson]?.let { s -> reveal(s)?.let { decoded -> runCatching { JsonStore.json.decodeFromString<List<MediaSourceConfig>>(decoded) }.getOrNull() } } ?: emptyList() }

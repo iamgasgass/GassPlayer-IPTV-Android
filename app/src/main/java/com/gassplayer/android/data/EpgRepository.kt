@@ -48,10 +48,30 @@ class EpgRepository(private val context: Context, private val api: NetworkApi) {
     suspend fun xtreamXmltv(source: MediaSourceConfig): List<EpgProgram> = xtreamXmltvGuide(source).programs
 
     /** Provider XMLTV, retaining `<channel>` aliases so channel names can be matched reliably. */
-    suspend fun xtreamXmltvGuide(source: MediaSourceConfig, forceRefresh: Boolean = false): XmlTvGuide {
+    suspend fun xtreamXmltvGuide(
+        source: MediaSourceConfig,
+        forceRefresh: Boolean = false,
+        preloadedCache: XmlTvGuide? = null,
+    ): XmlTvGuide {
         val base = XtreamRepository.serverBase(source.host)
         val url = "$base/xmltv.php?username=${enc(source.username.orEmpty())}&password=${enc(source.password.orEmpty())}"
-        return xmltvGuide(url, "xt_${source.id}", forceRefresh)
+        return xmltvGuide(url, "xt_${source.id}", forceRefresh, preloadedCache)
+    }
+
+    /** Reads the last known guide without applying the network freshness TTL (stale-while-revalidate). */
+    suspend fun cachedXmltvGuide(url: String, sourceId: String): XmlTvGuide = withContext(Dispatchers.IO) {
+        runCatching {
+            FileCache(context, cacheFileName(url, sourceId)).read()
+                .takeIf { it.programs.isNotEmpty() }
+                ?.asGuide()
+        }.getOrNull() ?: XmlTvGuide()
+    }
+
+    /** Same fast cache access for the provider-generated Xtream XMLTV URL. */
+    suspend fun cachedXtreamXmltvGuide(source: MediaSourceConfig): XmlTvGuide {
+        val base = XtreamRepository.serverBase(source.host)
+        val url = "$base/xmltv.php?username=${enc(source.username.orEmpty())}&password=${enc(source.password.orEmpty())}"
+        return cachedXmltvGuide(url, "xt_${source.id}")
     }
 
     /** Compatibility API for external feeds. */
@@ -61,10 +81,19 @@ class EpgRepository(private val context: Context, private val api: NetworkApi) {
      * Streams a plain or gzip XMLTV document. The cache is source-URL-specific, atomic, and only
      * replaced after a valid parse with programmes; a failed/truncated download keeps last-good data.
      */
-    suspend fun xmltvGuide(url: String, sourceId: String, forceRefresh: Boolean = false): XmlTvGuide = withContext(Dispatchers.IO) {
+    suspend fun xmltvGuide(
+        url: String,
+        sourceId: String,
+        forceRefresh: Boolean = false,
+        preloadedCache: XmlTvGuide? = null,
+    ): XmlTvGuide = withContext(Dispatchers.IO) {
         // Include the URL fingerprint: changing a custom feed URL must not silently reuse its old guide.
-        val file = FileCache(context, "epg_${sourceId.hashCode()}_${url.hashCode()}.json")
-        val cached = runCatching { file.read() }.getOrNull()
+        val file = FileCache(context, cacheFileName(url, sourceId))
+        // The EPG screen already read this same cache to render immediately. Reuse that parsed
+        // payload as the stale fallback, avoiding a second decode of potentially huge XMLTV JSON.
+        val cached = if (forceRefresh && preloadedCache != null) {
+            EpgSnapshot(0L, preloadedCache.programs, preloadedCache.channels)
+        } else runCatching { file.read() }.getOrNull()
         val now = System.currentTimeMillis()
         if (!forceRefresh && cached != null && cached.programs.isNotEmpty() && now - cached.updatedAt < XMLTV_CACHE_TTL_MS) {
             return@withContext cached.asGuide()
@@ -143,6 +172,7 @@ class EpgRepository(private val context: Context, private val api: NetworkApi) {
     private fun stable(text: String) = text.hashCode().toString()
 
     private fun EpgSnapshot.asGuide() = XmlTvGuide(programs, channels)
+    private fun cacheFileName(url: String, sourceId: String) = "epg_${sourceId.hashCode()}_${url.hashCode()}.json"
 
     companion object {
         private const val SHORT_CACHE_TTL_MS = 5 * 60_000L

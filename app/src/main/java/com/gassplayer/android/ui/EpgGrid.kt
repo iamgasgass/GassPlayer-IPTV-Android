@@ -236,24 +236,35 @@ fun EpgGridScreen(
     LaunchedEffect(groupId, favoritesOnly, normalizedSearch, dayOffset) { renderLimit = PAGE }
     val visible = channels.take(minOf(renderLimit, HARD_CAP))
 
-    // --- XMLTV index: merge every enabled feed (external AND provider XMLTV), not just the first
-    // non-empty one. Each guide retains its channel aliases so IDs can be matched by name too.
-    val xmltvIndex by produceState<EpgGuideIndex?>(null, external, sources, refreshTick, manualGuideRefreshTick) {
-        val forceNetworkRefresh = manualGuideRefreshTick != lastManualGuideRefresh[0]
-        lastManualGuideRefresh[0] = manualGuideRefreshTick
-        value = withContext(Dispatchers.IO) {
-            val usedSourceIds = live.sourceIds()
-            val externalFeeds = external.filter { it.isEnabled }
-            val providerFeeds = sources.filter {
-                it.type == SourceType.XTREAM && it.id in usedSourceIds && it.isEnabled
-            }
-            val downloadSemaphore = Semaphore(3)
-            val loadedGuides = coroutineScope {
+    // --- XMLTV index: show disk cache immediately, then revalidate every enabled feed. --------
+    // Track entry refreshes per feed so late catalog/source emissions refresh only the newly
+    // available provider instead of downloading every external guide a second time.
+    val lastGuideRefresh = remember { intArrayOf(-1, -1) }
+    val entryRefreshedFeedKeys = remember { mutableSetOf<String>() }
+    val xmltvIndex by produceState<EpgGuideIndex?>(null, external, sources, live, refreshTick, manualGuideRefreshTick) {
+        val refreshAllFeeds = refreshTick != lastGuideRefresh[0] || manualGuideRefreshTick != lastGuideRefresh[1]
+        lastGuideRefresh[0] = refreshTick
+        lastGuideRefresh[1] = manualGuideRefreshTick
+
+        val usedSourceIds = live.sourceIds()
+        val externalFeeds = external.filter { it.isEnabled }
+        val providerFeeds = sources.filter {
+            it.type == SourceType.XTREAM && it.id in usedSourceIds && it.isEnabled
+        }
+        fun externalFeedKey(feed: ExternalEpgSource) = "external:${feed.id}:${feed.urlString.hashCode()}"
+        fun providerFeedKey(source: MediaSourceConfig) =
+            "xtream:${source.id}:${source.host.hashCode()}:${source.username.orEmpty().hashCode()}:${source.password.orEmpty().hashCode()}"
+        val activeFeedKeys = externalFeeds.map { externalFeedKey(it) } + providerFeeds.map { providerFeedKey(it) }
+        entryRefreshedFeedKeys.retainAll(activeFeedKeys.toSet())
+        val downloadSemaphore = Semaphore(3)
+
+        val cachedGuides = withContext(Dispatchers.IO) {
+            coroutineScope {
                 val externalJobs = externalFeeds.map { feed ->
                     async(Dispatchers.IO) {
                         downloadSemaphore.withPermit {
                             try {
-                                feed.id to app.epg.xmltvGuide(feed.urlString, feed.id, forceNetworkRefresh)
+                                feed.id to app.epg.cachedXmltvGuide(feed.urlString, feed.id)
                             } catch (cancelled: CancellationException) {
                                 throw cancelled
                             } catch (_: Exception) {
@@ -266,7 +277,7 @@ fun EpgGridScreen(
                     async(Dispatchers.IO) {
                         downloadSemaphore.withPermit {
                             try {
-                                source.id to app.epg.xtreamXmltvGuide(source, forceNetworkRefresh)
+                                source.id to app.epg.cachedXtreamXmltvGuide(source)
                             } catch (cancelled: CancellationException) {
                                 throw cancelled
                             } catch (_: Exception) {
@@ -277,7 +288,53 @@ fun EpgGridScreen(
                 }
                 (externalJobs + providerJobs).awaitAll().filterNotNull()
             }
-            EpgGuideIndex.build(loadedGuides.filter { it.second.programs.isNotEmpty() })
+        }
+        if (cachedGuides.any { it.second.programs.isNotEmpty() }) {
+            value = EpgGuideIndex.build(cachedGuides.filter { it.second.programs.isNotEmpty() })
+        }
+
+        val cachedById = cachedGuides.associate { it.first to it.second }
+        val loadedGuides = withContext(Dispatchers.IO) {
+            coroutineScope {
+                val externalJobs = externalFeeds.map { feed ->
+                    async(Dispatchers.IO) {
+                        downloadSemaphore.withPermit {
+                            try {
+                                val forceThisFeed = refreshAllFeeds || externalFeedKey(feed) !in entryRefreshedFeedKeys
+                                val staleFallback = if (forceThisFeed) cachedById[feed.id] ?: XmlTvGuide() else null
+                                feed.id to app.epg.xmltvGuide(feed.urlString, feed.id, forceThisFeed, staleFallback)
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (_: Exception) {
+                                null
+                            }
+                        }
+                    }
+                }
+                val providerJobs = providerFeeds.map { source ->
+                    async(Dispatchers.IO) {
+                        downloadSemaphore.withPermit {
+                            try {
+                                val forceThisFeed = refreshAllFeeds || providerFeedKey(source) !in entryRefreshedFeedKeys
+                                val staleFallback = if (forceThisFeed) cachedById[source.id] ?: XmlTvGuide() else null
+                                source.id to app.epg.xtreamXmltvGuide(source, forceThisFeed, staleFallback)
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (_: Exception) {
+                                null
+                            }
+                        }
+                    }
+                }
+                (externalJobs + providerJobs).awaitAll().filterNotNull()
+            }
+        }
+        // Mark only after all jobs finish, so a cancelled producer retries newly arrived feeds.
+        entryRefreshedFeedKeys.addAll(activeFeedKeys)
+        if (loadedGuides.any { it.second.programs.isNotEmpty() }) {
+            value = EpgGuideIndex.build(loadedGuides.filter { it.second.programs.isNotEmpty() })
+        } else if (activeFeedKeys.isEmpty()) {
+            value = EpgGuideIndex.build(emptyList())
         }
     }
 
@@ -285,16 +342,21 @@ fun EpgGridScreen(
     LaunchedEffect(visible.map { it.id }, xmltvIndex, dayOffset) {
         val sem = Semaphore(MAX_CONCURRENT)
         coroutineScope {
-            visible.filter { store.programs[it.id] == null }.map { ch ->
+            visible.filter { xmltvIndex != null || store.programs[it.id] == null }.map { ch ->
                 async(Dispatchers.IO) {
                     sem.withPermit {
                         store.loading[ch.id] = true
                         val source = sources.firstOrNull { it.id == ch.sourceId }
-                        var found = emptyList<EpgProgram>()
+                        // Preserve the row while a guide refresh is in flight. This is usually
+                        // cached XMLTV/short-EPG data, and also prevents duplicate provider calls
+                        // when the cached guide index is replaced by the freshly downloaded one.
+                        var found = store.programs[ch.id].orEmpty()
                         var requestFailed = false
-                        if (source?.type == SourceType.XTREAM) {
+                        val streamId = ch.id.substringAfterLast(':')
+                        val fullGuidePrograms = xmltvIndex?.find(ch.sourceId, ch.metadataTag, streamId, ch.title).orEmpty()
+                        if (found.isEmpty() && fullGuidePrograms.isEmpty() && source?.type == SourceType.XTREAM) {
                             val result = try {
-                                Result.success(app.epg.shortEpg(source, ch.id.substringAfterLast(':'), SHORT_LIMIT))
+                                Result.success(app.epg.shortEpg(source, streamId, SHORT_LIMIT))
                             } catch (cancelled: CancellationException) {
                                 throw cancelled
                             } catch (error: Exception) {
@@ -303,14 +365,12 @@ fun EpgGridScreen(
                             found = result.getOrDefault(emptyList())
                             requestFailed = result.isFailure
                         }
-                        val streamId = ch.id.substringAfterLast(':')
-                        val fullGuidePrograms = xmltvIndex?.find(ch.sourceId, ch.metadataTag, streamId, ch.title).orEmpty()
                         if (fullGuidePrograms.isNotEmpty()) {
-                            // Short EPG endpoints are often sparse. Merge them with XMLTV and let
-                            // the source-specific result win when two feeds start at the same time.
+                            // XMLTV is the complete timeline; overlay it on existing/short data so
+                            // newly downloaded programmes replace stale entries with the same start.
                             val mergedByStart = LinkedHashMap<Long, EpgProgram>()
-                            fullGuidePrograms.forEach { mergedByStart[it.startMs] = it }
                             found.forEach { mergedByStart[it.startMs] = it }
+                            fullGuidePrograms.forEach { mergedByStart[it.startMs] = it }
                             found = mergedByStart.values.sortedBy { it.startMs }
                         }
                         store.programs[ch.id] = found.sortedBy { it.startMs }
@@ -514,6 +574,7 @@ fun EpgGridScreen(
                                         pinnedNameX = pinnedNameX,
                                         stickyContentX = stickyContentX,
                                         keepsNaturalCurrentPosition = keepsNaturalCurrentPosition,
+                                        verticalInset = (rowH - bannerH) / 2f,
                                         brightWidth = brightWidth,
                                         color = base,
                                         dark = darkTiles,
@@ -654,6 +715,7 @@ private fun EpgProgramTile(
     pinnedNameX: Dp,
     stickyContentX: Dp,
     keepsNaturalCurrentPosition: Boolean,
+    verticalInset: Dp,
     brightWidth: Dp,
     color: Color,
     dark: Boolean,
@@ -682,7 +744,7 @@ private fun EpgProgramTile(
     val startLabel = remember(program.startMs) { SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(program.startMs)) }
     val radius = if (compact) 12.dp else 18.dp
 
-    Box(Modifier.offset(x = startX).width(fullWidth).height(height).combinedClickable(onClick = onClick, onLongClick = onClick)) {
+    Box(Modifier.offset(x = startX, y = verticalInset).width(fullWidth).height(height).combinedClickable(onClick = onClick, onLongClick = onClick)) {
         Box(Modifier.width(visibleWidth).height(height).clip(RoundedCornerShape(radius))) {
             Box(Modifier.fillMaxSize().background(if (dark) DarkTileBase else color.copy(alpha = if (compact) .18f else .22f).compositeOver(Color(0.10f, 0.10f, 0.10f))))
             if (brightWidth > 0.dp) {

@@ -141,17 +141,26 @@ data class AppSettings(
     val detailTrailerMuted: Boolean = true,
     /** Per-section layouts matching iOS ChannelGridView customization sheets. */
     val liveSectionOrder: List<String> = defaultLiveSections,
-    val hiddenLiveSections: Set<String> = emptySet(),
+    val hiddenLiveSections: Set<String> = setOf("categories"),
     val movieSectionOrder: List<String> = defaultMovieSections,
-    val hiddenMovieSections: Set<String> = emptySet(),
+    val hiddenMovieSections: Set<String> = setOf("categories"),
     val seriesSectionOrder: List<String> = defaultSeriesSections,
-    val hiddenSeriesSections: Set<String> = emptySet()
+    val hiddenSeriesSections: Set<String> = setOf("categories"),
+    /** Bumped when library section defaults change, so upgrades can migrate only legacy layouts. */
+    val librarySectionDefaultsVersion: Int = 2
 )
 
 val defaultHomeSections = listOf("heading", "search", "continueWatching", "sourceCard", "sources", "liveTV", "guidaTV", "onDemand", "favoriteChannels", "favoriteSeries", "favoriteMovies", "trendingSeries", "trendingMovies")
 val defaultLiveSections = listOf("search", "categories")
 val defaultMovieSections = listOf("search", "continueWatching", "trendingMovies", "categories")
 val defaultSeriesSections = listOf("search", "continueWatching", "trendingSeries", "categories")
+
+/** Migration helper: hide the standalone category grid only for an untouched legacy default layout. */
+internal fun migratedLegacyLibraryHiddenSections(
+    order: List<String>,
+    hidden: Set<String>,
+    defaults: List<String>,
+): Set<String> = if (hidden.isEmpty() && order == defaults) setOf("categories") else hidden
 
 enum class RefreshInterval(val id: String, val millis: Long?) {
     MANUAL("manual", null), FIFTEEN_MIN("fifteenMinutes", 15 * 60_000L), THIRTY_MIN("thirtyMinutes", 30 * 60_000L), HOUR("oneHour", 60 * 60_000L), THREE_HOURS("threeHours", 3 * 60 * 60_000L), SIX_HOURS("sixHours", 6 * 60 * 60_000L), TWELVE_HOURS("twelveHours", 12 * 60 * 60_000L), DAILY("daily", 24 * 60 * 60_000L);
