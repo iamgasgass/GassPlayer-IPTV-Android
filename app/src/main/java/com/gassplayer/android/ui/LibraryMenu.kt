@@ -3,6 +3,7 @@ package com.gassplayer.android.ui
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
@@ -82,7 +83,7 @@ internal fun LibraryHeader(
     // In precedenza la pill espansibile poteva misurare fino a 320 dp più
     // l'IconButton, superando la larghezza disponibile sui telefoni stretti.
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().focusGroup(),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
@@ -100,6 +101,7 @@ internal fun LibraryHeader(
                         .heightIn(min = 44.dp)
                         .clip(RoundedCornerShape(50))
                         .background(MaterialTheme.colorScheme.surfaceVariant.copy(.65f))
+                        .remoteFocusOutline(cornerRadius = 50.dp, enabled = isTelevision)
                         .clickable { groupOpen = true }
                         .padding(horizontal = 12.dp, vertical = 9.dp),
                     verticalAlignment = Alignment.CenterVertically
@@ -149,7 +151,7 @@ internal fun LibraryHeader(
                 modifier = Modifier.weight(1f).heightIn(min = 44.dp).clipToBounds()
             ) {
                 LazyRow(
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp).clipToBounds(),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp).clipToBounds().focusGroup(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     contentPadding = PaddingValues(end = 8.dp)
                 ) {
@@ -164,10 +166,10 @@ internal fun LibraryHeader(
 
         // Layer dedicato sopra la rail (ma senza coprire il suo spazio di
         // misura): garantisce hit target e z-order stabili su mobile e TV.
-        Box(Modifier.size(44.dp).zIndex(2f), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(48.dp).zIndex(2f), contentAlignment = Alignment.Center) {
             Surface(
                 onClick = { sub = null; menuOpen = true },
-                modifier = Modifier.size(44.dp).onFocusChanged { if (it.isFocused) onContentFocus?.invoke() },
+                modifier = Modifier.size(48.dp).onFocusChanged { if (it.isFocused) onContentFocus?.invoke() }.remoteFocusOutline(cornerRadius = 50.dp, enabled = isTelevision),
                 shape = RoundedCornerShape(50),
                 color = Color.Transparent,
                 contentColor = glassForeground()
@@ -231,13 +233,15 @@ internal fun LibraryHeader(
 
 @Composable
 private fun PlaylistGroupGlassPill(label: String, selected: Boolean, onClick: () -> Unit) {
+    var focused by remember(label) { mutableStateOf(false) }
     Surface(
         onClick = onClick,
+        modifier = Modifier.onFocusChanged { focused = it.isFocused }.remoteFocusOutline(cornerRadius = 50.dp),
         shape = RoundedCornerShape(50),
         color = Color.Transparent,
         contentColor = glassForeground()
     ) {
-        LiquidGlassPill(selected = selected) {
+        LiquidGlassPill(selected = selected || focused) {
             Text(
                 label,
                 color = if (selected) Color.White else glassForeground().copy(.86f),

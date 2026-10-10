@@ -1049,12 +1049,17 @@ private fun ChannelBanner(
 ) {
     val cardLeft = if (centered) (width - bannerW) / 2 else inset
     val badgeSize = if (compact) 26.dp else 30.dp
+    var focused by remember(ch.id) { mutableStateOf(false) }
     Box(Modifier.width(width).height(rowHeight).zIndex(10f)) {
         Box(
             Modifier.offset(x = cardLeft, y = (rowHeight - bannerH) / 2f).width(bannerW).height(bannerH)
                 .clip(RoundedCornerShape(if (compact) 14.dp else 16.dp))
-                .then(if (selected) Modifier.border(BorderStroke(1.2.dp, Color(0xFF8FB3FF)), RoundedCornerShape(if (compact) 14.dp else 16.dp)) else Modifier)
-                .onFocusChanged { if (it.isFocused) onFocus() }
+                .then(when {
+                    focused -> Modifier.border(BorderStroke(2.dp, Color(0xFF8CB7FF)), RoundedCornerShape(if (compact) 14.dp else 16.dp))
+                    selected -> Modifier.border(BorderStroke(1.2.dp, Color(0xFF8FB3FF)), RoundedCornerShape(if (compact) 14.dp else 16.dp))
+                    else -> Modifier
+                })
+                .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() }
                 .onPreviewKeyEvent { e -> e.type == KeyEventType.KeyDown && e.key == Key.DirectionLeft && onExitLeft() }
                 .combinedClickable(onClick = onClick, onLongClick = onLongClick)
         ) {
@@ -1062,7 +1067,7 @@ private fun ChannelBanner(
                 modifier = Modifier.fillMaxSize(),
                 cornerRadius = if (compact) 14.dp else 16.dp,
                 contentPadding = 0.dp,
-                highlighted = selected,
+                highlighted = selected || focused,
                 suppressTopHighlight = true,
             ) {}
             Box(
@@ -1247,19 +1252,28 @@ private fun EpgProgramTile(
     }
     val startLabel = remember(program.startMs) { SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(program.startMs)) }
     val radius = if (compact) 12.dp else 18.dp
+    var focused by remember(program.id) { mutableStateOf(false) }
 
     Box(
         Modifier.offset(x = startX, y = verticalInset).width(fullWidth).height(height)
-            .onFocusChanged { if (it.isFocused) onFocus() }
+            .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() }
             .onPreviewKeyEvent { e -> e.type == KeyEventType.KeyDown && e.key == Key.DirectionLeft && onExitLeft() }
             .combinedClickable(onClick = onClick, onLongClick = onClick)
     ) {
-        Box(Modifier.width(visibleWidth).height(height).clip(RoundedCornerShape(radius))) {
+        Box(
+            Modifier.width(visibleWidth).height(height)
+                .clip(RoundedCornerShape(radius))
+                .then(when {
+                    focused -> Modifier.border(BorderStroke(2.dp, Color(0xFF8CB7FF)), RoundedCornerShape(radius))
+                    selected -> Modifier.border(BorderStroke(1.2.dp, Color(0xFF8FB3FF)), RoundedCornerShape(radius))
+                    else -> Modifier
+                })
+        ) {
             LiquidGlassSurface(
                 modifier = Modifier.fillMaxSize(),
                 cornerRadius = radius,
                 contentPadding = 0.dp,
-                highlighted = selected,
+                highlighted = selected || focused,
                 suppressTopHighlight = true,
             ) {}
             Box(

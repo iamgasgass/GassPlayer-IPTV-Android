@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import androidx.core.content.ContextCompat
 import androidx.media3.common.C
+import androidx.media3.common.AudioAttributes
 import androidx.media3.common.MediaItem.Builder
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
@@ -427,6 +428,10 @@ class PlaybackController(
             .setMediaSourceFactory(createMediaSourceFactory())
             .build()
             .apply {
+                // Cooperate with Fire TV / Android system audio focus when another app or system
+                // sound takes over; pause on HDMI/Bluetooth audio-route loss as well.
+                setAudioAttributes(AudioAttributes.DEFAULT, true)
+                setHandleAudioBecomingNoisy(true)
                 repeatMode = if (settings.value.loopPlayback) {
                     Player.REPEAT_MODE_ONE
                 } else {

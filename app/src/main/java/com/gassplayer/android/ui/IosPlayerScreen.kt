@@ -3,7 +3,6 @@ package com.gassplayer.android.ui
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
-import android.media.AudioManager
 import android.content.res.Configuration
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
@@ -363,7 +362,7 @@ fun IosPlayerScreen(
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown || locked || dialog != null) return@onPreviewKeyEvent false
                 when (event.key) {
-                    Key.MediaPlayPause, Key.Spacebar -> {
+                    Key.MediaPlayPause, Key.MediaPlay, Key.MediaPause, Key.Spacebar -> {
                         app.playback.togglePlayPause()
                         showControls = true
                         true
@@ -374,22 +373,22 @@ fun IosPlayerScreen(
                             true
                         } else false
                     }
-                    Key.DirectionLeft -> {
-                        if (showControls) false else {
+                    Key.DirectionLeft, Key.MediaRewind -> {
+                        if (showControls && event.key == Key.DirectionLeft) false else {
                             showControls = true
                             if (item.kind != MediaKind.LIVE) app.playback.skipBack(10_000L)
                             true
                         }
                     }
-                    Key.DirectionRight -> {
-                        if (showControls) false else {
+                    Key.DirectionRight, Key.MediaFastForward -> {
+                        if (showControls && event.key == Key.DirectionRight) false else {
                             showControls = true
                             if (item.kind != MediaKind.LIVE) app.playback.skipForward(10_000L)
                             true
                         }
                     }
-                    Key.DirectionUp -> {
-                        if (showControls) false else if (item.kind == MediaKind.LIVE && nextItem != null) {
+                    Key.DirectionUp, Key.ChannelUp, Key.MediaNext -> {
+                        if (showControls && event.key == Key.DirectionUp) false else if (item.kind == MediaKind.LIVE && nextItem != null) {
                             onNavigateToItem(nextItem)
                             true
                         } else {
@@ -397,14 +396,18 @@ fun IosPlayerScreen(
                             true
                         }
                     }
-                    Key.DirectionDown -> {
-                        if (showControls) false else if (item.kind == MediaKind.LIVE && previousItem != null) {
+                    Key.DirectionDown, Key.ChannelDown, Key.MediaPrevious -> {
+                        if (showControls && event.key == Key.DirectionDown) false else if (item.kind == MediaKind.LIVE && previousItem != null) {
                             onNavigateToItem(previousItem)
                             true
                         } else {
                             showControls = true
                             true
                         }
+                    }
+                    Key.Menu, Key.Info -> {
+                        showControls = true
+                        true
                     }
                     else -> false
                 }
@@ -415,7 +418,7 @@ fun IosPlayerScreen(
         if (renderPlayerSurface) {
         AndroidView(
             factory = {
-                val isTelevision = (context.resources.configuration.uiMode and Configuration.UI_MODE_TYPE_MASK) == Configuration.UI_MODE_TYPE_TELEVISION
+                val isTelevision = context.isTvOrFireTvDevice()
                 val inflater = android.view.LayoutInflater.from(context)
                 val playerView = when {
                     localSettings.panorama360 -> inflater.inflate(com.gassplayer.android.R.layout.gass_player_view_spherical, null, false) as PlayerView
@@ -491,9 +494,8 @@ fun IosPlayerScreen(
                                 showBrightnessHud = true
                                 showVolumeHud = false
                             } else {
-                                val audio = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-                                val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
-                                baseValue = audio.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / max
+                                // Per-player volume keeps Fire TV/system-wide audio state untouched.
+                                baseValue = app.playback.player.volume.coerceIn(0f, 1f)
                                 volumeLevel.floatValue = baseValue
                                 showVolumeHud = true
                                 showBrightnessHud = false
@@ -523,11 +525,7 @@ fun IosPlayerScreen(
                                 volumeLevel.floatValue = value
                                 showVolumeHud = true
                                 showBrightnessHud = false
-                                runCatching {
-                                    val audio = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-                                    val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
-                                    audio.setStreamVolume(AudioManager.STREAM_MUSIC, (value * max).roundToInt().coerceIn(0, max), 0)
-                                }
+                                app.playback.player.volume = value
                             }
                         }
                     )
@@ -885,6 +883,7 @@ private fun PlayerControlsOverlay(
         Row(
             Modifier
                 .fillMaxWidth()
+                .focusGroup()
                 .padding(start = 20.dp, end = 16.dp, top = 16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -1023,7 +1022,7 @@ private fun PlayerControlsOverlay(
                 )
             }
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.focusGroup(), verticalAlignment = Alignment.CenterVertically) {
                 PlayerGlassButton(Icons.Default.SkipPrevious, "Precedente", enabled = previousItem != null, onClick = onPrevious)
                 PlayerGlassButton(Icons.Default.Replay10, "-15s", onClick = onSkipBack)
                 PlayerGlassButton(

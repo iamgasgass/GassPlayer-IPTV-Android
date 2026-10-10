@@ -8,6 +8,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Arrangement
@@ -140,6 +141,7 @@ fun LiquidGlassFocusableSurface(
     modifier: Modifier = Modifier,
     cornerRadius: Dp = 18.dp,
     contentPadding: Dp = 12.dp,
+    onClick: (() -> Unit)? = null,
     content: @Composable BoxScope.() -> Unit
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -148,7 +150,8 @@ fun LiquidGlassFocusableSurface(
     LiquidGlassSurface(
         modifier = modifier
             .onFocusChanged { focused = it.isFocused }
-            .focusable()
+            .remoteFocusOutline(cornerRadius = cornerRadius)
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier.focusable())
             .graphicsLayer { scaleX = scale; scaleY = scale },
         cornerRadius = cornerRadius,
         contentPadding = contentPadding,

@@ -36,7 +36,7 @@ class MainActivity : ComponentActivity() {
         if (playerModeActive) return
         playerModeActive = true
         originalRequestedOrientation = requestedOrientation
-        val television = (resources.configuration.uiMode and Configuration.UI_MODE_TYPE_MASK) == Configuration.UI_MODE_TYPE_TELEVISION
+        val television = isTvOrFireTvDevice()
         playerForcedLandscape = !television && resources.configuration.smallestScreenWidthDp < 600
         if (playerForcedLandscape) requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
 

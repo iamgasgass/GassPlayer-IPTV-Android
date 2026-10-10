@@ -207,9 +207,10 @@ fun MovieDetailScreen(
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(horizontal = 20.dp)) {
                             items(alternates, key = { it.id }) { alt ->
                                 LiquidGlassFocusableSurface(
-                                    modifier = Modifier.width(245.dp).clickable { onPlay(alt, 0L) },
+                                    modifier = Modifier.width(245.dp),
                                     cornerRadius = 16.dp,
-                                    contentPadding = 12.dp
+                                    contentPadding = 12.dp,
+                                    onClick = { onPlay(alt, 0L) }
                                 ) {
                                     Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
                                         Text(alt.title, color = glassForeground(), fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)

@@ -24,6 +24,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.*
@@ -58,6 +59,8 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.viewinterop.AndroidView
@@ -105,7 +108,7 @@ fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
     val sources by vm.sources.collectAsStateWithLifecycle()
     val parental by vm.parental.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    val tv = (context.resources.configuration.uiMode and Configuration.UI_MODE_TYPE_MASK) == Configuration.UI_MODE_TYPE_TELEVISION
+    val tv = context.isTvOrFireTvDevice()
     DisposableEffect(playerItem != null, context) {
         val activity = context.closestMainActivity()
         if (playerItem != null) activity?.enterPlayerMode()
@@ -118,6 +121,13 @@ fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
     // chiusura si tornava alla vista di default. Cosi' all'uscita si riprende esattamente da dove
     // il player era stato aperto.
     val playerActive = playerItem != null
+    val backTarget = destinationAfterRemoteBack(route, epgManageReturnRoute)
+    // Fire TV's physical Back key must unwind in-app routes before exiting the activity. Nested
+    // dialogs, the player, and Categorie TV rails keep precedence through their own BackHandlers.
+    BackHandler(enabled = !playerActive && backTarget != null) {
+        if (route == "source-manager") managerSourceId = null
+        route = backTarget ?: "home"
+    }
 
     val loading by vm.loading.collectAsStateWithLifecycle()
     val message by vm.message.collectAsStateWithLifecycle()
@@ -264,6 +274,15 @@ private fun AdaptiveShell(
     val saveableStateHolder = rememberSaveableStateHolder()
     val railScrollState = rememberScrollState()
     val railScope = rememberCoroutineScope()
+    // Start with a predictable, visible focus target on remote-first devices. Without this,
+    // some Fire TV launchers leave Compose with no focused node until the first DPAD press.
+    val initialHomeFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        if (tv) {
+            kotlinx.coroutines.delay(90)
+            runCatching { initialHomeFocusRequester.requestFocus() }
+        }
+    }
     LiquidGlassBackdrop(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxSize()) {
             LiquidGlassSurface(
@@ -274,7 +293,7 @@ private fun AdaptiveShell(
                 contentPadding = 7.dp
             ) {
                 Column(
-                    Modifier.fillMaxSize().verticalScroll(railScrollState).padding(vertical = 8.dp),
+                    Modifier.fillMaxSize().focusGroup().verticalScroll(railScrollState).padding(vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(7.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
@@ -285,7 +304,9 @@ private fun AdaptiveShell(
                             onClick = { onRoute(id) },
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .then(if (id == "home") Modifier.focusRequester(initialHomeFocusRequester) else Modifier)
                                 .bringIntoViewRequester(bringIntoView)
+                                .remoteFocusOutline(cornerRadius = 18.dp, enabled = tv)
                                 .onFocusChanged { state ->
                                     focused = state.isFocused
                                     if (state.isFocused) railScope.launch { runCatching { bringIntoView.bringIntoView() } }
@@ -345,7 +366,7 @@ private fun AdaptiveShell(
                         visitedLibraryRoutes = visitedLibraryRoutes + route
                     }
                 }
-                Box(Modifier.fillMaxSize()) {
+                Box(Modifier.fillMaxSize().focusGroup()) {
                     renderedLibraryRoutes.forEach { section ->
                         key(section) {
                             val active = route == section
@@ -485,7 +506,7 @@ private fun HomeScreen(vm: MainViewModel, catalog: CatalogState?, fav: FavoriteS
         // The iOS Home menu is always available, even if the user hides the heading section.
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Box {
-                Surface(onClick = { homeMenuOpen = true }, shape = RoundedCornerShape(50), color = Color.Transparent) {
+                Surface(onClick = { homeMenuOpen = true }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp), shape = RoundedCornerShape(50), color = Color.Transparent) {
                     LiquidGlassPill(selected = true) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                             Icon(when (homeMode) { "live" -> Icons.Default.LiveTv; "movies" -> Icons.Default.Movie; "series" -> Icons.Default.Tv; else -> Icons.Default.Home }, null, tint = Color(0xFF9ABEFF), modifier = Modifier.size(17.dp))
@@ -501,7 +522,7 @@ private fun HomeScreen(vm: MainViewModel, catalog: CatalogState?, fav: FavoriteS
                 }
             }
             Spacer(Modifier.weight(1f))
-            Surface(onClick = { onRoute("home-customize") }, color = Color.Transparent, shape = RoundedCornerShape(50)) {
+            Surface(onClick = { onRoute("home-customize") }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp), color = Color.Transparent, shape = RoundedCornerShape(50)) {
                 LiquidGlassPill {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         Icon(Icons.Default.Tune, null, tint = glassForeground().copy(.85f), modifier = Modifier.size(16.dp))
@@ -582,7 +603,7 @@ private fun HomeScreen(vm: MainViewModel, catalog: CatalogState?, fav: FavoriteS
                                 grouped.forEach { (kind, label) ->
                                     val resultGroup = homeSearchResults.filter { it.kind == kind }
                                     if (resultGroup.isNotEmpty()) Section(label, null) {
-                                        androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                        androidx.compose.foundation.lazy.LazyRow(modifier = Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                             items(resultGroup.take(16), key = { it.id }) { item -> MediaCard(item, vm.appFavorite(fav, item), onClick = { openLibraryItem(item) }, onToggleFavorite = { vm.toggleFavorite(item) }) }
                                         }
                                     }
@@ -608,7 +629,7 @@ private fun HomeScreen(vm: MainViewModel, catalog: CatalogState?, fav: FavoriteS
                                         }
                                     }
                                 }
-                                androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                androidx.compose.foundation.lazy.LazyRow(modifier = Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                     items(entries, key = { it.contentId }) { entry ->
                                         val media = catalog?.findById(entry.contentId) ?: MediaItem(entry.contentId, "", entry.kind, entry.title, entry.url, metadataTag = "resume:${entry.positionMs}")
                                         MediaCard(media, vm.appFavorite(fav, media), onClick = { onPlayWithPosition(onPlay, media, entry.positionMs) }, onToggleFavorite = { vm.toggleFavorite(media) })
@@ -631,7 +652,7 @@ private fun HomeScreen(vm: MainViewModel, catalog: CatalogState?, fav: FavoriteS
                                         }
                                         if (sources.size > 1 && activeSource != null) {
                                             Box {
-                                                Surface(onClick = { sourceMenuOpen = true }, color = Color.Transparent, shape = RoundedCornerShape(50)) {
+                                                Surface(onClick = { sourceMenuOpen = true }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp), color = Color.Transparent, shape = RoundedCornerShape(50)) {
                                                     LiquidGlassPill {
                                                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                                             Text("Cambia", color = glassForeground(), fontSize = 12.sp)
@@ -658,7 +679,7 @@ private fun HomeScreen(vm: MainViewModel, catalog: CatalogState?, fav: FavoriteS
                             }
                         }
                         "sources" -> Section("Sorgenti", null) {
-                            Surface(onClick = { onRoute("sources") }, color = Color.Transparent, shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
+                            Surface(onClick = { onRoute("sources") }, color = Color.Transparent, shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 20.dp)) {
                                 LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius = 20.dp, contentPadding = 16.dp) {
                                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                         Box(Modifier.size(42.dp).clip(RoundedCornerShape(13.dp)).background(Color(0xFF3478F6).copy(.15f)), contentAlignment = Alignment.Center) { Icon(Icons.Default.Layers, null, tint = Color(0xFF9ABEFF), modifier = Modifier.size(23.dp)) }
@@ -676,19 +697,19 @@ private fun HomeScreen(vm: MainViewModel, catalog: CatalogState?, fav: FavoriteS
                         "favoriteChannels" -> {
                             val list = catalog?.byIds(MediaKind.LIVE, fav.live).orEmpty()
                             if (list.isNotEmpty()) Section("Canali preferiti", { homeMode = "live" }) {
-                                androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) { items(list.take(20), key = { it.id }) { item -> MediaCard(item, true, onClick = { onPlay(item) }, onToggleFavorite = { vm.toggleFavorite(item) }) } }
+                                androidx.compose.foundation.lazy.LazyRow(modifier = Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) { items(list.take(20), key = { it.id }) { item -> MediaCard(item, true, onClick = { onPlay(item) }, onToggleFavorite = { vm.toggleFavorite(item) }) } }
                             }
                         }
                         "favoriteSeries" -> {
                             val list = catalog?.byIds(MediaKind.SERIES, fav.series).orEmpty()
                             if (list.isNotEmpty()) Section("Serie TV preferite", { homeMode = "series" }) {
-                                androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) { items(list.take(20), key = { it.id }) { item -> MediaCard(item, true, onClick = { openLibraryItem(item) }, onToggleFavorite = { vm.toggleFavorite(item) }) } }
+                                androidx.compose.foundation.lazy.LazyRow(modifier = Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) { items(list.take(20), key = { it.id }) { item -> MediaCard(item, true, onClick = { openLibraryItem(item) }, onToggleFavorite = { vm.toggleFavorite(item) }) } }
                             }
                         }
                         "favoriteMovies" -> {
                             val list = catalog?.byIds(MediaKind.MOVIE, fav.movies).orEmpty()
                             if (list.isNotEmpty()) Section("Film preferiti", { homeMode = "movies" }) {
-                                androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) { items(list.take(20), key = { it.id }) { item -> MediaCard(item, true, onClick = { openLibraryItem(item) }, onToggleFavorite = { vm.toggleFavorite(item) }) } }
+                                androidx.compose.foundation.lazy.LazyRow(modifier = Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) { items(list.take(20), key = { it.id }) { item -> MediaCard(item, true, onClick = { openLibraryItem(item) }, onToggleFavorite = { vm.toggleFavorite(item) }) } }
                             }
                         }
                         "onDemand" -> Section("On demand", null) {
@@ -700,7 +721,7 @@ private fun HomeScreen(vm: MainViewModel, catalog: CatalogState?, fav: FavoriteS
                         "trendingSeries" -> Section("Serie di tendenza", { onRoute("series") }) {
                             if (settings.tmdbApiKey.isBlank()) EmptyHint("Configura la chiave API TMDB in Impostazioni per caricare le tendenze.")
                             else if (trendingSeries.isEmpty()) EmptyHint("Tendenze serie non disponibili: controlla la chiave TMDB e la rete.")
-                            else androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            else androidx.compose.foundation.lazy.LazyRow(modifier = Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 items(trendingSeries.take(16), key = { it.id }) { trend -> TrendingCard(trend, true, onClick = {
                                     val match = catalog?.series.orEmpty().firstOrNull { item -> item.title.matchesTrendTitle(trend.title) || (trend.originalTitle?.let { item.title.matchesTrendTitle(it) } == true) }
                                     if (match != null) openLibraryItem(match) else trendingUnavailable = trend.title
@@ -710,7 +731,7 @@ private fun HomeScreen(vm: MainViewModel, catalog: CatalogState?, fav: FavoriteS
                         "trendingMovies" -> Section("Film di tendenza", { onRoute("movies") }) {
                             if (settings.tmdbApiKey.isBlank()) EmptyHint("Configura la chiave API TMDB in Impostazioni per caricare le tendenze.")
                             else if (trendingMovies.isEmpty()) EmptyHint("Tendenze film non disponibili: controlla la chiave TMDB e la rete.")
-                            else androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            else androidx.compose.foundation.lazy.LazyRow(modifier = Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 items(trendingMovies.take(16), key = { it.id }) { trend -> TrendingCard(trend, false, onClick = {
                                     val match = catalog?.movies.orEmpty().firstOrNull { item -> item.title.matchesTrendTitle(trend.title) || (trend.originalTitle?.let { item.title.matchesTrendTitle(it) } == true) }
                                     if (match != null) openLibraryItem(match) else trendingUnavailable = trend.title
@@ -756,7 +777,7 @@ private fun String.matchesTrendTitle(other: String): Boolean {
 
 @Composable
 private fun HomeActionChip(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, onClick: () -> Unit) {
-    Surface(onClick = onClick, shape = RoundedCornerShape(50), color = Color.Transparent) {
+    Surface(onClick = onClick, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp), shape = RoundedCornerShape(50), color = Color.Transparent) {
         LiquidGlassPill {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 Icon(icon, null, tint = Color(0xFF9ABEFF), modifier = Modifier.size(16.dp))
@@ -775,7 +796,7 @@ private fun HomeCompactDestinationCard(
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
-    Surface(onClick = onClick, modifier = modifier.heightIn(min = 150.dp), color = Color.Transparent, shape = RoundedCornerShape(22.dp)) {
+    Surface(onClick = onClick, modifier = modifier.heightIn(min = 150.dp).remoteFocusOutline(cornerRadius = 22.dp), color = Color.Transparent, shape = RoundedCornerShape(22.dp)) {
         LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius = 22.dp, contentPadding = 16.dp) {
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Box(Modifier.size(42.dp).clip(RoundedCornerShape(13.dp)).background(tint.copy(.16f)), contentAlignment = Alignment.Center) {
@@ -796,7 +817,7 @@ private fun HomeDestinationCard(title: String, metric: String, subtitle: String,
             Text(title, color = glassForeground(), fontSize = 20.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
             TextButton(onClick = onClick) { Text(buttonLabel) }
         }
-        Surface(onClick = onClick, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(22.dp), color = Color.Transparent) {
+        Surface(onClick = onClick, modifier = Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 22.dp), shape = RoundedCornerShape(22.dp), color = Color.Transparent) {
             LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius = 22.dp, contentPadding = 18.dp) {
                 Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.size(50.dp).clip(RoundedCornerShape(16.dp)).background(tint.copy(.16f)), contentAlignment = Alignment.Center) { Icon(icon, null, tint = tint, modifier = Modifier.size(27.dp)) }
@@ -814,8 +835,18 @@ private fun HomeDestinationCard(title: String, metric: String, subtitle: String,
 
 @Composable
 private fun TrendingCard(item: MetadataResult, isSeries: Boolean, onClick: () -> Unit, onFocus: (() -> Unit)? = null) {
-    Surface(onClick = onClick, modifier = Modifier.width(156.dp).height(270.dp).onFocusChanged { if (it.isFocused || it.hasFocus) onFocus?.invoke() }, color = Color.Transparent, shape = RoundedCornerShape(18.dp)) {
-        LiquidGlassSurface(modifier = Modifier.fillMaxSize(), cornerRadius = 18.dp, contentPadding = 0.dp) {
+    var focused by remember(item.id) { mutableStateOf(false) }
+    val scale by androidx.compose.animation.core.animateFloatAsState(if (focused) 1.025f else 1f, label = "trending-card-focus")
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.width(156.dp).height(270.dp).graphicsLayer { scaleX = scale; scaleY = scale }
+            .onFocusChanged { focused = it.isFocused; if (it.isFocused || it.hasFocus) onFocus?.invoke() }
+            .remoteFocusOutline(cornerRadius = 18.dp),
+        color = Color.Transparent,
+        shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(if (focused) 1.8.dp else .55.dp, if (focused) Color(0xFF8CB7FF) else glassForeground(.15f)),
+    ) {
+        LiquidGlassSurface(modifier = Modifier.fillMaxSize(), cornerRadius = 18.dp, contentPadding = 0.dp, highlighted = focused) {
             Column(Modifier.fillMaxSize()) {
                 Box(Modifier.fillMaxWidth().height(205.dp).background(Color(0xFF101010))) {
                     val artwork = item.posterUrl ?: item.backdropUrl
@@ -943,7 +974,7 @@ private fun LibraryScreenTitle(title: String, onCustomize: () -> Unit, onFocus: 
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
-        Surface(onClick = onCustomize, modifier = Modifier.onFocusChanged { if (it.isFocused) onFocus?.invoke() }, shape = RoundedCornerShape(50), color = Color.Transparent) {
+        Surface(onClick = onCustomize, modifier = Modifier.onFocusChanged { if (it.isFocused) onFocus?.invoke() }.remoteFocusOutline(cornerRadius = 50.dp), shape = RoundedCornerShape(50), color = Color.Transparent) {
             LiquidGlassPill {
                 Row(
                     Modifier.height(26.dp),
@@ -965,21 +996,24 @@ private fun LibraryCategoryTile(
     width: Dp,
     onClick: () -> Unit
 ) {
+    var focused by remember(name) { mutableStateOf(false) }
     Surface(
         onClick = onClick,
-        modifier = Modifier.width(width).height(68.dp),
+        modifier = Modifier.width(width).height(68.dp)
+            .onFocusChanged { focused = it.isFocused }
+            .remoteFocusOutline(cornerRadius = 16.dp),
         shape = RoundedCornerShape(16.dp),
         color = Color.Transparent,
         border = BorderStroke(
-            if (selected) 1.4.dp else .5.dp,
-            if (selected) Color(0xFF82ACFF).copy(.9f) else glassForeground().copy(.16f)
+            when { focused -> 2.dp; selected -> 1.4.dp; else -> .5.dp },
+            when { focused -> Color(0xFF8CB7FF); selected -> Color(0xFF82ACFF).copy(.9f); else -> glassForeground().copy(.16f) }
         )
     ) {
         LiquidGlassSurface(
             modifier = Modifier.fillMaxSize(),
             cornerRadius = 16.dp,
             contentPadding = 0.dp,
-            highlighted = selected,
+            highlighted = selected || focused,
             suppressTopHighlight = true
         ) {
             Box(Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.TopStart) {
@@ -1182,7 +1216,7 @@ private fun CatalogScreen(
                                 Text("Categorie", color = glassForeground().copy(.72f), fontSize = 18.sp, fontWeight = FontWeight.Medium)
                             }
                             items(count = categoryRowCount, key = { rowIndex -> "library-category-row-$scopeKey-$rowIndex" }) { rowIndex ->
-                                Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                                Row(Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
                                     val firstIndex = rowIndex * tileColumns
                                     for (index in firstIndex until minOf(categoryEntries.size, firstIndex + tileColumns)) {
                                         val entry = categoryEntries[index]
@@ -1197,7 +1231,7 @@ private fun CatalogScreen(
                         "continueWatching" -> if (showContinue) {
                             item(key = "library-continue-$scopeKey") {
                                 Section("Continua a guardare", null) {
-                                    LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    LazyRow(modifier = Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                         items(continueItems.take(24), key = { it.id }) { item ->
                                             MediaCard(item, vm.appFavorite(favorite, item), onClick = { selected = item }, onToggleFavorite = { vm.toggleFavorite(item) }, onFocus = { if (tvCategoryMode) categoryRailExpanded = false })
                                         }
@@ -1210,7 +1244,7 @@ private fun CatalogScreen(
                                 Section("Film di tendenza", null) {
                                     if (libSettings.tmdbApiKey.isBlank()) Text("Configura la chiave TMDB nelle impostazioni per vedere le tendenze.", color = glassForeground(.6f), fontSize = 12.sp)
                                     else if (trending.isEmpty()) Text("Tendenze non disponibili: controlla la rete e la chiave TMDB.", color = glassForeground(.6f), fontSize = 12.sp)
-                                    else LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    else LazyRow(modifier = Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                         items(trending.take(16), key = { it.id }) { trend ->
                                             TrendingCard(trend, false, onClick = {
                                                 val match = items.firstOrNull { it.title.equals(trend.title, ignoreCase = true) }
@@ -1235,7 +1269,7 @@ private fun CatalogScreen(
                     }
                 } else {
                     items(count = mediaRowCount, key = { rowIndex -> "library-media-row-$scopeKey-$rowIndex" }) { rowIndex ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                        Row(Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                             val firstIndex = rowIndex * gridColumns
                             for (index in firstIndex until minOf(filtered.size, firstIndex + gridColumns)) {
                                 val item = filtered[index]
@@ -1460,7 +1494,7 @@ private fun SeriesScreen(
                                 Text("Categorie", color = glassForeground().copy(.72f), fontSize = 18.sp, fontWeight = FontWeight.Medium)
                             }
                             items(count = categoryRowCount, key = { rowIndex -> "library-category-row-series-$rowIndex" }) { rowIndex ->
-                                Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                                Row(Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
                                     val firstIndex = rowIndex * tileColumns
                                     for (index in firstIndex until minOf(categoryEntries.size, firstIndex + tileColumns)) {
                                         val entry = categoryEntries[index]
@@ -1475,7 +1509,7 @@ private fun SeriesScreen(
                         "continueWatching" -> if (showContinue) {
                             item(key = "library-continue-series") {
                                 Section("Continua a guardare", null) {
-                                    LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    LazyRow(modifier = Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                         items(continueItems.take(24), key = { it.id }) { item ->
                                             MediaCard(item, item.id in favorite.series, onClick = { selected = item }, onToggleFavorite = { vm.toggleFavorite(item) }, onFocus = { if (tvCategoryMode) categoryRailExpanded = false })
                                         }
@@ -1488,7 +1522,7 @@ private fun SeriesScreen(
                                 Section("Serie di tendenza", null) {
                                     if (libSettings.tmdbApiKey.isBlank()) Text("Configura la chiave TMDB nelle impostazioni per vedere le tendenze.", color = glassForeground(.6f), fontSize = 12.sp)
                                     else if (trending.isEmpty()) Text("Tendenze non disponibili: controlla la rete e la chiave TMDB.", color = glassForeground(.6f), fontSize = 12.sp)
-                                    else LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    else LazyRow(modifier = Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                         items(trending.take(16), key = { it.id }) { trend ->
                                             TrendingCard(trend, true, onClick = {
                                                 val match = series.firstOrNull { it.title.equals(trend.title, ignoreCase = true) }
@@ -1513,7 +1547,7 @@ private fun SeriesScreen(
                     }
                 } else {
                     items(count = mediaRowCount, key = { rowIndex -> "library-media-row-series-$rowIndex" }) { rowIndex ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                        Row(Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                             val firstIndex = rowIndex * gridColumns
                             for (index in firstIndex until minOf(filtered.size, firstIndex + gridColumns)) {
                                 val item = filtered[index]

@@ -71,8 +71,9 @@ fun PlayerGlassButton(
         onClick = onClick,
         enabled = enabled,
         modifier = Modifier
-            .size(size)
+            .size(size.coerceAtLeast(48.dp))
             .padding(horizontal = 2.dp)
+            .remoteFocusOutline(cornerRadius = 50.dp, enabled = enabled)
             .semantics { role = Role.Button },
         shape = RoundedCornerShape(percent = 50),
         color = palette.fill,
@@ -100,8 +101,9 @@ fun PlayerGlassButton(
         onClick = onClick,
         enabled = enabled,
         modifier = modifier
-            .heightIn(min = 44.dp)
-            .widthIn(min = 44.dp)
+            .heightIn(min = 48.dp)
+            .widthIn(min = 48.dp)
+            .remoteFocusOutline(cornerRadius = 50.dp, enabled = enabled)
             .semantics { role = Role.Button },
         shape = RoundedCornerShape(percent = 50),
         color = palette.fill,
@@ -178,7 +180,8 @@ fun IconButton(
         onClick = onClick,
         enabled = enabled,
         modifier = modifier
-            .size(44.dp)
+            .size(48.dp)
+            .remoteFocusOutline(cornerRadius = 50.dp, enabled = enabled)
             .semantics { role = Role.Button },
         shape = RoundedCornerShape(percent = 50),
         color = palette.fill,

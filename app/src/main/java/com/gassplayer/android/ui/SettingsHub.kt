@@ -308,7 +308,7 @@ private fun HubToggle(title: String, detail: String?, value: Boolean, onChange: 
 private fun HubChoice(title: String, current: String, choices: List<String>, onPick: (String) -> Unit) {
     var open by remember { mutableStateOf(false) }
     Box {
-        Surface(onClick = { open = true }, shape = RoundedCornerShape(14.dp), color = Color.Transparent, modifier = Modifier.fillMaxWidth()) {
+        Surface(onClick = { open = true }, shape = RoundedCornerShape(14.dp), color = Color.Transparent, modifier = Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 14.dp)) {
             LiquidGlassSurface(modifier = Modifier.fillMaxWidth(), cornerRadius = 14.dp, contentPadding = 0.dp) {
                 Row(Modifier.padding(horizontal = 13.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(title, color = glassForeground(), fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))

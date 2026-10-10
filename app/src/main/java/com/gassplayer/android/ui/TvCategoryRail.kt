@@ -7,6 +7,7 @@ import kotlinx.coroutines.withContext
 
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -95,7 +96,7 @@ internal fun TvCategoryRail(
                 cornerRadius = 22.dp,
                 contentPadding = 10.dp,
             ) {
-                Column(Modifier.fillMaxSize()) {
+                Column(Modifier.fillMaxSize().focusGroup()) {
                     Text(
                         "Categorie TV",
                         color = glassForeground(),
@@ -107,7 +108,7 @@ internal fun TvCategoryRail(
                     )
                     LazyColumn(
                         state = state,
-                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        modifier = Modifier.weight(1f).fillMaxWidth().focusGroup(),
                         verticalArrangement = Arrangement.spacedBy(5.dp),
                     ) {
                         itemsIndexed(options, key = { _, item -> item.id }) { index, item ->
@@ -118,23 +119,26 @@ internal fun TvCategoryRail(
                                 )
                             }
                             val selected = item.id == selectedId
+                            var focused by remember(item.id) { mutableStateOf(false) }
                             Surface(
                                 onClick = { onSelect(item.id) },
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .then(if (index == 0) Modifier.focusRequester(firstOptionFocus) else Modifier),
+                                    .then(if (index == 0) Modifier.focusRequester(firstOptionFocus) else Modifier)
+                                    .onFocusChanged { focused = it.isFocused }
+                                    .remoteFocusOutline(cornerRadius = 14.dp),
                                 shape = RoundedCornerShape(14.dp),
                                 color = Color.Transparent,
                                 border = BorderStroke(
-                                    if (selected) 1.2.dp else .45.dp,
-                                    if (selected) Color(0xFF8FB3FF).copy(.88f) else glassForeground(.12f),
+                                    when { focused -> 2.dp; selected -> 1.2.dp; else -> .45.dp },
+                                    when { focused -> Color(0xFF8CB7FF); selected -> Color(0xFF8FB3FF).copy(.88f); else -> glassForeground(.12f) },
                                 ),
                             ) {
                                 LiquidGlassSurface(
                                     modifier = Modifier.fillMaxWidth(),
                                     cornerRadius = 14.dp,
                                     contentPadding = 0.dp,
-                                    highlighted = selected,
+                                    highlighted = selected || focused,
                                     suppressTopHighlight = true,
                                 ) {
                                     Row(
