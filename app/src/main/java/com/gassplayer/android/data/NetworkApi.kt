@@ -17,15 +17,18 @@ class NetworkApi {
     @Volatile var userAgent: String = DEFAULT_USER_AGENT
 
     /**
-     * Shared client tuned for IPTV panels: up to 6 parallel connections per host (the number
-     * Xtream panels tolerate, same as the iOS catalog session), no overall call timeout (catalogs
-     * can be tens of MB on slow links) but a bounded idle read timeout.
+     * Shared catalogue client tuned for IPTV panels: bounded concurrency, 60 s idle-read timeout,
+     * and a 5 minute total request ceiling for stalled catalogue/EPG downloads. The media player
+     * uses separate streaming clients with callTimeout(0), since live responses are unbounded.
      */
     private val client: OkHttpClient = OkHttpClient.Builder()
         .retryOnConnectionFailure(true)
         .dns(com.gassplayer.android.media.AppDns)
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
+        // Catalogues may be very large; bound a completely stalled request without applying
+        // this limit to the separate infinite-response clients used by the media player.
+        .callTimeout(5, TimeUnit.MINUTES)
         .writeTimeout(30, TimeUnit.SECONDS)
         .followRedirects(true)
         .followSslRedirects(true)

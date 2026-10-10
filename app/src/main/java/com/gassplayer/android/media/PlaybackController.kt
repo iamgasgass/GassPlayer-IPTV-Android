@@ -71,7 +71,7 @@ class PlaybackController(
     private var simpleCache: SimpleCache? = null
     private var playerInstance: ExoPlayer? = null
 
-    private var currentItem: MediaItem? = null
+    @Volatile private var currentItem: MediaItem? = null
     private var urlCandidates: List<String> = emptyList()
     private var urlIndex = 0
     private var userAgents: List<String> = emptyList()
@@ -81,6 +81,32 @@ class PlaybackController(
     private var lastLoadControlSignature: String = ""
     private var httpFactories: List<OkHttpDataSource.Factory> = emptyList()
     private var zapJob: Job? = null
+
+    // All transport variants share one dispatcher and connection pool. Without this, each of
+    // the six live/VOD + HTTP/TLS clients creates its own pool of idle sockets and executor.
+    // The shared dispatcher also bounds asynchronous requests; Media3's synchronous data-source
+    // calls still use ExoPlayer's loader threads, so the pool is the key resource-sharing win here.
+    private val streamingDispatcher: okhttp3.Dispatcher by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        okhttp3.Dispatcher().apply {
+            maxRequests = 32
+            // Keep the total per-host pressure bounded across HTTP/2, HTTP/1.1 and TLS fallback.
+            // This also avoids multiplying the provider's connection limit by the fallback count.
+            maxRequestsPerHost = 6
+        }
+    }
+    private val streamingConnectionPool: okhttp3.ConnectionPool by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        okhttp3.ConnectionPool(8, 5, TimeUnit.MINUTES)
+    }
+    private val streamingClientProfiles: List<Pair<OkHttpClient, OkHttpClient>> by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        fun profile(protocols: List<okhttp3.Protocol>, legacyTls: Boolean): Pair<OkHttpClient, OkHttpClient> =
+            newStreamingClient(protocols, legacyTls, connectSec = 8, readSec = 30) to
+                newStreamingClient(protocols, legacyTls, connectSec = 15, readSec = 30)
+        listOf(
+            profile(listOf(okhttp3.Protocol.HTTP_2, okhttp3.Protocol.HTTP_1_1), false),
+            profile(listOf(okhttp3.Protocol.HTTP_1_1), false),
+            profile(listOf(okhttp3.Protocol.HTTP_1_1), true)
+        )
+    }
     private var networkRetries = 0
 
     // --- Recovery state (port of KSPlaybackController.swift) ---
@@ -513,19 +539,21 @@ class PlaybackController(
         protocols: List<okhttp3.Protocol>,
         legacyTls: Boolean = false,
         connectSec: Long = 8,
-        readSec: Long = 15
+        readSec: Long = 30
     ): OkHttpClient =
         OkHttpClient.Builder()
             .retryOnConnectionFailure(true)
             .dns(AppDns)
             .followRedirects(true)
             .followSslRedirects(true)
-            // A dead live connection must surface in seconds (so we reconnect), not after 2 minutes.
+            // Stream reads may legitimately pause between IPTV chunks; the 30 s idle timeout
+            // lets brief gaps recover while the playback watchdog handles a stalled initial tune.
             .connectTimeout(connectSec, TimeUnit.SECONDS)
             .readTimeout(readSec, TimeUnit.SECONDS)
             .callTimeout(0, TimeUnit.MILLISECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
-            .connectionPool(okhttp3.ConnectionPool(8, 5, TimeUnit.MINUTES))
+            .dispatcher(streamingDispatcher)
+            .connectionPool(streamingConnectionPool)
             .connectionSpecs(
                 if (legacyTls) {
                     listOf(ConnectionSpec.COMPATIBLE_TLS, ConnectionSpec.CLEARTEXT)
@@ -541,22 +569,19 @@ class PlaybackController(
             .build()
 
     /**
-     * Three transports (HTTP/2+1.1, HTTP/1.1, legacy TLS), each with a live client (15 s timeouts) and a VOD
-     * client (30 s, as on iOS: the server often has to seek the file / moov atom before answering). The
-     * right one is picked per request through [vodMode].
+     * Three transports (HTTP/2+1.1, HTTP/1.1, legacy TLS), each with live and VOD profiles.
+     * Profiles are created once per controller, not on every player rebuild. Like GassTV, streams
+     * have no total call timeout (they are infinite responses); the 30 s read timeout detects a
+     * genuinely stalled connection without treating ordinary IPTV gaps as immediate failures.
+     * Connection scheduling and pooling are shared by every profile so fallback cannot multiply
+     * the number of concurrent requests made to the same provider.
      */
-    private fun makeHttpFactories(): List<OkHttpDataSource.Factory> {
-        fun factoryFor(protocols: List<okhttp3.Protocol>, legacyTls: Boolean): OkHttpDataSource.Factory {
-            val live = newStreamingClient(protocols, legacyTls, connectSec = 8, readSec = 15)
-            val vod = newStreamingClient(protocols, legacyTls, connectSec = 15, readSec = 30)
-            return OkHttpDataSource.Factory(okhttp3.Call.Factory { request -> (if (vodMode) vod else live).newCall(request) })
+    private fun makeHttpFactories(): List<OkHttpDataSource.Factory> =
+        streamingClientProfiles.map { (live, vod) ->
+            OkHttpDataSource.Factory(
+                okhttp3.Call.Factory { request -> (if (vodMode) vod else live).newCall(request) }
+            )
         }
-        return listOf(
-            factoryFor(listOf(okhttp3.Protocol.HTTP_2, okhttp3.Protocol.HTTP_1_1), false),
-            factoryFor(listOf(okhttp3.Protocol.HTTP_1_1), false),
-            factoryFor(listOf(okhttp3.Protocol.HTTP_1_1), true)
-        )
-    }
 
     private fun effectiveUserAgent(): String =
         userAgents.getOrNull(userAgentIndex)?.takeIf { it.isNotBlank() }
@@ -897,26 +922,18 @@ class PlaybackController(
         setCurrentUrlAndPrepare(position)
     }
 
-    private fun findHttpCode(error: PlaybackException): Int? {
-        fun scan(t: Throwable?): Int? {
-            if (t == null) return null
-            if (t is androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException) {
-                return t.responseCode
-            }
-            return scan(t.cause)
-        }
-        return scan(error)
-    }
+    private fun findHttpCode(error: PlaybackException): Int? = deepestHttpStatus(error)
 
     private fun createLoadControl(): LoadControl {
         val s = settings.value
         val userMinMs = s.minBufferSec.coerceIn(1, 600) * 1000
         val userMaxMs = s.maxBufferSec.coerceIn(1, 600) * 1000
-        // "Buffer di partenza" is honoured exactly (1 s = near-instant start). After a stall we refill to
-        // at least 2 s so playback does not flap; "Buffer minimo"/"Buffer massimo" size the reservoir that
-        // rides out twitchy IPTV sources, and are kept consistent with each other and with the start value.
+        // Keep the user's fast-start choice, but use GassTV's deeper 5 s refill after a live-TV
+        // stall. Live IPTV arrives in bursts and otherwise tends to flap between BUFFERING/READY;
+        // VOD keeps the shorter refill because its server-side seek may already be expensive.
         val startMs = s.playerStartBufferSec.coerceIn(1, 600) * 1000
-        val rebufferMs = maxOf(startMs, REBUFFER_MS)
+        val rebufferFloorMs = if (currentItem?.kind == MediaKind.LIVE) LIVE_REBUFFER_MS else REBUFFER_MS
+        val rebufferMs = maxOf(startMs, rebufferFloorMs)
         val minMs = maxOf(userMinMs, rebufferMs)
         val maxMs = maxOf(userMaxMs, minMs)
 
@@ -987,16 +1004,25 @@ class PlaybackController(
                 StandaloneDatabaseProvider(context)
             )
             simpleCache = cache
-            DefaultMediaSourceFactory(
-                CacheDataSource.Factory()
-                    .setCache(cache)
-                    .setUpstreamDataSourceFactory(failoverFactory)
-                    .setFlags(
-                        CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR or
-                            CacheDataSource.FLAG_IGNORE_CACHE_FOR_UNSET_LENGTH_REQUESTS
-                    ),
-                createExtractorsFactory()
-            )
+            val cachedFactory = CacheDataSource.Factory()
+                .setCache(cache)
+                .setUpstreamDataSourceFactory(failoverFactory)
+                .setFlags(
+                    CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR or
+                        CacheDataSource.FLAG_IGNORE_CACHE_FOR_UNSET_LENGTH_REQUESTS
+                )
+
+            // Live playlists and their segments must not be read back from a disk cache: the
+            // playlist URL is stable while its contents change, so caching can freeze the live
+            // edge or cause stale-segment 404s. Keep caching for VOD, where resources are immutable.
+            val cacheAwareFactory = DataSource.Factory {
+                CachePolicyDataSource(
+                    directFactory = failoverFactory,
+                    cachedFactory = cachedFactory,
+                    shouldUseCache = { currentItem?.kind != MediaKind.LIVE }
+                )
+            }
+            DefaultMediaSourceFactory(cacheAwareFactory, createExtractorsFactory())
         }
 
         return mediaFactory.setLoadErrorHandlingPolicy(iptvLoadErrorPolicy)
@@ -1008,7 +1034,9 @@ class PlaybackController(
      */
     private val iptvLoadErrorPolicy = object : DefaultLoadErrorHandlingPolicy(MAX_LOAD_RETRIES) {
         override fun getRetryDelayMsFor(info: androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy.LoadErrorInfo): Long {
-            val code = (info.exception as? androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException)?.responseCode
+            // Media3 can wrap the HTTP exception in an IOException; inspect the full cause chain
+            // so definitive authentication/not-found errors do not waste retry budget.
+            val code = deepestHttpStatus(info.exception)
             return when (code) {
                 401, 404, 410 -> C.TIME_UNSET
                 else -> if (info.errorCount > MAX_LOAD_RETRIES) C.TIME_UNSET
@@ -1022,11 +1050,71 @@ class PlaybackController(
         const val MAX_RECOVERY_ROUNDS = 3
         const val FAST_START_MS = 1_500
         const val REBUFFER_MS = 2_000
+        const val LIVE_REBUFFER_MS = 5_000
         const val MAX_LOAD_RETRIES = 5
         const val MAX_NETWORK_RETRIES = 6
         const val LIVE_MIN_OFFSET_MS = 3_000L
         const val LIVE_MAX_OFFSET_MS = 30_000L
     }
+}
+
+/** Finds an HTTP error even when Media3 wraps it in one or more IO/loader exceptions. */
+private fun deepestHttpStatus(error: Throwable?): Int? {
+    var current = error
+    val seen = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<Throwable, Boolean>())
+    while (current != null && seen.add(current)) {
+        if (current is androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException) {
+            return current.responseCode
+        }
+        current = current.cause
+    }
+    return null
+}
+
+/**
+ * Selects the upstream or cache-backed source at open time. The decision is intentionally dynamic:
+ * one ExoPlayer/MediaSourceFactory is reused when the viewer changes channels, so the factory must
+ * not capture the kind of the first item it ever played.
+ */
+@OptIn(UnstableApi::class)
+private class CachePolicyDataSource(
+    private val directFactory: DataSource.Factory,
+    private val cachedFactory: DataSource.Factory,
+    private val shouldUseCache: () -> Boolean,
+) : DataSource {
+    private val listeners = mutableListOf<TransferListener>()
+    private var delegate: DataSource? = null
+
+    override fun addTransferListener(transferListener: TransferListener) {
+        if (listeners.none { it === transferListener }) listeners += transferListener
+        delegate?.addTransferListener(transferListener)
+    }
+
+    override fun open(dataSpec: DataSpec): Long {
+        close()
+        val source = (if (shouldUseCache()) cachedFactory else directFactory).createDataSource()
+        listeners.forEach(source::addTransferListener)
+        delegate = source
+        return try {
+            source.open(dataSpec)
+        } catch (e: IOException) {
+            runCatching { source.close() }
+            delegate = null
+            throw e
+        }
+    }
+
+    override fun read(buffer: ByteArray, offset: Int, length: Int): Int =
+        delegate?.read(buffer, offset, length) ?: -1
+
+    override fun close() {
+        val source = delegate
+        delegate = null
+        source?.close()
+    }
+
+    override fun getUri(): Uri? = delegate?.uri
+    override fun getResponseHeaders(): Map<String, List<String>> = delegate?.responseHeaders ?: emptyMap()
 }
 
 @OptIn(UnstableApi::class)
@@ -1085,7 +1173,7 @@ private class FailoverDataSource(
                 runCatching { source.close() }
                 val io = if (t is IOException) t else IOException(t)
                 lastError = io
-                val code = (t as? androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException)?.responseCode
+                val code = deepestHttpStatus(t)
                 // Auth/rate-limit answers are definitive for this request: let the player's User-Agent
                 // ladder handle them immediately instead of burning through every URL variant.
                 if (code == 401 || code == 403 || code == 406 || code == 429) throw io
