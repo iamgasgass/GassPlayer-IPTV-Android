@@ -1,6 +1,5 @@
 package com.gassplayer.android.ui
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -28,34 +27,24 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 private data class GlassPalette(
-    val fill: Color,
-    val border: Color,
     val content: Color
 )
 
 @Composable
 private fun glassPalette(darkSurface: Boolean, enabled: Boolean): GlassPalette {
-    val scheme = MaterialTheme.colorScheme
-    if (darkSurface) {
-        val content = Color.White.copy(alpha = if (enabled) 1f else 0.28f)
-        return GlassPalette(
-            fill = Color.White.copy(alpha = 0.11f),
-            border = Color.White.copy(alpha = 0.14f),
-            content = content
-        )
+    val content = if (darkSurface) {
+        Color.White.copy(alpha = if (enabled) 1f else 0.28f)
+    } else {
+        MaterialTheme.colorScheme.onSurface.copy(alpha = if (enabled) 1f else 0.38f)
     }
-    val content = scheme.onSurface.copy(alpha = if (enabled) 1f else 0.38f)
-    return GlassPalette(
-        fill = scheme.surfaceVariant.copy(alpha = if (enabled) 0.72f else 0.42f),
-        border = scheme.outline.copy(alpha = if (enabled) 0.34f else 0.18f),
-        content = content
-    )
+    return GlassPalette(content = content)
 }
 
 /**
- * Shared glass action used by the player and the rest of the app.
- * [darkSurface] keeps the original player control appearance over video;
- * dialogs and normal app surfaces use the selected Material theme by default.
+ * Transparent shared action used over video and throughout the app.
+ * The button intentionally draws no permanent fill, border, or elevation:
+ * this prevents the light translucent layer from obscuring the UI beneath it.
+ * Its content, click target, semantics, and normal press feedback remain active.
  */
 @Composable
 fun PlayerGlassButton(
@@ -72,12 +61,11 @@ fun PlayerGlassButton(
         enabled = enabled,
         modifier = Modifier
             .size(size)
-            .padding(horizontal = 2.dp)
             .semantics { role = Role.Button },
         shape = RoundedCornerShape(percent = 50),
-        color = palette.fill,
-        border = BorderStroke(1.dp, palette.border),
-        shadowElevation = 8.dp,
+        color = Color.Transparent,
+        shadowElevation = 0.dp,
+        tonalElevation = 0.dp,
         contentColor = palette.content
     ) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -86,7 +74,7 @@ fun PlayerGlassButton(
     }
 }
 
-/** Glass pill variant for labelled actions. */
+/** Labelled transparent action; the caller controls surrounding spacing. */
 @Composable
 fun PlayerGlassButton(
     modifier: Modifier = Modifier,
@@ -104,9 +92,9 @@ fun PlayerGlassButton(
             .widthIn(min = 44.dp)
             .semantics { role = Role.Button },
         shape = RoundedCornerShape(percent = 50),
-        color = palette.fill,
-        border = BorderStroke(1.dp, palette.border),
-        shadowElevation = 8.dp,
+        color = Color.Transparent,
+        shadowElevation = 0.dp,
+        tonalElevation = 0.dp,
         contentColor = palette.content
     ) {
         Row(
@@ -132,7 +120,7 @@ private fun PlayerGlassButtonContent(
     darkSurface = false
 )
 
-/** Compatibility shims: classic Material buttons now render through PlayerGlassButton. */
+/** Compatibility shims keep existing call sites and click behavior unchanged. */
 @Composable
 fun Button(
     onClick: () -> Unit,
@@ -181,9 +169,9 @@ fun IconButton(
             .size(44.dp)
             .semantics { role = Role.Button },
         shape = RoundedCornerShape(percent = 50),
-        color = palette.fill,
-        border = BorderStroke(1.dp, palette.border),
-        shadowElevation = 8.dp,
+        color = Color.Transparent,
+        shadowElevation = 0.dp,
+        tonalElevation = 0.dp,
         contentColor = palette.content
     ) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
