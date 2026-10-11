@@ -82,4 +82,12 @@ class RemoteNavigationTest {
         assertEquals("settings", destinationAfterRemoteBack("epg-manage", "settings"))
         assertNull(destinationAfterRemoteBack("home", "settings"))
     }
+
+    @Test
+    fun tvSearchRequiresExplicitActivationButTouchDevicesRemainEditable() {
+        assertEquals(false, searchInputCanFocus(isTelevision = true, inputActivated = false))
+        assertEquals(true, searchInputCanFocus(isTelevision = true, inputActivated = true))
+        assertEquals(true, searchInputCanFocus(isTelevision = false, inputActivated = false))
+        assertEquals(true, searchInputCanFocus(isTelevision = false, inputActivated = true))
+    }
 }

@@ -81,20 +81,44 @@ internal fun Modifier.remoteFocusOutline(
     enabled: Boolean = true,
     color: Color = Color(0xFF8CB7FF),
     strokeWidth: Dp = 2.dp,
+    includeDescendants: Boolean = false,
 ): Modifier = composed {
     var focused by remember { mutableStateOf(false) }
     this
-        .onFocusChanged { focused = it.isFocused }
+        .onFocusChanged { focused = it.isFocused || (includeDescendants && it.hasFocus) }
         .drawWithContent {
             drawContent()
             if (enabled && focused && size.width > 0f && size.height > 0f) {
-                val stroke = strokeWidth.toPx()
+                val stroke = strokeWidth.toPx().coerceAtLeast(1f)
                 val inset = stroke / 2f
+                val bounds = Size(
+                    (size.width - stroke).coerceAtLeast(0f),
+                    (size.height - stroke).coerceAtLeast(0f)
+                )
+                val radius = CornerRadius(cornerRadius.toPx())
+
+                // Three low-cost strokes create a crisp LiquidGlass focus with a soft halo,
+                // similar to the prominent Home > Personalizza state. The outline is drawn
+                // without changing measurement, layout, or the lazy-list item size.
+                drawRoundRect(
+                    color = color.copy(alpha = .16f),
+                    topLeft = Offset(inset, inset),
+                    size = bounds,
+                    cornerRadius = radius,
+                    style = Stroke(width = stroke * 3.1f),
+                )
+                drawRoundRect(
+                    color = color.copy(alpha = .48f),
+                    topLeft = Offset(inset, inset),
+                    size = bounds,
+                    cornerRadius = radius,
+                    style = Stroke(width = stroke * 1.75f),
+                )
                 drawRoundRect(
                     color = color,
                     topLeft = Offset(inset, inset),
-                    size = Size((size.width - stroke).coerceAtLeast(0f), (size.height - stroke).coerceAtLeast(0f)),
-                    cornerRadius = CornerRadius(cornerRadius.toPx()),
+                    size = bounds,
+                    cornerRadius = radius,
                     style = Stroke(width = stroke),
                 )
             }
@@ -130,6 +154,10 @@ internal fun navigationRailDestination(route: String): String = when (route) {
     "vpn", "parental", "diagnostics", "backup", "trakt", "downloads", "merged" -> "settings"
     else -> route
 }
+
+/** TV search input must not receive text/IME focus until the user activates the focused search shell. */
+internal fun searchInputCanFocus(isTelevision: Boolean, inputActivated: Boolean): Boolean =
+    !isTelevision || inputActivated
 
 /** Prefer the currently selected rail item, falling back to its first entry if stale. */
 internal fun selectedFocusIndex(ids: List<String>, selectedId: String): Int =

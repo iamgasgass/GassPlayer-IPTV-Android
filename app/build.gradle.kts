@@ -9,8 +9,8 @@ android {
     compileSdk = 37
     defaultConfig {
         applicationId = "com.gassgass.gassplayer"
-        // Navigation 2.10.2 requires API 24+. Fire OS 6 (API 25+) and later Android-based Fire TV devices remain supported.
-        minSdk = 24
+        // Match GassTV: API 23 (Android 6.0) for broader Android TV / Android-based Fire TV coverage.
+        minSdk = 23
         // Match GassTV’s tested target while compiling against the newer SDK needed by current dependencies.
         targetSdk = 35
         versionCode = 1000
@@ -49,14 +49,12 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.10.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.10.0")
-    implementation("androidx.navigation:navigation-compose:2.10.2")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
-    implementation("androidx.tv:tv-material:1.1.0")
-    implementation("androidx.tv:tv-foundation:1.0.0")
+    // UI navigation is implemented by GassPlayerNavHost route state; no Navigation Compose dependency.
     implementation("androidx.media3:media3-exoplayer:1.11.1")
     implementation("androidx.media3:media3-datasource-okhttp:1.11.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.11.1")

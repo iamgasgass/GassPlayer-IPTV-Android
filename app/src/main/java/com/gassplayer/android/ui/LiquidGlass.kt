@@ -28,15 +28,18 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.Key
@@ -57,6 +60,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * Backdrop for the Android port of iOS Liquid Glass. Android does not expose
@@ -204,39 +210,81 @@ fun EpgStyleSearchField(
     inputFocusRequester: FocusRequester? = null,
     onActivate: (() -> Unit)? = null,
 ) {
+    val context = LocalContext.current
+    val isTelevision = remember(context) { context.isTvOrFireTvDevice() }
+    val containerRequester = focusRequester ?: remember { FocusRequester() }
+    val defaultInputRequester = remember { FocusRequester() }
+    val editableRequester = inputFocusRequester ?: defaultInputRequester
+    val scope = rememberCoroutineScope()
     var containerFocused by remember { mutableStateOf(false) }
+    var containerDirectlyFocused by remember { mutableStateOf(false) }
+    var inputActivated by remember { mutableStateOf(false) }
+
+    // On TV the search field is a normal DPAD stop until OK/Enter is pressed.
+    // Only then is the BasicTextField focusable/editable, which prevents the IME from
+    // appearing merely because the user landed on the search bar while navigating.
+    fun activateInput() {
+        if (!isTelevision) {
+            onActivate?.invoke()
+            return
+        }
+        inputActivated = true
+        scope.launch {
+            // Let Compose apply focusProperties(canFocus = true) before requesting input focus.
+            delay(48L)
+            runCatching { editableRequester.requestFocus() }
+            onActivate?.invoke()
+        }
+    }
+
+    BackHandler(enabled = isTelevision && inputActivated) {
+        inputActivated = false
+        scope.launch {
+            delay(32L)
+            runCatching { containerRequester.requestFocus() }
+        }
+    }
+
     Row(
         modifier = modifier
             .height(50.dp)
             .clip(RoundedCornerShape(50))
-            .background(Color.White.copy(.09f))
+            .background(if (containerFocused) Color(0xFF8CB7FF).copy(.14f) else Color.White.copy(.09f))
             .border(
                 BorderStroke(
-                    if (containerFocused) 1.8.dp else 1.dp,
-                    if (containerFocused) Color(0xFF8CB7FF) else Color.White.copy(.12f)
+                    if (containerFocused) 2.2.dp else 1.dp,
+                    if (containerFocused) Color(0xFF9CC4FF) else Color.White.copy(.12f)
                 ),
                 RoundedCornerShape(50)
             )
             .padding(horizontal = 16.dp)
-            .then(focusRequester?.let { Modifier.focusRequester(it).focusable() } ?: Modifier)
+            .then(if (isTelevision || focusRequester != null) Modifier.focusRequester(containerRequester).focusable() else Modifier)
             .onFocusChanged {
+                containerDirectlyFocused = it.isFocused
                 containerFocused = it.isFocused || it.hasFocus
                 if (it.isFocused || it.hasFocus) onFocus?.invoke()
+                if (isTelevision && !it.isFocused && !it.hasFocus && inputActivated) inputActivated = false
             }
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) false
                 else when {
-                    event.key == Key.DirectionDown && onMoveDown != null -> {
-                        onMoveDown.invoke()
+                    event.key == Key.DirectionDown && onMoveDown != null && (containerDirectlyFocused || (isTelevision && inputActivated)) -> {
+                        val handled = onMoveDown.invoke()
+                        if (handled && isTelevision) inputActivated = false
+                        handled
+                    }
+                    isTelevision && containerDirectlyFocused && !inputActivated && (event.key == Key.DirectionCenter || event.key == Key.Enter) -> {
+                        activateInput()
                         true
                     }
-                    (event.key == Key.DirectionCenter || event.key == Key.Enter) && onActivate != null -> {
+                    !isTelevision && containerDirectlyFocused && (event.key == Key.DirectionCenter || event.key == Key.Enter) && onActivate != null -> {
                         onActivate.invoke()
                         true
                     }
                     else -> false
                 }
-            },
+            }
+            .remoteFocusOutline(cornerRadius = 50.dp, enabled = isTelevision, strokeWidth = 2.dp, includeDescendants = true),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(Icons.Default.Search, contentDescription = "Cerca", tint = glassForeground().copy(.6f), modifier = Modifier.size(20.dp))
@@ -245,6 +293,7 @@ fun EpgStyleSearchField(
             value = value,
             onValueChange = onValueChange,
             singleLine = true,
+            readOnly = isTelevision && !inputActivated,
             textStyle = TextStyle(color = glassForeground(), fontSize = 16.sp, fontFamily = FontFamily.SansSerif),
             cursorBrush = SolidColor(Color.White),
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false, imeAction = if (onSubmit == null) ImeAction.Done else ImeAction.Search),
@@ -253,12 +302,18 @@ fun EpgStyleSearchField(
                 onDone = { onSubmit?.invoke() }
             ),
             modifier = Modifier.weight(1f)
-                .then(inputFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
+                .focusRequester(editableRequester)
+                .focusProperties { canFocus = searchInputCanFocus(isTelevision, inputActivated) }
                 .onPreviewKeyEvent { event ->
-                    if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown && onMoveDown != null) {
-                        onMoveDown.invoke()
-                        true
-                    } else false
+                    if (event.type != KeyEventType.KeyDown) false
+                    else when {
+                        event.key == Key.DirectionDown && onMoveDown != null -> {
+                            val handled = onMoveDown.invoke()
+                            if (handled && isTelevision) inputActivated = false
+                            handled
+                        }
+                        else -> false
+                    }
                 }
                 .onFocusChanged { if (it.isFocused) onFocus?.invoke() },
             decorationBox = { inner ->
