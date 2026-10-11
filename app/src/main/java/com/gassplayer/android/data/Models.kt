@@ -121,8 +121,8 @@ data class AppSettings(
     val autoRotate360: Boolean = true,
     val ffmpegFilters: String = "",
     val ffmpegOptions: String = "",
-    val tmdbApiKey: String = "",
-    val omdbApiKey: String = "",
+    val tmdbApiKey: String = DEFAULT_TMDB_API_KEY,
+    val omdbApiKey: String = DEFAULT_OMDB_API_KEY,
     val traktClientId: String = "",
     val traktClientSecret: String = "",
     val openSubtitlesApiKey: String = "",
@@ -151,8 +151,14 @@ data class AppSettings(
     /** Bumped when library section defaults change, so upgrades can migrate only legacy layouts. */
     val librarySectionDefaultsVersion: Int = 2,
     /** 1 = TV defaults to software decoding. Absent in older saved JSON, which triggers a one-time migration. */
-    val decoderDefaultsVersion: Int = 1
+    val decoderDefaultsVersion: Int = 1,
+    /** 1 = default TMDB/OMDb keys applied. Absent in older saved JSON, which triggers a one-time fill of blank keys. */
+    val apiKeyDefaultsVersion: Int = 1
 )
+
+/** Default metadata API keys shipped with the app; a key entered by the user always takes precedence. */
+internal const val DEFAULT_TMDB_API_KEY = "8baba8ab6b8bbe247645bcae7df63d0d"
+internal const val DEFAULT_OMDB_API_KEY = "fa3a396f"
 
 /** Categorie TV is the default UI on Android TV and Android mobile alike. */
 @Suppress("UNUSED_PARAMETER")

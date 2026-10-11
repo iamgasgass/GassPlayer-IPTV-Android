@@ -79,6 +79,7 @@ import coil3.compose.AsyncImage
 import com.gassplayer.android.GassPlayerApplication
 import com.gassplayer.android.data.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -316,13 +317,22 @@ private fun AdaptiveShell(
     val railEntryRoutes = remember { setOf("live", "movies", "series") }
     // One controller per shell: Categorie TV rails register their "enter this section" handler here.
     val sectionEntry = remember { SectionEntryController() }
-    var sectionEntryInProgress by remember { mutableStateOf(false) }
+    // Number of side-navigation entries running (a counter, so a cancelled entry can never clear the
+    // flag of the one that replaced it).
+    var sectionEntriesInProgress by remember { mutableIntStateOf(0) }
+    // The automatic focus move currently running (side-navigation OK/RIGHT or a Home link). Any key press
+    // cancels it first, so a slow page can never pull focus away from the user afterwards.
+    var autoEntryJob by remember { mutableStateOf<Job?>(null) }
     // One focus-group requester per page route. requestFocus() on a group moves focus to its first
     // VISIBLE focusable child (top-left), so it always works, also after the page list was scrolled.
     val pageGroupRequesters = remember { HashMap<String, FocusRequester>() }
     fun pageGroupRequester(pageRoute: String): FocusRequester = pageGroupRequesters.getOrPut(pageRoute) { FocusRequester() }
     // Which page currently holds DPAD focus (null = side navigation / nothing).
     var focusedPageRoute by remember { mutableStateOf<String?>(null) }
+    // Counts DPAD/remote key presses inside the shell: a pending automatic focus move is abandoned as
+    // soon as the user presses a key, so it can never fight the user.
+    var userKeyNonce by remember { mutableIntStateOf(0) }
+    val currentShellRoute by rememberUpdatedState(route)
 
     // Puts DPAD focus INSIDE the page of [target], in one step. Order:
     //  1. Live TV / Film / Serie TV in "Categorie TV" mode: the selected group of the rail (opened if
@@ -333,14 +343,33 @@ private fun AdaptiveShell(
     //  4. The explicit route entry requester.
     suspend fun focusIntoPage(target: String, fromRail: Boolean): Boolean {
         if (target in railEntryRoutes) {
-            var handler = sectionEntry.handlerFor(target)
-            var frames = 0
-            while (handler == null && frames < 6) {
-                delay(16L)
-                frames++
-                handler = sectionEntry.handlerFor(target)
+            // The rail's groups are built in the background; on a large catalogue (first visit, slow
+            // Fire TV Stick) that can take several seconds. Keep waiting for the rail instead of giving up
+            // after a fixed time: the old 3 s fallback focused the first content element, which collapses
+            // the rail, so the section opened without its selected group. Stop only when focus is in the
+            // section, the user presses a key, the section changes, or after a 15 s safety cap.
+            val startKeys = userKeyNonce
+            val startedAt = System.nanoTime()
+            var lastHandlerAt = -1L
+            while (true) {
+                val handler = sectionEntry.handlerFor(target)
+                val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000L
+                if (handler != null) {
+                    lastHandlerAt = elapsedMs
+                    if (handler()) return true
+                }
+                if (focusedPageRoute == target) return true // the page focused its own element (e.g. Riproduci)
+                // The user pressed a key meanwhile: they are in control, do nothing more (true = stop here).
+                if (userKeyNonce != startKeys) return true
+                if (navigationRailDestination(currentShellRoute) != navigationRailDestination(target)) return false
+                val nowMs = (System.nanoTime() - startedAt) / 1_000_000L
+                // No rail on this page (another "UI Gruppi" style), or it went away (a detail sheet opened):
+                // continue with the generic entry below.
+                if (lastHandlerAt < 0L && nowMs >= 320L) break
+                if (lastHandlerAt >= 0L && handler == null && nowMs - lastHandlerAt >= 400L) break
+                if (nowMs >= 15_000L) break
+                delay(if (handler != null) 80L else 16L)
             }
-            if (handler != null && handler()) return true
         }
         if (focusedPageRoute == target) return true // the page already focused its own element (e.g. Riproduci)
         if (fromRail && focusManager.moveFocus(FocusDirection.Right)) {
@@ -358,8 +387,7 @@ private fun AdaptiveShell(
 
     // OK / RIGHT on a side-navigation tab: open it if needed, then enter its page with ONE key press.
     suspend fun enterSection(id: String) {
-        if (sectionEntryInProgress) return
-        sectionEntryInProgress = true
+        sectionEntriesInProgress++
         try {
             val owner = selectedTab == id
             if (!owner) {
@@ -368,7 +396,7 @@ private fun AdaptiveShell(
             }
             focusIntoPage(if (owner) route else id, fromRail = true)
         } finally {
-            sectionEntryInProgress = false
+            sectionEntriesInProgress--
         }
     }
     LaunchedEffect(tv) {
@@ -388,18 +416,20 @@ private fun AdaptiveShell(
             if (route !in mainNavigationRoutes || previous !in mainNavigationRoutes) {
                 delay(105L)
                 routeEntryFocusRequesters[route]?.requestFocusWithRetry(attempts = 6, delayMillis = 45L)
-            } else if (!railHasFocus && !sectionEntryInProgress) {
+            } else if (!railHasFocus && sectionEntriesInProgress == 0) {
                 // A main section was opened from page content (any Home link): the page that owned focus
                 // is now hidden. Move focus straight INTO the new section (its rail group or first visible
                 // element); the side tab is highlighted by the route. Fall back to the tab, never nowhere.
-                sectionEntryInProgress = true
-                try {
-                    if (!focusIntoPage(route, fromRail = false)) {
-                        navFocusRequesters[navigationRailDestination(route)]
+                // Runs as its own job so a key press can cancel it (see the shell's onPreviewKeyEvent).
+                val targetRoute = route
+                autoEntryJob?.cancel()
+                autoEntryJob = railScope.launch {
+                    if (!focusIntoPage(targetRoute, fromRail = false) &&
+                        navigationRailDestination(currentShellRoute) == navigationRailDestination(targetRoute)
+                    ) {
+                        navFocusRequesters[navigationRailDestination(targetRoute)]
                             ?.requestFocusWithRetry(attempts = 6, delayMillis = 40L)
                     }
-                } finally {
-                    sectionEntryInProgress = false
                 }
             }
         }
@@ -435,7 +465,21 @@ private fun AdaptiveShell(
     }
     CompositionLocalProvider(LocalSectionEntryController provides sectionEntry) {
     LiquidGlassBackdrop(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxSize().onFocusChanged { shellHasFocus = it.hasFocus }.focusGroup()) {
+        Row(
+            Modifier.fillMaxSize()
+                .onPreviewKeyEvent { event ->
+                    // Runs before any child handler: a new key press cancels a pending automatic focus
+                    // move first; a side-navigation OK/RIGHT then starts its own entry.
+                    if (event.type == KeyEventType.KeyDown) {
+                        userKeyNonce++
+                        autoEntryJob?.cancel()
+                        autoEntryJob = null
+                    }
+                    false
+                }
+                .onFocusChanged { shellHasFocus = it.hasFocus }
+                .focusGroup()
+        ) {
             CompositionLocalProvider(LocalFocusScopeEnabled provides pageFocusAllowed) {
             LiquidGlassSurface(
                 modifier = Modifier
@@ -476,7 +520,7 @@ private fun AdaptiveShell(
                                     if (tv && event.type == KeyEventType.KeyDown && enterKey) {
                                         // RIGHT and OK both enter the section THIS tab stands for (opening it if needed),
                                         // landing on the last focused element of that page, never on a stray page.
-                                        if (event.nativeKeyEvent.repeatCount == 0) railScope.launch { enterSection(id) }
+                                        if (event.nativeKeyEvent.repeatCount == 0) autoEntryJob = railScope.launch { enterSection(id) }
                                         true
                                     } else false
                                 }

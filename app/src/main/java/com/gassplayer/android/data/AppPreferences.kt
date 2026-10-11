@@ -86,6 +86,17 @@ class AppPreferences(private val context: Context) {
             value = value.copy(hardwareDecode = false, softwareDecode = true, decoderDefaultsVersion = 1)
         }
 
+        // Default TMDB / OMDb keys: fill only keys that are still blank in settings saved before the
+        // marker existed. Keys entered by the user are kept; later manual changes are stored with the marker.
+        val hasApiKeyDefaultsVersion = decodedSettings?.contains("\"apiKeyDefaultsVersion\"") == true
+        if (stored != null && !hasApiKeyDefaultsVersion) {
+            value = value.copy(
+                tmdbApiKey = value.tmdbApiKey.ifBlank { DEFAULT_TMDB_API_KEY },
+                omdbApiKey = value.omdbApiKey.ifBlank { DEFAULT_OMDB_API_KEY },
+                apiKeyDefaultsVersion = 1,
+            )
+        }
+
         // The previous app release shipped 15/90 seconds as factory defaults.
         // Migrate that exact old default pair so upgrades also receive the new 3/30 defaults.
         if (stored != null && value.minBufferSec == 15 && value.maxBufferSec == 90) {
