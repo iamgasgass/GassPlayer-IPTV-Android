@@ -32,6 +32,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -83,6 +88,20 @@ fun MovieDetailScreen(
     val currentWatch = watch.firstOrNull { it.contentId == item.id }
     val scope = rememberCoroutineScope()
     val scrollState = rememberLazyListState()
+    // The main "Riproduci" button always owns a requester (the shell's entry point when provided), so
+    // the close button can send DPAD DOWN straight to it.
+    val localPlayFocusRequester = remember { FocusRequester() }
+    val playFocusRequester = entryFocusRequester ?: localPlayFocusRequester
+    // X (close) -> DOWN: scroll the sheet back to the top if needed and focus the play button at once.
+    val focusPlayFromClose: () -> Boolean = {
+        scope.launch {
+            for (index in 0..2) {
+                runCatching { scrollState.scrollToItem(index) }
+                if (playFocusRequester.requestFocusWithRetry(attempts = 3, delayMillis = 30L)) break
+            }
+        }
+        true
+    }
     var meta by remember(item.id) { mutableStateOf<MetadataResult?>(null) }
     var ratings by remember(item.id) { mutableStateOf<Ratings?>(null) }
     var traktRating by remember(item.id) { mutableStateOf<Double?>(null) }
@@ -100,10 +119,10 @@ fun MovieDetailScreen(
     val topProgress = detailTopProgress(scrollState)
 
     // Every detail page has a deterministic first DPAD target, even when posters/metadata load later.
-    LaunchedEffect(item.id, entryFocusRequester, remoteFirstDevice) {
-        if (remoteFirstDevice && entryFocusRequester != null) {
+    LaunchedEffect(item.id, playFocusRequester, remoteFirstDevice) {
+        if (remoteFirstDevice) {
             delay(90L)
-            entryFocusRequester.requestFocusWithRetry(attempts = 6, delayMillis = 45L)
+            playFocusRequester.requestFocusWithRetry(attempts = 6, delayMillis = 45L)
         }
     }
 
@@ -142,7 +161,7 @@ fun MovieDetailScreen(
                     Button(
                         onClick = { onPlay(item, currentWatch?.positionMs ?: 0L) },
                         modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp)
-                            .then(entryFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
+                            .focusRequester(playFocusRequester)
                             .remoteFocusOutline(cornerRadius = 28.dp),
                         shape = RoundedCornerShape(28.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(.95f), contentColor = Color(0xFF111111))
@@ -241,7 +260,7 @@ fun MovieDetailScreen(
             }
             item { Spacer(Modifier.height(24.dp)) }
         }
-        MediaDetailScrollTopBar(title = meta?.title?.takeIf { it.isNotBlank() } ?: item.title, progress = topProgress, onClose = onBack)
+        MediaDetailScrollTopBar(title = meta?.title?.takeIf { it.isNotBlank() } ?: item.title, progress = topProgress, onClose = onBack, onMoveDown = focusPlayFromClose)
     }
 
     if (showAlternates) {
@@ -276,6 +295,20 @@ fun SeriesDetailScreen(
     val sourceConfigs by app.sources.sources.collectAsStateWithLifecycle(emptyList())
     val scope = rememberCoroutineScope()
     val scrollState = rememberLazyListState()
+    // The main "Riproduci" button always owns a requester (the shell's entry point when provided), so
+    // the close button can send DPAD DOWN straight to it.
+    val localPlayFocusRequester = remember { FocusRequester() }
+    val playFocusRequester = entryFocusRequester ?: localPlayFocusRequester
+    // X (close) -> DOWN: scroll the sheet back to the top if needed and focus the play button at once.
+    val focusPlayFromClose: () -> Boolean = {
+        scope.launch {
+            for (index in 0..2) {
+                runCatching { scrollState.scrollToItem(index) }
+                if (playFocusRequester.requestFocusWithRetry(attempts = 3, delayMillis = 30L)) break
+            }
+        }
+        true
+    }
     // Do not filter the entire disk-backed episode catalogue on the UI thread. The scoped repository
     // query below reads only this series' cached rows and refreshes that series in the background.
     var loadedEpisodes by remember(series.id) { mutableStateOf<List<MediaItem>>(emptyList()) }
@@ -290,10 +323,10 @@ fun SeriesDetailScreen(
     var season by remember(series.id) { mutableStateOf(0) }
     val seriesKey = series.id.substringAfterLast(':')
     val topProgress = detailTopProgress(scrollState)
-    LaunchedEffect(series.id, entryFocusRequester, remoteFirstDevice) {
-        if (remoteFirstDevice && entryFocusRequester != null) {
+    LaunchedEffect(series.id, playFocusRequester, remoteFirstDevice) {
+        if (remoteFirstDevice) {
             delay(90L)
-            entryFocusRequester.requestFocusWithRetry(attempts = 6, delayMillis = 45L)
+            playFocusRequester.requestFocusWithRetry(attempts = 6, delayMillis = 45L)
         }
     }
     val alternates = remember(allSeries, series.id, series.title, series.sourceId) {
@@ -361,7 +394,7 @@ fun SeriesDetailScreen(
                             else actionMessage = "Nessun episodio disponibile per questa serie."
                         },
                         modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp)
-                            .then(entryFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
+                            .focusRequester(playFocusRequester)
                             .remoteFocusOutline(cornerRadius = 28.dp),
                         shape = RoundedCornerShape(28.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(.95f), contentColor = Color(0xFF111111))
@@ -481,7 +514,7 @@ fun SeriesDetailScreen(
             }
             item { Spacer(Modifier.height(28.dp)) }
         }
-        MediaDetailScrollTopBar(title = meta?.title?.takeIf { it.isNotBlank() } ?: series.title, progress = topProgress, onClose = onBack)
+        MediaDetailScrollTopBar(title = meta?.title?.takeIf { it.isNotBlank() } ?: series.title, progress = topProgress, onClose = onBack, onMoveDown = focusPlayFromClose)
     }
 
     if (showAlternates) {
@@ -745,7 +778,7 @@ private fun formatEpisodeDate(value: String?): String? {
 }
 
 @Composable
-private fun MediaDetailScrollTopBar(title: String, progress: Float, onClose: () -> Unit) {
+private fun MediaDetailScrollTopBar(title: String, progress: Float, onClose: () -> Unit, onMoveDown: (() -> Boolean)? = null) {
     val alpha by animateFloatAsState(progress.coerceIn(0f, 1f), label = "media-detail-topbar-progress")
     val safeTop = WindowInsets.statusBars.getTop(LocalDensity.current).let { with(LocalDensity.current) { it.toDp() } }
     val rowHeight = 44.dp
@@ -774,7 +807,11 @@ private fun MediaDetailScrollTopBar(title: String, progress: Float, onClose: () 
         )
         Surface(
             onClick = onClose,
-            modifier = Modifier.align(Alignment.TopEnd).padding(top = safeTop).size(rowHeight).remoteFocusOutline(cornerRadius = 50.dp),
+            modifier = Modifier.align(Alignment.TopEnd).padding(top = safeTop).size(rowHeight)
+                .onPreviewKeyEvent { event ->
+                    event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown && onMoveDown?.invoke() == true
+                }
+                .remoteFocusOutline(cornerRadius = 50.dp),
             shape = CircleShape,
             color = Color.White.copy(.10f),
             border = BorderStroke(.7.dp, Color.White.copy(.27f))

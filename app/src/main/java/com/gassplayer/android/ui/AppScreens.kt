@@ -312,34 +312,54 @@ private fun AdaptiveShell(
     // One controller per shell: Categorie TV rails register their "enter this section" handler here.
     val sectionEntry = remember { SectionEntryController() }
     var sectionEntryInProgress by remember { mutableStateOf(false) }
-    // Moves DPAD focus from a tab into its page (OK / RIGHT on the side navigation).
-    //  1. Live TV / Film / Serie TV in "Categorie TV" mode: straight onto the selected group of the rail
-    //     (the rail opens itself if collapsed). A just-opened page needs a frame or two to register.
-    //  2. Every other page: spatial move into the page, where focusRestorer brings back the last
-    //     focused element (or the page entry point), then the explicit entry requester as last resort.
+    // One focus-group requester per page route. requestFocus() on a group moves focus to its first
+    // VISIBLE focusable child (top-left), so it always works, also after the page list was scrolled.
+    val pageGroupRequesters = remember { HashMap<String, FocusRequester>() }
+    fun pageGroupRequester(pageRoute: String): FocusRequester = pageGroupRequesters.getOrPut(pageRoute) { FocusRequester() }
+    // Which page currently holds DPAD focus (null = side navigation / nothing).
+    var focusedPageRoute by remember { mutableStateOf<String?>(null) }
+
+    // Puts DPAD focus INSIDE the page of [target], in one step. Order:
+    //  1. Live TV / Film / Serie TV in "Categorie TV" mode: the selected group of the rail (opened if
+    //     collapsed). A just-opened page needs a frame or two to register its handler.
+    //  2. From the side navigation only: spatial move RIGHT, where focusRestorer brings back the last
+    //     focused element of that page. Accepted only if focus really landed in [target].
+    //  3. The page focus group itself: first visible element of the page.
+    //  4. The explicit route entry requester.
+    suspend fun focusIntoPage(target: String, fromRail: Boolean): Boolean {
+        if (target in railEntryRoutes) {
+            var handler = sectionEntry.handlerFor(target)
+            var frames = 0
+            while (handler == null && frames < 6) {
+                delay(16L)
+                frames++
+                handler = sectionEntry.handlerFor(target)
+            }
+            if (handler != null && handler()) return true
+        }
+        if (fromRail && focusManager.moveFocus(FocusDirection.Right)) {
+            delay(34L) // focus callbacks are delivered at the end of the frame
+            if (focusedPageRoute == target) return true
+        }
+        for (attempt in 0 until 12) {
+            runCatching { pageGroupRequester(target).requestFocus() }
+            delay(34L)
+            if (focusedPageRoute == target) return true
+        }
+        return routeEntryFocusRequesters[target]?.requestFocusWithRetry(attempts = 4, delayMillis = 40L) ?: false
+    }
+
+    // OK / RIGHT on a side-navigation tab: open it if needed, then enter its page with ONE key press.
     suspend fun enterSection(id: String) {
         if (sectionEntryInProgress) return
         sectionEntryInProgress = true
         try {
             val owner = selectedTab == id
-            if (!owner) onRoute(id)
-            val targetRoute = if (owner) route else id
-            if (targetRoute in railEntryRoutes) {
-                var handler = sectionEntry.handlerFor(targetRoute)
-                var frames = 0
-                while (handler == null && frames < 10) {
-                    delay(16L)
-                    frames++
-                    handler = sectionEntry.handlerFor(targetRoute)
-                }
-                if (handler != null && handler()) return
+            if (!owner) {
+                onRoute(id)
+                delay(32L) // let the newly shown page attach its focus nodes
             }
-            delay(if (owner) 16L else 60L) // let a newly shown page become focusable
-            for (attempt in 0 until 10) {
-                if (focusManager.moveFocus(FocusDirection.Right)) return
-                delay(40L)
-            }
-            routeEntryFocusRequesters[targetRoute]?.requestFocusWithRetry(attempts = 4, delayMillis = 45L)
+            focusIntoPage(if (owner) route else id, fromRail = true)
         } finally {
             sectionEntryInProgress = false
         }
@@ -362,11 +382,18 @@ private fun AdaptiveShell(
                 delay(105L)
                 routeEntryFocusRequesters[route]?.requestFocusWithRetry(attempts = 6, delayMillis = 45L)
             } else if (!railHasFocus && !sectionEntryInProgress) {
-                // A main section was opened from page content (e.g. an OK on a Home card): the page that
-                // owned focus is now hidden, so select the matching tab in the side rail right away.
-                delay(40L)
-                navFocusRequesters[navigationRailDestination(route)]
-                    ?.requestFocusWithRetry(attempts = 6, delayMillis = 40L)
+                // A main section was opened from page content (any Home link): the page that owned focus
+                // is now hidden. Move focus straight INTO the new section (its rail group or first visible
+                // element); the side tab is highlighted by the route. Fall back to the tab, never nowhere.
+                sectionEntryInProgress = true
+                try {
+                    if (!focusIntoPage(route, fromRail = false)) {
+                        navFocusRequesters[navigationRailDestination(route)]
+                            ?.requestFocusWithRetry(attempts = 6, delayMillis = 40L)
+                    }
+                } finally {
+                    sectionEntryInProgress = false
+                }
             }
         }
     }
@@ -381,8 +408,11 @@ private fun AdaptiveShell(
             val navRoute = navigationRailDestination(route)
             val entry = routeEntryFocusRequesters[route] ?: routeEntryFocusRequesters[navRoute]
             val restored = entry?.requestFocusWithRetry(attempts = 8, delayMillis = 55L) ?: false
-            // The entry node may be absent (collapsed group rail, empty list): never leave focus lost.
-            if (!restored) navFocusRequesters[navRoute]?.requestFocusWithRetry(attempts = 6, delayMillis = 45L)
+            // The entry node may be absent (collapsed group rail, scrolled list): enter the page's first
+            // visible element instead, and only as a last resort park on the side tab. Never leave focus lost.
+            if (!restored && !focusIntoPage(route, fromRail = false)) {
+                navFocusRequesters[navRoute]?.requestFocusWithRetry(attempts = 6, delayMillis = 45L)
+            }
         }
     }
     // Focus recovery after ANY route change. When the focused node belongs to a page that has just
@@ -541,8 +571,17 @@ private fun AdaptiveShell(
                                     .fillMaxSize()
                                     .graphicsLayer { alpha = pageAlpha }
                                     .zIndex(if (active) 1f else 0f)
-                                    .focusProperties { canFocus = active && pageFocusAllowed }
-                                    .focusRestorer(routeEntryFocusRequesters[section] ?: FocusRequester.Default)
+                                    // Only ever set canFocus = false: assigning true here used to make the inner
+                                    // lists/rail containers themselves focusable, so the first OK/RIGHT landed on
+                                    // an invisible container and a second press was needed.
+                                    .focusProperties { if (!(active && pageFocusAllowed)) canFocus = false }
+                                    .onFocusChanged { state ->
+                                        if (state.hasFocus) focusedPageRoute = section
+                                        else if (focusedPageRoute == section) focusedPageRoute = null
+                                    }
+                                    .focusRequester(pageGroupRequester(section))
+                                    .focusRestorer()
+                                    .focusGroup()
                                     .pointerInput(active) {
                                         if (!active) {
                                             awaitPointerEventScope {
@@ -572,7 +611,17 @@ private fun AdaptiveShell(
                             label = "secondary-route-content",
                         ) { activeRoute ->
                             saveableStateHolder.SaveableStateProvider(activeRoute) {
-                                Box(Modifier.fillMaxSize().focusRestorer(routeEntryFocusRequesters[activeRoute] ?: FocusRequester.Default)) {
+                                Box(
+                                    Modifier
+                                        .fillMaxSize()
+                                        .onFocusChanged { state ->
+                                            if (state.hasFocus) focusedPageRoute = activeRoute
+                                            else if (focusedPageRoute == activeRoute) focusedPageRoute = null
+                                        }
+                                        .focusRequester(pageGroupRequester(activeRoute))
+                                        .focusRestorer()
+                                        .focusGroup()
+                                ) {
                                     CompositionLocalProvider(LocalFocusScopeEnabled provides pageFocusAllowed) {
                                         content(activeRoute, routeEntryFocusRequesters[activeRoute])
                                     }
