@@ -104,6 +104,8 @@ fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
     // Reused by Live TV and Guida so category/EPG switches keep the parsed timeline warm.
     val epgSession = remember(app) { EpgGridSession() }
     var playerItem by remember { mutableStateOf<MediaItem?>(null) }
+    // A Home trending title to open inside its own section (Film / Serie TV), consumed by that section.
+    var pendingSectionDetail by remember { mutableStateOf<MediaItem?>(null) }
     var managerSourceId by remember { mutableStateOf<String?>(null) }
     var epgManageReturnRoute by remember { mutableStateOf("settings") }
     val catalog by vm.catalog.collectAsStateWithLifecycle()
@@ -193,7 +195,8 @@ fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
         title = shellTitle,
         content = { activeRoute, entryFocusRequester ->
             when (activeRoute) {
-                "home" -> HomeScreen(vm, catalog, favorite, watch, sources, onRoute = { route = it }, onPlay = { playerItem = it }, entryFocusRequester = entryFocusRequester)
+                "home" -> HomeScreen(vm, catalog, favorite, watch, sources, onRoute = { route = it }, onPlay = { playerItem = it }, entryFocusRequester = entryFocusRequester,
+                    onOpenInSection = { item -> pendingSectionDetail = item; route = if (item.kind == MediaKind.SERIES) "series" else "movies" })
                 "live" -> if (settings.groupUIStyle == "categorie_tv") {
                     // The same session/index powers both Live TV and the standalone Guida screen.
                     EpgGridScreen(app, vm, epgSession, catalog?.live.orEmpty(), catalog?.liveCategories.orEmpty(), favorite, settings,
@@ -205,10 +208,12 @@ fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
                     entryFocusRequester = entryFocusRequester)
                 "movies" -> CatalogScreen("Film (VOD)", catalog?.movies.orEmpty(), catalog?.vodCategories.orEmpty(), favorite, parental, vm,
                     onPlay = { playerItem = it }, detail = true, scopeKey = "movies", onCustomize = { route = "movies-customize" }, isTelevision = tv,
-                    screenActive = activeRoute == contentRoute, entryFocusRequester = entryFocusRequester)
+                    screenActive = activeRoute == contentRoute, entryFocusRequester = entryFocusRequester,
+                    openRequest = pendingSectionDetail?.takeIf { it.kind == MediaKind.MOVIE }, onOpenRequestHandled = { pendingSectionDetail = null })
                 "series" -> SeriesScreen(catalog?.series.orEmpty(), catalog?.episodes.orEmpty(), catalog?.seriesCategories.orEmpty(), favorite, parental, vm,
                     onPlay = { playerItem = it }, onCustomize = { route = "series-customize" }, isTelevision = tv,
-                    screenActive = activeRoute == contentRoute, entryFocusRequester = entryFocusRequester)
+                    screenActive = activeRoute == contentRoute, entryFocusRequester = entryFocusRequester,
+                    openRequest = pendingSectionDetail?.takeIf { it.kind == MediaKind.SERIES }, onOpenRequestHandled = { pendingSectionDetail = null })
                 "epg" -> EpgGridScreen(app, vm, epgSession, catalog?.live.orEmpty(), catalog?.liveCategories.orEmpty(), favorite, settings,
                     onPlay = { playerItem = it }, playerActive = playerActive, screenActive = activeRoute == contentRoute,
                     entryFocusRequester = entryFocusRequester)
@@ -337,15 +342,17 @@ private fun AdaptiveShell(
             }
             if (handler != null && handler()) return true
         }
+        if (focusedPageRoute == target) return true // the page already focused its own element (e.g. Riproduci)
         if (fromRail && focusManager.moveFocus(FocusDirection.Right)) {
             delay(34L) // focus callbacks are delivered at the end of the frame
             if (focusedPageRoute == target) return true
         }
         for (attempt in 0 until 12) {
+            if (focusedPageRoute == target) return true
             runCatching { pageGroupRequester(target).requestFocus() }
             delay(34L)
-            if (focusedPageRoute == target) return true
         }
+        if (focusedPageRoute == target) return true
         return routeEntryFocusRequesters[target]?.requestFocusWithRetry(attempts = 4, delayMillis = 40L) ?: false
     }
 
@@ -580,7 +587,9 @@ private fun AdaptiveShell(
                                         else if (focusedPageRoute == section) focusedPageRoute = null
                                     }
                                     .focusRequester(pageGroupRequester(section))
-                                    .focusRestorer()
+                                    // No focusRestorer on these warm pages: Live TV / Film / Serie TV are entered
+                                    // on their rail's selected group. A restorer redirected that request to the last
+                                    // focused card, whose onFocus collapses the rail, and focus was lost.
                                     .focusGroup()
                                     .pointerInput(active) {
                                         if (!active) {
@@ -668,6 +677,7 @@ private fun HomeScreen(
     onRoute: (String) -> Unit,
     onPlay: (MediaItem) -> Unit,
     entryFocusRequester: FocusRequester? = null,
+    onOpenInSection: ((MediaItem) -> Unit)? = null,
 ) {
     val settings by vm.settings.collectAsStateWithLifecycle()
     val remoteFirstDevice = LocalContext.current.isTvOrFireTvDevice()
@@ -968,7 +978,8 @@ private fun HomeScreen(
                             else androidx.compose.foundation.lazy.LazyRow(modifier = Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 items(trendingSeries.take(16), key = { it.id }) { trend -> TrendingCard(trend, true, onClick = {
                                     val match = catalog?.series.orEmpty().firstOrNull { item -> item.title.matchesTrendTitle(trend.title) || (trend.originalTitle?.let { item.title.matchesTrendTitle(it) } == true) }
-                                    if (match != null) openLibraryItem(match) else trendingUnavailable = trend.title
+                                    // Open the title INSIDE its section (Film / Serie TV), focus on its play button.
+                                    if (match != null) { if (onOpenInSection != null) onOpenInSection(match) else openLibraryItem(match) } else trendingUnavailable = trend.title
                                 }) }
                             }
                         }
@@ -978,7 +989,8 @@ private fun HomeScreen(
                             else androidx.compose.foundation.lazy.LazyRow(modifier = Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 items(trendingMovies.take(16), key = { it.id }) { trend -> TrendingCard(trend, false, onClick = {
                                     val match = catalog?.movies.orEmpty().firstOrNull { item -> item.title.matchesTrendTitle(trend.title) || (trend.originalTitle?.let { item.title.matchesTrendTitle(it) } == true) }
-                                    if (match != null) openLibraryItem(match) else trendingUnavailable = trend.title
+                                    // Open the title INSIDE its section (Film / Serie TV), focus on its play button.
+                                    if (match != null) { if (onOpenInSection != null) onOpenInSection(match) else openLibraryItem(match) } else trendingUnavailable = trend.title
                                 }) }
                             }
                         }
@@ -1343,8 +1355,18 @@ private fun CatalogScreen(
     isTelevision: Boolean = false,
     screenActive: Boolean = true,
     entryFocusRequester: FocusRequester? = null,
+    openRequest: MediaItem? = null,
+    onOpenRequestHandled: () -> Unit = {},
 ) {
     var selected by remember { mutableStateOf<MediaItem?>(null) }
+    // A title opened from Home (trending) is shown here, inside its own section, as a detail sheet.
+    LaunchedEffect(openRequest, screenActive) {
+        val request = openRequest
+        if (request != null && screenActive) {
+            selected = request
+            onOpenRequestHandled()
+        }
+    }
     var filter by remember { mutableStateOf<String?>(null) }
     var searchQuery by remember(scopeKey) { mutableStateOf("") }
     var trending by remember { mutableStateOf<List<MetadataResult>>(emptyList()) }
@@ -1682,8 +1704,18 @@ private fun SeriesScreen(
     isTelevision: Boolean = false,
     screenActive: Boolean = true,
     entryFocusRequester: FocusRequester? = null,
+    openRequest: MediaItem? = null,
+    onOpenRequestHandled: () -> Unit = {},
 ) {
     var selected by remember { mutableStateOf<MediaItem?>(null) }
+    // A title opened from Home (trending) is shown here, inside its own section, as a detail sheet.
+    LaunchedEffect(openRequest, screenActive) {
+        val request = openRequest
+        if (request != null && screenActive) {
+            selected = request
+            onOpenRequestHandled()
+        }
+    }
     var filter by remember { mutableStateOf<String?>(null) }
     var searchQuery by remember { mutableStateOf("") }
     var trending by remember { mutableStateOf<List<MetadataResult>>(emptyList()) }

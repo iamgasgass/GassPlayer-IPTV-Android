@@ -112,7 +112,8 @@ internal fun TvCategoryRail(
     // and focuses it. Waits for options that are still being built on Dispatchers.IO on a slow Stick.
     suspend fun focusSelectedOption(): Boolean {
         var waited = 0
-        while ((currentOptions.isEmpty() || !currentContentVisible) && waited < 60) {
+        // Up to ~3 s: group counts over a large catalogue can take a while on a Fire TV Stick.
+        while ((currentOptions.isEmpty() || !currentContentVisible) && waited < 150) {
             delay(20L)
             waited++
         }
