@@ -774,7 +774,7 @@ private fun MediaDetailScrollTopBar(title: String, progress: Float, onClose: () 
         )
         Surface(
             onClick = onClose,
-            modifier = Modifier.align(Alignment.TopEnd).padding(top = safeTop).size(rowHeight).remoteFocusOutline(cornerRadius = 50.dp).focusable(),
+            modifier = Modifier.align(Alignment.TopEnd).padding(top = safeTop).size(rowHeight).remoteFocusOutline(cornerRadius = 50.dp),
             shape = CircleShape,
             color = Color.White.copy(.10f),
             border = BorderStroke(.7.dp, Color.White.copy(.27f))

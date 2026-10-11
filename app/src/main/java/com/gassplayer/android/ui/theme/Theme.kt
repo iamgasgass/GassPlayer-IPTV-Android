@@ -11,7 +11,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.unit.dp
 
 @Composable
-fun GassPlayerTheme(theme: String = "dark", content: @Composable () -> Unit) {
+fun GassPlayerTheme(theme: String = "system", content: @Composable () -> Unit) {
     val systemDark = isSystemInDarkTheme()
     val dark = when (theme) { "dark" -> true; "light" -> false; else -> systemDark }
     // True black (AMOLED-style) background; keep accents blue but remove blue tint

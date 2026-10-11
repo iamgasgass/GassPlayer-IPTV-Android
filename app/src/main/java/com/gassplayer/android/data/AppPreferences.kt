@@ -2,7 +2,6 @@ package com.gassplayer.android.data
 
 import android.content.Context
 import android.content.res.Configuration
-import android.os.Build
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
@@ -13,14 +12,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
 private val Context.gassDataStore by preferencesDataStore("gassplayer_preferences")
-
-private fun Context.isAmazonFireTvDeviceForDefaults(): Boolean {
-    if (!Build.MANUFACTURER.equals("Amazon", ignoreCase = true)) return false
-    return Build.MODEL.startsWith("AFT", ignoreCase = true) ||
-        Build.DEVICE.startsWith("AFT", ignoreCase = true) ||
-        Build.PRODUCT.startsWith("AFT", ignoreCase = true) ||
-        Build.MODEL.contains("Fire TV", ignoreCase = true)
-}
 
 class AppPreferences(private val context: Context) {
     private object Keys {
@@ -46,40 +37,21 @@ class AppPreferences(private val context: Context) {
             runCatching { JsonStore.json.decodeFromString<AppSettings>(decoded) }.getOrNull()
         }
         val isTelevision = (context.resources.configuration.uiMode and Configuration.UI_MODE_TYPE_MASK) == Configuration.UI_MODE_TYPE_TELEVISION
-        val isFireTv = context.isAmazonFireTvDeviceForDefaults()
-        var value = stored ?: AppSettings(groupUIStyle = defaultGroupUIStyle(isTelevision)).let { defaults ->
-            if (isFireTv) defaults.copy(hardwareDecode = false, softwareDecode = true) else defaults
-        }
-
-        // Migrate the legacy factory theme on upgrades as well as fresh installs. Once any settings
-        // are saved, the marker preserves an intentional later choice of "Sistema".
-        val hasThemeDefaultsVersion = decodedSettings?.contains("\"themeDefaultsVersion\"") == true
-        if (stored != null && !hasThemeDefaultsVersion) {
-            value = value.copy(
-                theme = if (stored.theme == "system") "dark" else stored.theme,
-                themeDefaultsVersion = 1
-            )
-        }
-
-        // Fire OS factory settings should prefer software decoding. Migrate only legacy settings
-        // lacking the marker and carrying the old hardware-default pair; a saved user choice wins.
-        val hasFireTvDecoderDefaultsVersion = decodedSettings?.contains("\"fireTvDecoderDefaultsVersion\"") == true
-        if (stored != null && !hasFireTvDecoderDefaultsVersion) {
-            val legacyHardwareDefault = isFireTv && stored.hardwareDecode && !stored.softwareDecode
-            value = value.copy(
-                hardwareDecode = if (legacyHardwareDefault) false else value.hardwareDecode,
-                softwareDecode = if (legacyHardwareDefault) true else value.softwareDecode,
-                fireTvDecoderDefaultsVersion = 1
-            )
-        }
+        // Fresh installs: dark theme (model default) and, on TV, software decoding by default.
+        val softwareByDefault = isTelevision || context.isTvOrFireTvDevice()
+        var value = stored ?: AppSettings(
+            groupUIStyle = defaultGroupUIStyle(isTelevision),
+            hardwareDecode = !softwareByDefault,
+            softwareDecode = softwareByDefault,
+        )
 
         // The previous mobile factory layout was Scorrevole and older settings had no marker to
         // distinguish that default from an old manual choice. Apply the new app-wide default to
         // unversioned mobile settings; preserve non-default styles and versioned user selections.
         val hasGroupUiDefaultsVersion = decodedSettings?.contains("\"groupUIStyleDefaultsVersion\"") == true
         if (stored != null && !hasGroupUiDefaultsVersion) {
-            value = value.copy(
-                groupUIStyle = migratedGroupUIStyle(value.groupUIStyle, isTelevision, hasGroupUiDefaultsVersion),
+            value = stored.copy(
+                groupUIStyle = migratedGroupUIStyle(stored.groupUIStyle, isTelevision, hasGroupUiDefaultsVersion),
                 groupUIStyleDefaultsVersion = 1,
             )
         }
@@ -96,6 +68,13 @@ class AppPreferences(private val context: Context) {
                 hiddenSeriesSections = migratedLegacyLibraryHiddenSections(stored.seriesSectionOrder, stored.hiddenSeriesSections, defaultSeriesSections),
                 librarySectionDefaultsVersion = 2
             )
+        }
+
+        // Android TV / Fire TV: software decoding is the factory default. Settings saved before this
+        // marker existed get it applied once; later manual choices are stored with the marker and kept.
+        val hasDecoderDefaultsVersion = decodedSettings?.contains("\"decoderDefaultsVersion\"") == true
+        if (stored != null && !hasDecoderDefaultsVersion && softwareByDefault) {
+            value = value.copy(hardwareDecode = false, softwareDecode = true, decoderDefaultsVersion = 1)
         }
 
         // The previous app release shipped 15/90 seconds as factory defaults.

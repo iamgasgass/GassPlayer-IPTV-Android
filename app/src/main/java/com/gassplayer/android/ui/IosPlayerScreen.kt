@@ -142,11 +142,9 @@ fun IosPlayerScreen(
     // Keep the host activity brightness intact after leaving the player.
     val originalWindowBrightness = remember { context.findActivity()?.window?.attributes?.screenBrightness ?: -1f }
     var hudTimerKey by remember(item.id) { mutableIntStateOf(0) }
-    // Every remote keypress restarts the controls timeout, even if showControls stays true.
-    var controlsActivityKey by remember(item.id) { mutableIntStateOf(0) }
-    var lastObservedControls by remember(item.id) { mutableStateOf(true) }
-    var lastObservedDialog by remember(item.id) { mutableStateOf<IosPlayerDialog?>(null) }
-    var lastObservedLiveCategoryRail by remember(item.id) { mutableStateOf(false) }
+    // Bumped on every remote key while the controls are visible, so the 4s auto-hide timer
+    // restarts instead of hiding the controls under the user's focus mid-navigation.
+    var controlsActivity by remember(item.id) { mutableIntStateOf(0) }
     val playerFocusRequester = remember(item.id) { FocusRequester() }
     // Like GassTV, LEFT opens the live channel browser while immersive. Keep its state
     // independent from item.id so zapping channels does not collapse the rail on every tune.
@@ -170,9 +168,12 @@ fun IosPlayerScreen(
         }
     }
 
-    LaunchedEffect(item.id, showLiveCategoryRail, remoteFirstDevice) {
+    LaunchedEffect(item.id, showLiveCategoryRail, remoteFirstDevice, showControls, dialog) {
         // Touch-first phones retain their native touch flow; deterministic DPAD focus applies to TV.
-        if (remoteFirstDevice && !showLiveCategoryRail) {
+        // Also runs when the controls fade out or a dialog closes: the focused node is removed from
+        // the tree then, and without this the remote would stop reaching the key handler. It cannot
+        // steal focus from a control, because controls are only visible after the root handled OK.
+        if (remoteFirstDevice && !showLiveCategoryRail && dialog == null) {
             delay(60L)
             playerFocusRequester.requestFocusWithRetry(attempts = 5, delayMillis = 45L)
         }
@@ -206,15 +207,15 @@ fun IosPlayerScreen(
     LaunchedEffect(item.id) {
         val savedEntries = app.watch.flow.first()
         val saved = savedEntries.firstOrNull { it.contentId == item.id }
-        // "Riprendi da" applies to on-demand content only. Live TV (including a live item
-        // opened from Home/Continue Watching) must always start as a live stream at position zero.
-        val resumableContent = item.kind.supportsResumePlayback()
-        val explicit = if (resumableContent) item.metadataTag
+        // "Riprendi da" is only for VOD and series: live TV has no meaningful position.
+        val resumeAllowed = item.kind != MediaKind.LIVE
+        val explicit = if (!resumeAllowed) null else item.metadataTag
             ?.removePrefix("resume:")
             ?.toLongOrNull()
-            ?.coerceAtLeast(0L) else null
+            ?.coerceAtLeast(0L)
         val savedResume = if (
-            resumableContent && settings.resumePlayback &&
+            resumeAllowed &&
+            settings.resumePlayback &&
             explicit == null &&
             saved != null &&
             saved.positionMs > 5_000L &&
@@ -227,7 +228,7 @@ fun IosPlayerScreen(
         app.playback.setSettings(settings)
         app.playback.play(
             item,
-            startPosition = if (resumableContent) explicit ?: 0L else 0L,
+            startPosition = explicit ?: 0L,
             autoPlay = savedResume == null
         )
         if (savedResume != null) app.playback.pause()
@@ -288,30 +289,10 @@ fun IosPlayerScreen(
         showVolumeHud = false
     }
 
-    LaunchedEffect(showControls, dialog, locked, snapshot.isBuffering, controlsActivityKey) {
+    LaunchedEffect(showControls, dialog, locked, snapshot.isBuffering, controlsActivity) {
         if (!showControls || dialog != null || locked) return@LaunchedEffect
-        // The activity key changes on every DPAD/media key. That cancels and restarts the
-        // countdown, preventing controls disappearing while the user is navigating them.
         delay(4_000L)
         showControls = false
-    }
-
-    LaunchedEffect(showControls, dialog, showLiveCategoryRail, remoteFirstDevice) {
-        val controlsJustClosed = lastObservedControls && !showControls
-        val dialogJustClosed = lastObservedDialog != null && dialog == null
-        val channelBrowserJustClosed = lastObservedLiveCategoryRail && !showLiveCategoryRail
-        lastObservedControls = showControls
-        lastObservedDialog = dialog
-        lastObservedLiveCategoryRail = showLiveCategoryRail
-        if (remoteFirstDevice && !showLiveCategoryRail && dialog == null &&
-            (controlsJustClosed || dialogJustClosed || channelBrowserJustClosed)
-        ) {
-            // Controls/dialog/browser contents may be disposed immediately after close. Restore
-            // the persistent player node only after recomposition has completed, so the remote
-            // always retains an active navigation target.
-            delay(75L)
-            playerFocusRequester.requestFocusWithRetry(attempts = 6, delayMillis = 45L)
-        }
     }
 
     LaunchedEffect(item.id, source?.id, item.kind, settings.epgAutoUpdateEnabled) {
@@ -364,8 +345,8 @@ fun IosPlayerScreen(
                         item.title,
                         item.kind,
                         item.streamUrl,
-                        position,
-                        duration,
+                        if (item.kind == MediaKind.LIVE) 0L else position,
+                        if (item.kind == MediaKind.LIVE) 0L else duration,
                         System.currentTimeMillis(),
                         item.seasonNumber,
                         item.episodeNumber
@@ -425,13 +406,8 @@ fun IosPlayerScreen(
             .focusRequester(playerFocusRequester)
             .focusable()
             .onPreviewKeyEvent { event ->
-                if (event.type == KeyEventType.KeyDown) {
-                    controlsActivityKey++
-                    // A key press wakes hidden controls but does not steal focus from an open
-                    // dialog or the Live TV channel browser.
-                    if (!locked && dialog == null && !showLiveCategoryRail) showControls = true
-                }
                 if (event.type != KeyEventType.KeyDown || locked || dialog != null) return@onPreviewKeyEvent false
+                if (showControls) controlsActivity++
                 // When the channel browser is visible, let its focused lists consume the DPAD,
                 // but keep hardware/media play-pause available on remotes that expose those keys.
                 if (showLiveCategoryRail && item.kind == MediaKind.LIVE) {
@@ -739,7 +715,8 @@ fun IosPlayerScreen(
                 onClick = { locked = false; showControls = true },
                 modifier = Modifier
                     .align(Alignment.BottomStart)
-                    .padding(24.dp).remoteFocusOutline(cornerRadius = 18.dp),
+                    .padding(24.dp)
+                    .remoteFocusOutline(cornerRadius = 18.dp),
                 shape = RoundedCornerShape(18.dp),
                 color = Color.Black.copy(.58f),
                 border = BorderStroke(1.dp, Color.White.copy(.14f))
@@ -1350,7 +1327,8 @@ private fun PlayerControlsOverlay(
                     value = progress.position.coerceIn(0L, snapshot.duration).toFloat(),
                     onValueChange = { onSeek(it.toLong()) },
                     valueRange = 0f..snapshot.duration.toFloat(),
-                    modifier = Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 50.dp))
+                    modifier = Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 50.dp, includeDescendants = true)
+                )
             }
 
             Row(Modifier.focusGroup(), verticalAlignment = Alignment.CenterVertically) {
@@ -1831,7 +1809,8 @@ private fun SettingDelay(
                 onValueChange = { draft = it },
                 valueRange = range.first.toFloat()..range.last.toFloat(),
                 steps = ((range.last - range.first) / step - 1).coerceAtLeast(0),
-                onValueChangeFinished = { onChange(draft.roundToInt().coerceIn(range.first, range.last)) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp))
+                onValueChangeFinished = { onChange(draft.roundToInt().coerceIn(range.first, range.last)) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp, includeDescendants = true)
+            )
         }
     }
 }
@@ -1847,7 +1826,7 @@ private fun SettingOption(
     Box {
         Surface(
             onClick = { expanded = true },
-            modifier = Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 18.dp),
+            modifier = Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 14.dp),
             color = MaterialTheme.colorScheme.surfaceVariant.copy(.60f),
             shape = RoundedCornerShape(14.dp),
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(.20f))
@@ -1866,7 +1845,8 @@ private fun SettingOption(
                 DropdownMenuItem(
                     text = { Text(option) },
                     onClick = { expanded = false; onSelected(option) },
-                    trailingIcon = { if (option == current) Icon(Icons.Default.Check, null) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 10.dp))
+                    trailingIcon = { if (option == current) Icon(Icons.Default.Check, null) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true)
+                )
             }
         }
     }
@@ -1901,7 +1881,7 @@ private fun SettingSwitch(title: String, checked: Boolean, onChange: (Boolean) -
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(title, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
-        Switch(checked = checked, onCheckedChange = onChange, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp))
+        Switch(checked = checked, onCheckedChange = onChange, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp, includeDescendants = true))
     }
 }
 

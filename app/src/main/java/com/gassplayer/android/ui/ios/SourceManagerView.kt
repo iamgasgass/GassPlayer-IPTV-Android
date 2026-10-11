@@ -86,7 +86,8 @@ fun SourceManagerView(
                                 app.sources.toggle(source.id, enabled)
                                 vm.refresh(false)
                             }
-                        }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp))
+                        }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp, includeDescendants = true)
+                    )
                     PlayerGlassButton(
                         icon = Icons.Default.Delete,
                         contentDescription = "Elimina sorgente",
