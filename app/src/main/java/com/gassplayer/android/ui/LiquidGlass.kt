@@ -235,7 +235,7 @@ fun EpgStyleSearchField(
 
     BackHandler(enabled = remoteFirstDevice && editing) {
         // The hardware/OS Back key leaves text-edit mode but keeps the search bar selected.
-        finishEditing(submit = false)
+        finishEditing(false)
     }
 
     // On TV, the search bar itself is the first focus target. Only OK makes the editable
@@ -317,8 +317,8 @@ fun EpgStyleSearchField(
             cursorBrush = SolidColor(Color.White),
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false, imeAction = if (onSubmit == null) ImeAction.Done else ImeAction.Search),
             keyboardActions = KeyboardActions(
-                onSearch = { finishEditing(submit = true) },
-                onDone = { finishEditing(submit = true) }
+                onSearch = { finishEditing(true) },
+                onDone = { finishEditing(true) }
             ),
             modifier = Modifier.weight(1f)
                 .focusProperties { canFocus = !remoteFirstDevice || editing }
@@ -328,11 +328,11 @@ fun EpgStyleSearchField(
                     when {
                         event.key == Key.DirectionDown && onMoveDown != null -> onMoveDown.invoke()
                         remoteFirstDevice && editing && (event.key == Key.Back || event.key == Key.Escape) -> {
-                            finishEditing(submit = false)
+                            finishEditing(false)
                             true
                         }
                         remoteFirstDevice && editing && (event.key == Key.Enter || event.key == Key.DirectionCenter) -> {
-                            finishEditing(submit = true)
+                            finishEditing(true)
                             true
                         }
                         else -> false
