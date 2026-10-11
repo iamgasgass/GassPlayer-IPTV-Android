@@ -82,4 +82,20 @@ class RemoteNavigationTest {
         assertEquals("settings", destinationAfterRemoteBack("epg-manage", "settings"))
         assertNull(destinationAfterRemoteBack("home", "settings"))
     }
+
+    @Test
+    fun sectionEntryHandlersAreScopedToTheirRouteAndOnlyRemovedByTheirOwner() {
+        val controller = SectionEntryController()
+        val live: suspend () -> Boolean = { true }
+        val stale: suspend () -> Boolean = { false }
+        assertNull(controller.handlerFor("live"))
+        controller.register("live", live)
+        assertEquals(live, controller.handlerFor("live"))
+        assertNull(controller.handlerFor("movies"))
+        // A disposed rail must not unregister the handler of the rail that replaced it.
+        controller.unregister("live", stale)
+        assertEquals(live, controller.handlerFor("live"))
+        controller.unregister("live", live)
+        assertNull(controller.handlerFor("live"))
+    }
 }

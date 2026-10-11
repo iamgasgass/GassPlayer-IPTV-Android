@@ -610,6 +610,8 @@ internal fun EpgGridScreen(
                 options = tvRailOptions,
                 selectedId = selectedTvRailId,
                 expanded = categoryRailExpanded,
+                entryRoute = "live",
+                onRequestExpand = { categoryRailExpanded = true },
                 entryFocusRequester = entryFocusRequester,
                 onSelect = { id ->
                     favoritesOnly = id == TV_CATEGORY_FAVORITES
@@ -933,6 +935,8 @@ internal fun EpgGridScreen(
             options = tvRailOptions,
             selectedId = selectedTvRailId,
             expanded = categoryRailExpanded,
+            entryRoute = "live",
+            onRequestExpand = { categoryRailExpanded = true },
             expandedWidth = mobileRailWidth,
             modifier = Modifier.align(Alignment.CenterStart).zIndex(30f),
             onSelect = { id ->

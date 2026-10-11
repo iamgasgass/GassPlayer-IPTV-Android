@@ -308,18 +308,41 @@ private fun AdaptiveShell(
             "downloads", "merged", "trakt", "vpn", "parental", "diagnostics", "backup", "epg-manage", "source-manager"
         ).associateWith { FocusRequester() }
     }
-    // Moves DPAD focus from a tab into its page. Each page restores its previously focused element
-    // (focusRestorer) and falls back to its entry node; if that node was scrolled out of a lazy list
-    // the spatial search still lands on the nearest visible element of the page.
+    val railEntryRoutes = remember { setOf("live", "movies", "series") }
+    // One controller per shell: Categorie TV rails register their "enter this section" handler here.
+    val sectionEntry = remember { SectionEntryController() }
+    var sectionEntryInProgress by remember { mutableStateOf(false) }
+    // Moves DPAD focus from a tab into its page (OK / RIGHT on the side navigation).
+    //  1. Live TV / Film / Serie TV in "Categorie TV" mode: straight onto the selected group of the rail
+    //     (the rail opens itself if collapsed). A just-opened page needs a frame or two to register.
+    //  2. Every other page: spatial move into the page, where focusRestorer brings back the last
+    //     focused element (or the page entry point), then the explicit entry requester as last resort.
     suspend fun enterSection(id: String) {
-        val owner = selectedTab == id
-        if (!owner) { onRoute(id); delay(220L) } else delay(30L)
-        val entry = routeEntryFocusRequesters[if (owner) route else id]
-        for (attempt in 0 until 10) {
-            if (focusManager.moveFocus(FocusDirection.Right)) return
-            if (attempt < 9) delay(55L)
+        if (sectionEntryInProgress) return
+        sectionEntryInProgress = true
+        try {
+            val owner = selectedTab == id
+            if (!owner) onRoute(id)
+            val targetRoute = if (owner) route else id
+            if (targetRoute in railEntryRoutes) {
+                var handler = sectionEntry.handlerFor(targetRoute)
+                var frames = 0
+                while (handler == null && frames < 10) {
+                    delay(16L)
+                    frames++
+                    handler = sectionEntry.handlerFor(targetRoute)
+                }
+                if (handler != null && handler()) return
+            }
+            delay(if (owner) 16L else 60L) // let a newly shown page become focusable
+            for (attempt in 0 until 10) {
+                if (focusManager.moveFocus(FocusDirection.Right)) return
+                delay(40L)
+            }
+            routeEntryFocusRequesters[targetRoute]?.requestFocusWithRetry(attempts = 4, delayMillis = 45L)
+        } finally {
+            sectionEntryInProgress = false
         }
-        entry?.requestFocusWithRetry(attempts = 4, delayMillis = 55L)
     }
     LaunchedEffect(tv) {
         if (tv) {
@@ -338,7 +361,7 @@ private fun AdaptiveShell(
             if (route !in mainNavigationRoutes || previous !in mainNavigationRoutes) {
                 delay(105L)
                 routeEntryFocusRequesters[route]?.requestFocusWithRetry(attempts = 6, delayMillis = 45L)
-            } else if (!railHasFocus) {
+            } else if (!railHasFocus && !sectionEntryInProgress) {
                 // A main section was opened from page content (e.g. an OK on a Home card): the page that
                 // owned focus is now hidden, so select the matching tab in the side rail right away.
                 delay(40L)
@@ -373,6 +396,7 @@ private fun AdaptiveShell(
             navFocusRequesters[navigationRailDestination(route)]?.requestFocusWithRetry(attempts = 6, delayMillis = 45L)
         }
     }
+    CompositionLocalProvider(LocalSectionEntryController provides sectionEntry) {
     LiquidGlassBackdrop(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxSize().onFocusChanged { shellHasFocus = it.hasFocus }.focusGroup()) {
             CompositionLocalProvider(LocalFocusScopeEnabled provides pageFocusAllowed) {
@@ -562,6 +586,7 @@ private fun AdaptiveShell(
             }
         }
     }
+    } // LocalSectionEntryController
 }
 
 private fun navIcon(id: String) = when(id) { "home" -> Icons.Default.Home; "live" -> Icons.Default.LiveTv; "movies" -> Icons.Default.Movie; "series" -> Icons.Default.Tv; "epg" -> Icons.Default.CalendarMonth; "search" -> Icons.Default.Search; "sources" -> Icons.Default.SettingsInputAntenna; else -> Icons.Default.Settings }
@@ -1394,6 +1419,8 @@ private fun CatalogScreen(
                 options = railOptions,
                 selectedId = selectedRailId,
                 expanded = categoryRailExpanded,
+                entryRoute = scopeKey,
+                onRequestExpand = { categoryRailExpanded = true },
                 onSelect = { id ->
                     filter = when (id) { TV_CATEGORY_ALL -> null; TV_CATEGORY_FAVORITES -> TV_CATEGORY_FAVORITES; else -> id }
                     searchQuery = ""
@@ -1570,6 +1597,8 @@ private fun CatalogScreen(
             options = railOptions,
             selectedId = selectedRailId,
             expanded = categoryRailExpanded,
+            entryRoute = scopeKey,
+            onRequestExpand = { categoryRailExpanded = true },
             expandedWidth = mobileRailWidth,
             modifier = Modifier.align(Alignment.CenterStart).zIndex(30f),
             entryFocusRequester = entryFocusRequester,
@@ -1737,6 +1766,8 @@ private fun SeriesScreen(
                 options = railOptions,
                 selectedId = selectedRailId,
                 expanded = categoryRailExpanded,
+                entryRoute = "series",
+                onRequestExpand = { categoryRailExpanded = true },
                 onSelect = { id ->
                     filter = when (id) { TV_CATEGORY_ALL -> null; else -> id }
                     searchQuery = ""
@@ -1903,6 +1934,8 @@ private fun SeriesScreen(
             options = railOptions,
             selectedId = selectedRailId,
             expanded = categoryRailExpanded,
+            entryRoute = "series",
+            onRequestExpand = { categoryRailExpanded = true },
             expandedWidth = mobileRailWidth,
             modifier = Modifier.align(Alignment.CenterStart).zIndex(30f),
             entryFocusRequester = entryFocusRequester,

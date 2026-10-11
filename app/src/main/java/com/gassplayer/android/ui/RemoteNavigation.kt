@@ -16,7 +16,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -83,6 +87,36 @@ internal fun isAmazonFireTvBuild(
  * that was not visible.
  */
 internal val LocalFocusScopeEnabled = compositionLocalOf { true }
+
+/**
+ * Deterministic "enter this section" hooks. A page that owns a preferred DPAD landing point (the
+ * Categorie TV group rail of Live TV / Film / Serie TV) registers a handler for its route; the side
+ * navigation calls it on OK / RIGHT instead of relying on spatial search or the last focused child.
+ * A handler returns true when it actually moved focus into its page.
+ */
+internal class SectionEntryController {
+    private val handlers = HashMap<String, suspend () -> Boolean>()
+    fun handlerFor(route: String): (suspend () -> Boolean)? = handlers[route]
+    fun register(route: String, handler: suspend () -> Boolean) { handlers[route] = handler }
+    fun unregister(route: String, handler: suspend () -> Boolean) {
+        if (handlers[route] === handler) handlers.remove(route)
+    }
+}
+
+internal val LocalSectionEntryController = staticCompositionLocalOf { SectionEntryController() }
+
+/** Registers [handler] as the entry point of [route] while composed; a null route registers nothing. */
+@Composable
+internal fun RegisterSectionEntry(route: String?, handler: suspend () -> Boolean) {
+    val controller = LocalSectionEntryController.current
+    val latest by rememberUpdatedState(handler)
+    DisposableEffect(controller, route) {
+        if (route == null) return@DisposableEffect onDispose { }
+        val registered: suspend () -> Boolean = { latest() }
+        controller.register(route, registered)
+        onDispose { controller.unregister(route, registered) }
+    }
+}
 
 /** Makes the next focus target on this node unfocusable while its page is hidden. Place it BEFORE the target. */
 internal fun Modifier.pageFocusGuard(): Modifier = composed {

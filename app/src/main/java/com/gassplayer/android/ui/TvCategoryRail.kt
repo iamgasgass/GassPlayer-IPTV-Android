@@ -40,6 +40,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -86,6 +87,10 @@ internal fun TvCategoryRail(
     expandedWidth: Dp = 236.dp,
     entryFocusRequester: FocusRequester? = null,
     onMoveRight: (() -> Boolean)? = null,
+    /** Route whose side-navigation OK/RIGHT must land on this rail's selected group. */
+    entryRoute: String? = null,
+    /** Asks the owning page to open the rail when it is collapsed. */
+    onRequestExpand: (() -> Unit)? = null,
 ) {
     val width by animateDpAsState(if (expanded) expandedWidth else 0.dp, label = "tv-category-rail-width")
     val state = rememberLazyListState()
@@ -97,27 +102,46 @@ internal fun TvCategoryRail(
     val targetFocusId = options.firstOrNull { it.id == selectedId }?.id ?: options.firstOrNull()?.id
     var previousExpanded by remember { mutableStateOf(expanded) }
     var previousTargetId by remember { mutableStateOf(targetFocusId) }
-    var selectedTargetFocused by remember { mutableStateOf(false) }
-    LaunchedEffect(expanded, selectedId, options, remoteFirstDevice) {
+    var railHasFocus by remember { mutableStateOf(false) }
+    val currentOptions by rememberUpdatedState(options)
+    val currentSelectedId by rememberUpdatedState(selectedId)
+    val currentTarget by rememberUpdatedState(targetFocusRequester)
+    val currentContentVisible by rememberUpdatedState(width > 1.dp)
+
+    // Scrolls the lazy rail to the selected group (so its row, which owns the requester, is composed)
+    // and focuses it. Waits for options that are still being built on Dispatchers.IO on a slow Stick.
+    suspend fun focusSelectedOption(): Boolean {
+        var waited = 0
+        while ((currentOptions.isEmpty() || !currentContentVisible) && waited < 60) {
+            delay(20L)
+            waited++
+        }
+        val opts = currentOptions
+        if (opts.isEmpty() || !currentContentVisible) return false
+        val index = selectedFocusIndex(opts.map { it.id }, currentSelectedId).coerceIn(0, opts.lastIndex)
+        runCatching { state.scrollToItem(index) }
+        return currentTarget.requestFocusWithRetry(attempts = 10, delayMillis = 32L)
+    }
+
+    // Side navigation OK / RIGHT on this section: open the rail if needed and land on the selected group.
+    RegisterSectionEntry(if (remoteFirstDevice) entryRoute else null) {
+        onRequestExpand?.invoke() // idempotent: the page only sets its "expanded" flag to true
+        focusSelectedOption()
+    }
+
+    LaunchedEffect(expanded, targetFocusId, remoteFirstDevice) {
         val wasJustExpanded = expanded && !previousExpanded
         val selectedTargetChanged = targetFocusId != previousTargetId
         previousExpanded = expanded
         previousTargetId = targetFocusId
-        if (!expanded) {
-            selectedTargetFocused = false
-            return@LaunchedEffect
-        }
-        // The same rail is available on phones too; touch navigation must not move focus
-        // automatically. DPAD focus restoration is specific to Android TV / Fire TV.
-        if (!remoteFirstDevice) return@LaunchedEffect
-        // Options can arrive after the rail is opened on a slow Stick. A changing selected category
-        // also changes which lazy row owns the entry requester, so restore focus to that row again.
-        if ((wasJustExpanded || selectedTargetChanged || !selectedTargetFocused) && options.isNotEmpty()) {
-            val selectedIndex = selectedFocusIndex(options.map { it.id }, selectedId)
-                .coerceIn(0, options.lastIndex)
-            runCatching { state.scrollToItem(selectedIndex) }
-            delay(70L)
-            selectedTargetFocused = targetFocusRequester.requestFocusWithRetry(attempts = 5, delayMillis = 45L)
+        // Touch phones keep their native flow; DPAD focus restoration is specific to Android TV / Fire TV.
+        if (!expanded || !remoteFirstDevice) return@LaunchedEffect
+        // Move focus ONLY when the user is working with this rail: it was just opened from the content
+        // (LEFT / Back / closing a detail), or the selected row changed while the rail holds focus.
+        // Never on first composition or when the options are rebuilt: that used to steal focus from the
+        // side navigation when a section was opened from Home or merely refreshed in the background.
+        if (wasJustExpanded || (selectedTargetChanged && railHasFocus)) {
+            focusSelectedOption()
         }
     }
 
@@ -126,6 +150,7 @@ internal fun TvCategoryRail(
             .width(width)
             .fillMaxHeight()
             .clipToBounds()
+            .onFocusChanged { railHasFocus = it.hasFocus }
     ) {
         if (width > 1.dp) {
             LiquidGlassSurface(
