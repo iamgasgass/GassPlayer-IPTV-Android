@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -37,6 +38,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.Key
@@ -54,6 +56,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
@@ -204,7 +207,21 @@ fun EpgStyleSearchField(
     inputFocusRequester: FocusRequester? = null,
     onActivate: (() -> Unit)? = null,
 ) {
+    // On TV the search capsule is the DPAD target. The editable text node stays out of
+    // focus traversal until OK is pressed, so landing on a search bar never summons the IME.
+    val isTelevision = LocalContext.current.isTvOrFireTvDevice()
+    val editorFocusRequester = inputFocusRequester ?: remember { FocusRequester() }
     var containerFocused by remember { mutableStateOf(false) }
+    var inputEditing by remember { mutableStateOf(false) }
+    var editorFocused by remember { mutableStateOf(false) }
+
+    LaunchedEffect(inputEditing, isTelevision, editorFocusRequester) {
+        if (isTelevision && inputEditing) {
+            // Wait for focusProperties(canFocus=true) to be applied before requesting the editor.
+            editorFocusRequester.requestFocusWithRetry(attempts = 8, delayMillis = 35L)
+        }
+    }
+
     Row(
         modifier = modifier
             .height(50.dp)
@@ -218,7 +235,9 @@ fun EpgStyleSearchField(
                 RoundedCornerShape(50)
             )
             .padding(horizontal = 16.dp)
-            .then(focusRequester?.let { Modifier.focusRequester(it).focusable() } ?: Modifier)
+            .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
+            // Do not make touch-first phones stop on an extra container focus target.
+            .then(if (isTelevision) Modifier.focusable() else Modifier)
             .onFocusChanged {
                 containerFocused = it.isFocused || it.hasFocus
                 if (it.isFocused || it.hasFocus) onFocus?.invoke()
@@ -230,8 +249,12 @@ fun EpgStyleSearchField(
                         onMoveDown.invoke()
                         true
                     }
-                    (event.key == Key.DirectionCenter || event.key == Key.Enter) && onActivate != null -> {
-                        onActivate.invoke()
+                    isTelevision && !inputEditing &&
+                        (event.key == Key.DirectionCenter || event.key == Key.Enter) -> {
+                        inputEditing = true
+                        // Preserve caller-specific activation; the retry above handles requests
+                        // made before Compose has applied the editor's new focusability.
+                        onActivate?.invoke()
                         true
                     }
                     else -> false
@@ -253,14 +276,26 @@ fun EpgStyleSearchField(
                 onDone = { onSubmit?.invoke() }
             ),
             modifier = Modifier.weight(1f)
-                .then(inputFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
+                .focusRequester(editorFocusRequester)
+                .focusProperties { canFocus = !isTelevision || inputEditing }
                 .onPreviewKeyEvent { event ->
                     if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown && onMoveDown != null) {
                         onMoveDown.invoke()
                         true
                     } else false
                 }
-                .onFocusChanged { if (it.isFocused) onFocus?.invoke() },
+                .onFocusChanged {
+                    val wasEditorFocused = editorFocused
+                    editorFocused = it.isFocused
+                    if (it.isFocused) {
+                        inputEditing = true
+                        onFocus?.invoke()
+                    } else if (isTelevision && wasEditorFocused) {
+                        // Re-entering the bar with DPAD starts in navigation mode again.
+                        // Ignore the initial unfocused callback when the field is first composed.
+                        inputEditing = false
+                    }
+                },
             decorationBox = { inner ->
                 Box {
                     if (value.isEmpty()) Text(placeholder, color = glassForeground().copy(.55f), fontSize = 16.sp, fontFamily = FontFamily.SansSerif, maxLines = 1, overflow = TextOverflow.Ellipsis)

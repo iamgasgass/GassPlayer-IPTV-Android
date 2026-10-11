@@ -997,6 +997,8 @@ private fun MediaCard(
             .then(additionalFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
             .graphicsLayer { scaleX = scale; scaleY = scale }
             .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus?.invoke() }
+            // Use the same high-contrast DPAD outline as the Home "Personalizza" action.
+            .remoteFocusOutline(cornerRadius = 18.dp)
             .combinedClickable(
                 interactionSource = null,
                 indication = androidx.compose.foundation.LocalIndication.current,
@@ -1005,7 +1007,9 @@ private fun MediaCard(
             ),
         shape = RoundedCornerShape(18.dp),
         color = Color.Transparent,
-        border = BorderStroke(if (focused) 1.25.dp else .55.dp, glassForeground(if (focused) .42f else .15f))
+        // Keep the card outline understated at rest; remoteFocusOutline supplies the selected
+        // blue highlight so cards, chips and other TV controls share a consistent focus language.
+        border = BorderStroke(.55.dp, glassForeground(.15f))
     ) {
         LiquidGlassSurface(modifier = Modifier.fillMaxWidth(), cornerRadius = 18.dp, contentPadding = 0.dp, highlighted = focused) {
             Column {
