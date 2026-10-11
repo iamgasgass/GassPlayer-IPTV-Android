@@ -148,7 +148,7 @@ fun SourcesView(
                 }
                 DropdownMenu(expanded = sortExpanded, onDismissRequest = { sortExpanded = false }) {
                     listOf("Personalizzato", "Nome (A–Z)", "Tipo").forEach { mode ->
-                        DropdownMenuItem(text = { Text(mode) }, onClick = { sortMode = mode; sortExpanded = false }, trailingIcon = { if (sortMode == mode) Icon(Icons.Default.CheckCircle, null) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true))
+                        DropdownMenuItem(text = { Text(mode) }, onClick = { sortMode = mode; sortExpanded = false }, trailingIcon = { if (sortMode == mode) Icon(Icons.Default.CheckCircle, null) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 10.dp))
                     }
                 }
             }
@@ -190,13 +190,13 @@ fun SourcesView(
                         Box {
                             IconButton(onClick = { sourceMenuTarget = source }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp)) { Icon(Icons.Default.MoreVert, "Azioni sorgente", tint = glassForeground(.78f)) }
                             DropdownMenu(expanded = sourceMenuTarget?.id == source.id, onDismissRequest = { sourceMenuTarget = null }) {
-                                DropdownMenuItem(text = { Text("Imposta attiva") }, leadingIcon = { Icon(Icons.Default.CheckCircle, null) }, onClick = { sourceMenuTarget = null; vm.setActive(source.id) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true))
-                                DropdownMenuItem(text = { Text(if (source.isPinned) "Rimuovi pin" else "Fissa in alto") }, leadingIcon = { Icon(Icons.Default.PushPin, null) }, onClick = { sourceMenuTarget = null; scope.launch { app.sources.pin(source.id, !source.isPinned); vm.refresh(false) } }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true))
-                                DropdownMenuItem(text = { Text("Rinomina") }, leadingIcon = { Icon(Icons.Default.Edit, null) }, onClick = { renameName = source.name; renameTarget = source; sourceMenuTarget = null }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true))
-                                DropdownMenuItem(text = { Text("Duplica") }, leadingIcon = { Icon(Icons.Default.ContentCopy, null) }, onClick = { sourceMenuTarget = null; scope.launch { app.sources.duplicate(source.id); vm.refresh(false) } }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true))
-                                DropdownMenuItem(text = { Text("Verifica connessione") }, leadingIcon = { Icon(Icons.Default.Shield, null) }, onClick = { sourceMenuTarget = null; verifyingId = source.id; scope.launch { val result = app.sources.verify(source); vm.refresh(false); feedback = result.fold({ "${source.name}: connessione riuscita (${it} elementi)." }, { "${source.name}: ${it.message ?: "verifica non riuscita"}" }); verifyingId = null } }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true))
-                                DropdownMenuItem(text = { Text("Gestisci…") }, leadingIcon = { Icon(Icons.Default.Settings, null) }, onClick = { sourceMenuTarget = null; onManage(source) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true))
-                                DropdownMenuItem(text = { Text("Elimina") }, leadingIcon = { Icon(Icons.Default.Delete, null, tint = Color(0xFFFF8791)) }, onClick = { deleteTarget = source; sourceMenuTarget = null }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true))
+                                DropdownMenuItem(text = { Text("Imposta attiva") }, leadingIcon = { Icon(Icons.Default.CheckCircle, null) }, onClick = { sourceMenuTarget = null; vm.setActive(source.id) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 10.dp))
+                                DropdownMenuItem(text = { Text(if (source.isPinned) "Rimuovi pin" else "Fissa in alto") }, leadingIcon = { Icon(Icons.Default.PushPin, null) }, onClick = { sourceMenuTarget = null; scope.launch { app.sources.pin(source.id, !source.isPinned); vm.refresh(false) } }, modifier = Modifier.remoteFocusOutline(cornerRadius = 10.dp))
+                                DropdownMenuItem(text = { Text("Rinomina") }, leadingIcon = { Icon(Icons.Default.Edit, null) }, onClick = { renameName = source.name; renameTarget = source; sourceMenuTarget = null }, modifier = Modifier.remoteFocusOutline(cornerRadius = 10.dp))
+                                DropdownMenuItem(text = { Text("Duplica") }, leadingIcon = { Icon(Icons.Default.ContentCopy, null) }, onClick = { sourceMenuTarget = null; scope.launch { app.sources.duplicate(source.id); vm.refresh(false) } }, modifier = Modifier.remoteFocusOutline(cornerRadius = 10.dp))
+                                DropdownMenuItem(text = { Text("Verifica connessione") }, leadingIcon = { Icon(Icons.Default.Shield, null) }, onClick = { sourceMenuTarget = null; verifyingId = source.id; scope.launch { val result = app.sources.verify(source); vm.refresh(false); feedback = result.fold({ "${source.name}: connessione riuscita (${it} elementi)." }, { "${source.name}: ${it.message ?: "verifica non riuscita"}" }); verifyingId = null } }, modifier = Modifier.remoteFocusOutline(cornerRadius = 10.dp))
+                                DropdownMenuItem(text = { Text("Gestisci…") }, leadingIcon = { Icon(Icons.Default.Settings, null) }, onClick = { sourceMenuTarget = null; onManage(source) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 10.dp))
+                                DropdownMenuItem(text = { Text("Elimina") }, leadingIcon = { Icon(Icons.Default.Delete, null, tint = Color(0xFFFF8791)) }, onClick = { deleteTarget = source; sourceMenuTarget = null }, modifier = Modifier.remoteFocusOutline(cornerRadius = 10.dp))
                             }
                         }
                     }
@@ -215,7 +215,7 @@ fun SourcesView(
                                 }
                                 vm.refresh(true)
                             }
-                        }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp, includeDescendants = true))
+                        }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp))
                         TextButton(onClick = { vm.setActive(source.id) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp)) { Text(if (activeId == source.id) "Attiva" else "Usa", color = if (activeId == source.id) SourcesGreen else SourcesBlue) }
                     }
                     if (verifyingId == source.id) LinearProgressIndicator(Modifier.fillMaxWidth(), color = SourcesBlue, trackColor = Color.White.copy(.1f))
@@ -277,7 +277,7 @@ fun SourcesView(
         AlertDialog(
             onDismissRequest = { renameTarget = null },
             title = { Text("Rinomina sorgente") },
-            text = { OutlinedTextField(renameName, { renameName = it }, singleLine = true, label = { Text("Nome") }, modifier = Modifier.remoteFocusOutline(cornerRadius = 14.dp, includeDescendants = true)) },
+            text = { OutlinedTextField(renameName, { renameName = it }, singleLine = true, label = { Text("Nome") }, modifier = Modifier.remoteFocusOutline(cornerRadius = 12.dp)) },
             confirmButton = { TextButton(onClick = { val s = renameTarget ?: return@TextButton; scope.launch { app.sources.rename(s.id, renameName); vm.refresh(false); renameTarget = null } }, enabled = renameName.isNotBlank()) { Text("Salva") } },
             dismissButton = { TextButton(onClick = { renameTarget = null }) { Text("Annulla") } }
         )
@@ -298,10 +298,10 @@ fun SourcesView(
             title = { Text("Crea playlist unita") },
             text = {
                 Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(mergedName, { mergedName = it }, modifier = Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 14.dp, includeDescendants = true), singleLine = true, label = { Text("Nome playlist") })
+                    OutlinedTextField(mergedName, { mergedName = it }, modifier = Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 12.dp), singleLine = true, label = { Text("Nome playlist") })
                     sources.forEach { source ->
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Checkbox(checked = source.id in selectedMergeIds, onCheckedChange = { checked -> selectedMergeIds = if (checked) selectedMergeIds + source.id else selectedMergeIds - source.id }, modifier = Modifier.remoteFocusOutline(cornerRadius = 6.dp, includeDescendants = true))
+                            Checkbox(checked = source.id in selectedMergeIds, onCheckedChange = { checked -> selectedMergeIds = if (checked) selectedMergeIds + source.id else selectedMergeIds - source.id }, modifier = Modifier.remoteFocusOutline(cornerRadius = 6.dp))
                             Column(Modifier.weight(1f)) { Text(source.name); Text(source.type.name, color = SourcesMuted, fontSize = 11.sp) }
                         }
                     }
@@ -316,7 +316,7 @@ fun SourcesView(
         AlertDialog(
             onDismissRequest = { importDialog = false },
             title = { Text("Importa backup JSON") },
-            text = { OutlinedTextField(importJson, { importJson = it }, modifier = Modifier.fillMaxWidth().heightIn(min = 150.dp, max = 360.dp).remoteFocusOutline(cornerRadius = 14.dp, includeDescendants = true), label = { Text("JSON") }, placeholder = { Text("Incolla qui il backup") }) },
+            text = { OutlinedTextField(importJson, { importJson = it }, modifier = Modifier.fillMaxWidth().heightIn(min = 150.dp, max = 360.dp).remoteFocusOutline(cornerRadius = 12.dp), label = { Text("JSON") }, placeholder = { Text("Incolla qui il backup") }) },
             confirmButton = { TextButton(enabled = importJson.isNotBlank(), onClick = { scope.launch { val result = runCatching { app.backup.importAny(importJson) }; if (result.isSuccess) { vm.refresh(true); feedback = "Backup importato correttamente."; importDialog = false } else feedback = "Importazione non riuscita: ${result.exceptionOrNull()?.message}" } }) { Text("Importa") } },
             dismissButton = { TextButton(onClick = { importDialog = false }) { Text("Annulla") } }
         )
@@ -325,7 +325,7 @@ fun SourcesView(
         AlertDialog(
             onDismissRequest = { exportJson = null },
             title = { Text("Backup sorgenti") },
-            text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { Text("Copia il contenuto JSON per salvarlo in un luogo sicuro.", fontSize = 12.sp); OutlinedTextField(json, {}, modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp).remoteFocusOutline(cornerRadius = 14.dp, includeDescendants = true), readOnly = true) } },
+            text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { Text("Copia il contenuto JSON per salvarlo in un luogo sicuro.", fontSize = 12.sp); OutlinedTextField(json, {}, modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp).remoteFocusOutline(cornerRadius = 12.dp), readOnly = true) } },
             confirmButton = { TextButton(onClick = { exportJson = null }) { Text("Chiudi") } },
             dismissButton = { TextButton(onClick = { clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(json)); feedback = "Backup copiato negli appunti." }) { Text("Copia") } }
         )
@@ -589,10 +589,10 @@ private fun SourceManageView(
         title = { Text("Unisci sorgenti") },
         text = {
             Column(Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(mergedSourceName, { mergedSourceName = it }, modifier = Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 14.dp, includeDescendants = true), singleLine = true, label = { Text("Nome playlist unita") })
+                OutlinedTextField(mergedSourceName, { mergedSourceName = it }, modifier = Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 12.dp), singleLine = true, label = { Text("Nome playlist unita") })
                 sources.forEach { other ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(checked = other.id in selectedMergeSources, onCheckedChange = { checked -> selectedMergeSources = if (checked) selectedMergeSources + other.id else selectedMergeSources - other.id }, modifier = Modifier.remoteFocusOutline(cornerRadius = 6.dp, includeDescendants = true))
+                        Checkbox(checked = other.id in selectedMergeSources, onCheckedChange = { checked -> selectedMergeSources = if (checked) selectedMergeSources + other.id else selectedMergeSources - other.id }, modifier = Modifier.remoteFocusOutline(cornerRadius = 6.dp))
                         Column(Modifier.weight(1f)) { Text(other.name, color = glassForeground()); Text(other.type.name, color = SourcesMuted, fontSize = 11.sp) }
                     }
                 }
@@ -604,7 +604,7 @@ private fun SourceManageView(
     sourceExportJson?.let { json -> AlertDialog(
         onDismissRequest = { sourceExportJson = null },
         title = { Text("Backup ${current.name}") },
-        text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { Text("Il JSON può contenere credenziali. Conservalo in un luogo sicuro.", color = SourcesMuted, fontSize = 12.sp); OutlinedTextField(json, {}, modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp).remoteFocusOutline(cornerRadius = 14.dp, includeDescendants = true), readOnly = true) } },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { Text("Il JSON può contenere credenziali. Conservalo in un luogo sicuro.", color = SourcesMuted, fontSize = 12.sp); OutlinedTextField(json, {}, modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp).remoteFocusOutline(cornerRadius = 12.dp), readOnly = true) } },
         confirmButton = { TextButton(onClick = { sourceExportJson = null }) { Text("Chiudi") } },
         dismissButton = { TextButton(onClick = { clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(json)); feedback = "Backup copiato negli appunti." }) { Text("Copia") } }
     ) }
@@ -630,13 +630,13 @@ private fun SourceEditDialog(source: MediaSourceConfig, onDismiss: () -> Unit, o
         title = { Text("Modifica dettagli") },
         text = {
             Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                OutlinedTextField(name, { name = it }, modifier = Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 14.dp, includeDescendants = true), singleLine = true, label = { Text("Nome") })
-                OutlinedTextField(host, { host = it }, modifier = Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 14.dp, includeDescendants = true), singleLine = true, label = { Text(if (source.type == SourceType.M3U8) "URL playlist" else "Server / URL") })
+                OutlinedTextField(name, { name = it }, modifier = Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 12.dp), singleLine = true, label = { Text("Nome") })
+                OutlinedTextField(host, { host = it }, modifier = Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 12.dp), singleLine = true, label = { Text(if (source.type == SourceType.M3U8) "URL playlist" else "Server / URL") })
                 if (source.type == SourceType.XTREAM) {
-                    OutlinedTextField(username, { username = it }, modifier = Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 14.dp, includeDescendants = true), singleLine = true, label = { Text("Username") })
-                    OutlinedTextField(password, { password = it }, modifier = Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 14.dp, includeDescendants = true), singleLine = true, visualTransformation = PasswordVisualTransformation(), label = { Text("Password") })
+                    OutlinedTextField(username, { username = it }, modifier = Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 12.dp), singleLine = true, label = { Text("Username") })
+                    OutlinedTextField(password, { password = it }, modifier = Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 12.dp), singleLine = true, visualTransformation = PasswordVisualTransformation(), label = { Text("Password") })
                 }
-                Row(verticalAlignment = Alignment.CenterVertically) { Text("Sorgente abilitata", modifier = Modifier.weight(1f)); Switch(enabled, { enabled = it }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp, includeDescendants = true)) }
+                Row(verticalAlignment = Alignment.CenterVertically) { Text("Sorgente abilitata", modifier = Modifier.weight(1f)); Switch(enabled, { enabled = it }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp)) }
             }
         },
         confirmButton = { TextButton(enabled = name.isNotBlank() && host.isNotBlank(), onClick = { onSave(source.copy(name = name.trim(), host = host.trim(), playlistUrl = if (source.type == SourceType.M3U8) host.trim() else source.playlistUrl, username = username.trim().takeIf { it.isNotBlank() }, password = password.takeIf { it.isNotBlank() }, isEnabled = enabled)) }) { Text("Salva") } },

@@ -27,6 +27,7 @@ import com.gassplayer.android.GassPlayerApplication
 import com.gassplayer.android.data.MediaSourceConfig
 import com.gassplayer.android.ui.MainViewModel
 import com.gassplayer.android.ui.PlayerGlassButton
+import com.gassplayer.android.ui.remoteFocusOutline
 import kotlinx.coroutines.launch
 
 @Composable
@@ -85,8 +86,7 @@ fun SourceManagerView(
                                 app.sources.toggle(source.id, enabled)
                                 vm.refresh(false)
                             }
-                        }
-                    )
+                        }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp))
                     PlayerGlassButton(
                         icon = Icons.Default.Delete,
                         contentDescription = "Elimina sorgente",

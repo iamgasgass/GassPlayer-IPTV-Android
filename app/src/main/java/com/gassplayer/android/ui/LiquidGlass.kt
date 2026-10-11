@@ -34,7 +34,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -63,7 +62,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.launch
 
 /**
  * Backdrop for the Android port of iOS Liquid Glass. Android does not expose
@@ -221,27 +219,29 @@ fun EpgStyleSearchField(
     var containerFocused by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf(false) }
     var inputPreviouslyFocused by remember { mutableStateOf(false) }
-    val searchScope = rememberCoroutineScope()
+    var restoreContainerFocus by remember { mutableStateOf(false) }
 
-    // Leave text-entry mode and hand DPAD focus back to the search bar itself. Focus is moved to
-    // the container BEFORE the editable node becomes non-focusable, otherwise Compose would clear
-    // focus and the remote would "lose" the cursor until the next key press.
-    fun finishEditing() {
-        if (!remoteFirstDevice) return
-        searchScope.launch {
-            containerTarget.requestFocusWithRetry(attempts = 3, delayMillis = 30L)
+    val finishEditing: (submit: Boolean) -> Unit = { submit ->
+        if (submit) onSubmit?.invoke()
+        if (remoteFirstDevice) {
+            // Turn off edit mode before returning focus so the TextField becomes non-focusable
+            // again. The effect below waits for recomposition before targeting the outer pill.
+            inputPreviouslyFocused = false
             editing = false
+            restoreContainerFocus = true
             keyboardController?.hide()
         }
     }
 
-    // First Back closes the IME (handled by the system); the next Back returns to the DPAD state.
-    BackHandler(enabled = remoteFirstDevice && editing) { finishEditing() }
+    BackHandler(enabled = remoteFirstDevice && editing) {
+        // The hardware/OS Back key leaves text-edit mode but keeps the search bar selected.
+        finishEditing(submit = false)
+    }
 
     // On TV, the search bar itself is the first focus target. Only OK makes the editable
     // text node focusable, which prevents Android/Fire TV IME from appearing while browsing.
     // Retrying after recomposition also handles slower Fire TV focus-node attachment.
-    LaunchedEffect(remoteFirstDevice, editing, inputTarget) {
+    LaunchedEffect(remoteFirstDevice, editing, inputTarget, restoreContainerFocus) {
         if (remoteFirstDevice && editing) {
             kotlinx.coroutines.delay(40L)
             val acquired = inputTarget.requestFocusWithRetry(attempts = 6, delayMillis = 45L)
@@ -249,31 +249,20 @@ fun EpgStyleSearchField(
                 keyboardController?.show()
             } else {
                 editing = false
-                containerTarget.requestFocusWithRetry(attempts = 3, delayMillis = 45L)
+                restoreContainerFocus = true
             }
+        } else if (remoteFirstDevice && restoreContainerFocus) {
+            kotlinx.coroutines.delay(50L)
+            containerTarget.requestFocusWithRetry(attempts = 6, delayMillis = 45L)
+            restoreContainerFocus = false
         }
     }
 
     Row(
         modifier = modifier
             .height(50.dp)
-            // IMPORTANT: onFocusChanged / outline must sit BEFORE focusable(): a focus-event
-            // modifier only observes the focus target that follows it in the chain. Previously
-            // they were placed after it, so on TV the bar showed no focus until editing started.
-            .onFocusChanged {
-                containerFocused = it.isFocused || it.hasFocus
-                if (containerFocused) onFocus?.invoke()
-            }
-            .remoteFocusOutline(cornerRadius = 25.dp, enabled = remoteFirstDevice, includeDescendants = true)
-            .then(
-                when {
-                    remoteFirstDevice -> Modifier.focusRequester(containerTarget).focusable()
-                    focusRequester != null -> Modifier.focusRequester(focusRequester).focusable()
-                    else -> Modifier
-                }
-            )
             .clip(RoundedCornerShape(50))
-            .background(if (containerFocused) Color(0xFF8CB7FF).copy(.14f) else Color.White.copy(.09f))
+            .background(Color.White.copy(.09f))
             .border(
                 BorderStroke(
                     if (containerFocused) 1.8.dp else 1.dp,
@@ -281,12 +270,28 @@ fun EpgStyleSearchField(
                 ),
                 RoundedCornerShape(50)
             )
+            // Put the focus outline outside the inner padding so it frames the whole search pill,
+            // matching the Home "Personalizza" focus ring on Android TV/Fire TV.
+            .remoteFocusOutline(cornerRadius = 50.dp, enabled = remoteFirstDevice)
+            .padding(horizontal = 16.dp)
+            .then(
+                when {
+                    remoteFirstDevice -> Modifier.focusRequester(containerTarget).focusable()
+                    focusRequester != null -> Modifier.focusRequester(focusRequester).focusable()
+                    else -> Modifier
+                }
+            )
+            .onFocusChanged {
+                containerFocused = it.isFocused || it.hasFocus
+                if (containerFocused) onFocus?.invoke()
+            }
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) {
                     false
                 } else when {
                     event.key == Key.DirectionDown && onMoveDown != null -> onMoveDown.invoke()
                     (event.key == Key.DirectionCenter || event.key == Key.Enter) && remoteFirstDevice && !editing -> {
+                        restoreContainerFocus = false
                         editing = true
                         // Keep optional caller hooks for compatibility, but the input requester
                         // below owns the actual focus hand-off after the editable node is enabled.
@@ -299,8 +304,7 @@ fun EpgStyleSearchField(
                     }
                     else -> false
                 }
-            }
-            .padding(horizontal = 16.dp),
+            },
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(Icons.Default.Search, contentDescription = "Cerca", tint = glassForeground().copy(.6f), modifier = Modifier.size(20.dp))
@@ -313,16 +317,26 @@ fun EpgStyleSearchField(
             cursorBrush = SolidColor(Color.White),
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false, imeAction = if (onSubmit == null) ImeAction.Done else ImeAction.Search),
             keyboardActions = KeyboardActions(
-                onSearch = { onSubmit?.invoke(); finishEditing() },
-                onDone = { onSubmit?.invoke(); finishEditing() }
+                onSearch = { finishEditing(submit = true) },
+                onDone = { finishEditing(submit = true) }
             ),
             modifier = Modifier.weight(1f)
                 .focusProperties { canFocus = !remoteFirstDevice || editing }
                 .focusRequester(inputTarget)
                 .onPreviewKeyEvent { event ->
-                    if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown && onMoveDown != null) {
-                        onMoveDown.invoke()
-                    } else false
+                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    when {
+                        event.key == Key.DirectionDown && onMoveDown != null -> onMoveDown.invoke()
+                        remoteFirstDevice && editing && (event.key == Key.Back || event.key == Key.Escape) -> {
+                            finishEditing(submit = false)
+                            true
+                        }
+                        remoteFirstDevice && editing && (event.key == Key.Enter || event.key == Key.DirectionCenter) -> {
+                            finishEditing(submit = true)
+                            true
+                        }
+                        else -> false
+                    }
                 }
                 .onFocusChanged {
                     if (it.isFocused) {
@@ -330,7 +344,10 @@ fun EpgStyleSearchField(
                         onFocus?.invoke()
                     } else if (remoteFirstDevice && inputPreviouslyFocused) {
                         inputPreviouslyFocused = false
+                        // If focus leaves the editor (Back, IME dismissal or an OS focus change),
+                        // end edit mode and keep an explicit return target instead of losing focus.
                         editing = false
+                        restoreContainerFocus = true
                         keyboardController?.hide()
                     }
                 },

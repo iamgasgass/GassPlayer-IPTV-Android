@@ -47,6 +47,14 @@ internal fun Context.isTvOrFireTvDevice(): Boolean {
     )
 }
 
+/** Fire TV fingerprint helper for per-device defaults outside the DataStore migration. */
+internal fun Context.isAmazonFireTvDevice(): Boolean = isAmazonFireTvBuild(
+    manufacturer = Build.MANUFACTURER,
+    model = Build.MODEL,
+    device = Build.DEVICE,
+    product = Build.PRODUCT,
+)
+
 /** Same runtime feature detection as GassTV, plus the resource mode and AFT fingerprint fallback. */
 internal fun isTelevisionEnvironment(
     managerUiModeType: Int,
@@ -81,48 +89,56 @@ internal fun Modifier.remoteFocusOutline(
     enabled: Boolean = true,
     color: Color = Color(0xFF8CB7FF),
     strokeWidth: Dp = 2.dp,
-    includeDescendants: Boolean = false,
 ): Modifier = composed {
     var focused by remember { mutableStateOf(false) }
     this
-        .onFocusChanged { focused = it.isFocused || (includeDescendants && it.hasFocus) }
+        .onFocusChanged { focused = it.isFocused || it.hasFocus }
         .drawWithContent {
             drawContent()
             if (enabled && focused && size.width > 0f && size.height > 0f) {
-                val stroke = strokeWidth.toPx().coerceAtLeast(1f)
-                val inset = stroke / 2f
-                val bounds = Size(
-                    (size.width - stroke).coerceAtLeast(0f),
-                    (size.height - stroke).coerceAtLeast(0f)
-                )
-                val radius = CornerRadius(cornerRadius.toPx())
-
-                // Three low-cost strokes create a crisp LiquidGlass focus with a soft halo,
-                // similar to the prominent Home > Personalizza state. The outline is drawn
-                // without changing measurement, layout, or the lazy-list item size.
-                drawRoundRect(
-                    color = color.copy(alpha = .16f),
-                    topLeft = Offset(inset, inset),
-                    size = bounds,
-                    cornerRadius = radius,
-                    style = Stroke(width = stroke * 3.1f),
-                )
-                drawRoundRect(
-                    color = color.copy(alpha = .48f),
-                    topLeft = Offset(inset, inset),
-                    size = bounds,
-                    cornerRadius = radius,
-                    style = Stroke(width = stroke * 1.75f),
-                )
-                drawRoundRect(
-                    color = color,
-                    topLeft = Offset(inset, inset),
-                    size = bounds,
-                    cornerRadius = radius,
-                    style = Stroke(width = stroke),
-                )
+                drawRemoteFocusRings(color, cornerRadius, strokeWidth)
             }
         }
+}
+
+/** Draws the same shared focus halo when focus belongs to a parent but only part is visible. */
+internal fun Modifier.remoteFocusHalo(
+    focused: Boolean,
+    cornerRadius: Dp = 16.dp,
+    enabled: Boolean = true,
+    color: Color = Color(0xFF8CB7FF),
+    strokeWidth: Dp = 2.dp,
+): Modifier = this.drawWithContent {
+    drawContent()
+    if (enabled && focused && size.width > 0f && size.height > 0f) {
+        drawRemoteFocusRings(color, cornerRadius, strokeWidth)
+    }
+}
+
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawRemoteFocusRings(
+    color: Color,
+    cornerRadius: Dp,
+    strokeWidth: Dp,
+) {
+    val core = strokeWidth.toPx().coerceAtLeast(1f)
+    val corner = cornerRadius.toPx()
+    fun ring(inset: Float, width: Float, alpha: Float) {
+        val left = inset.coerceAtLeast(0f)
+        val ringWidth = (size.width - 2f * left).coerceAtLeast(0f)
+        val ringHeight = (size.height - 2f * left).coerceAtLeast(0f)
+        if (ringWidth > 0f && ringHeight > 0f) {
+            drawRoundRect(
+                color = color.copy(alpha = alpha),
+                topLeft = Offset(left, left),
+                size = Size(ringWidth, ringHeight),
+                cornerRadius = CornerRadius((corner - left).coerceAtLeast(0f)),
+                style = Stroke(width = width.coerceAtLeast(0.5f)),
+            )
+        }
+    }
+    ring(core * 1.9f, core * 3.2f, 0.22f)
+    ring(core * 1.05f, core * 2.0f, 0.48f)
+    ring(core * 0.42f, core, 1f)
 }
 
 /**

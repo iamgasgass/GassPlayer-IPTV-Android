@@ -37,6 +37,12 @@ data class Category(val id: String, val name: String, val sourceId: String = "")
 @Serializable
 enum class MediaKind { LIVE, MOVIE, SERIES, EPISODE }
 
+/** Resume prompts are for on-demand content only; live streams must always start live. */
+internal fun MediaKind.supportsResumePlayback(): Boolean = when (this) {
+    MediaKind.MOVIE, MediaKind.SERIES, MediaKind.EPISODE -> true
+    MediaKind.LIVE -> false
+}
+
 @Serializable
 data class MediaItem(
     val id: String,
@@ -87,7 +93,10 @@ data class FavoriteState(val live: Set<String> = emptySet(), val movies: Set<Str
 
 @Serializable
 data class AppSettings(
-    val theme: String = "system",
+    /** Dark theme is the default on fresh installs; "system" remains an explicit user choice. */
+    val theme: String = "dark",
+    /** Migration marker: old default was "system". */
+    val themeDefaultsVersion: Int = 1,
     val density: String = "comfortable",
     val language: String = "system",
     val autoplayNextEpisode: Boolean = true,
@@ -108,6 +117,8 @@ data class AppSettings(
     val hardwareDecode: Boolean = true,
     val asyncDecode: Boolean = true,
     val softwareDecode: Boolean = false,
+    /** Migration marker for Fire OS devices, whose factory decoder should be software. */
+    val fireTvDecoderDefaultsVersion: Int = 1,
     val ffmpegLowResolution: String = "full",
     val videoDelayMs: Int = 0,
     val aspectRatio: String = "fit",
