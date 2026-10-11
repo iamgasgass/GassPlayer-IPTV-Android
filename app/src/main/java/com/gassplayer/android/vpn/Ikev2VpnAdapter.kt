@@ -25,7 +25,6 @@ internal object Ikev2VpnAdapter {
         return manager.provisionVpnProfile(profile)
     }
 
-    @Suppress("DEPRECATION") // Required on Android 11/12; API 33+ uses startProvisionedVpnProfileSession.
     fun start(context: Context) {
         val manager = context.getSystemService(VpnManager::class.java)
             ?: error("VpnManager non disponibile")

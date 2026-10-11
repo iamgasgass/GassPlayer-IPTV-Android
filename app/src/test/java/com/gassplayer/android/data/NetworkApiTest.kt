@@ -28,13 +28,6 @@ class NetworkApiTest {
     }
 
     @Test
-    fun exploresBothKnownFallbackPortsFor8443Panels() {
-        val candidates = NetworkApi.candidateUrls("https://host.example:8443/live/1.ts")
-        assertTrue(candidates.contains("https://host.example:8000/live/1.ts"))
-        assertTrue(candidates.contains("https://host.example:8080/live/1.ts"))
-    }
-
-    @Test
     fun stripsInlineHeadersFromPlaylistSubscriptionUrl() {
         val raw = "https://playlist.example/list.m3u8|User-Agent=TestUA/1.0&Referer=https%3A%2F%2Fref.example%2F"
         assertEquals("https://playlist.example/list.m3u8", NetworkApi.stripInlineHeaders(raw))

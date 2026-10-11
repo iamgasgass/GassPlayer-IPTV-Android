@@ -4,6 +4,7 @@ import android.os.SystemClock
 import androidx.media3.common.C
 import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.audio.BaseAudioProcessor
+import androidx.media3.common.util.UnstableApi
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -84,6 +85,7 @@ object AppDns : Dns {
  * seek), negative values advance it (the first samples are dropped). Works on 16-bit PCM, which is
  * what the default audio sink uses; passthrough formats bypass audio processors.
  */
+@OptIn(UnstableApi::class)
 class AudioDelayProcessor(private val delayMs: Int) : BaseAudioProcessor() {
     private var silenceBytes = 0
     private var skipBytes = 0
@@ -93,7 +95,6 @@ class AudioDelayProcessor(private val delayMs: Int) : BaseAudioProcessor() {
         return inputAudioFormat
     }
 
-    @Deprecated("Required override for Media3 BaseAudioProcessor lifecycle compatibility")
     override fun onFlush() {
         val frames = (kotlin.math.abs(delayMs).toLong() * inputAudioFormat.sampleRate / 1000L).toInt()
         val bytes = frames * inputAudioFormat.bytesPerFrame

@@ -9,8 +9,8 @@ android {
     compileSdk = 37
     defaultConfig {
         applicationId = "com.gassgass.gassplayer"
-        // Match GassTV: API 23 (Android 6.0) for broader Android TV / Android-based Fire TV coverage.
-        minSdk = 23
+        // Navigation 2.10.2 requires API 24+. Fire OS 6 (API 25+) and later Android-based Fire TV devices remain supported.
+        minSdk = 24
         // Match GassTV’s tested target while compiling against the newer SDK needed by current dependencies.
         targetSdk = 35
         versionCode = 1000
@@ -49,12 +49,14 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.10.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.10.0")
+    implementation("androidx.navigation:navigation-compose:2.10.2")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
-    // UI navigation is implemented by GassPlayerNavHost route state; no Navigation Compose dependency.
+    implementation("androidx.tv:tv-material:1.1.0")
+    implementation("androidx.tv:tv-foundation:1.0.0")
     implementation("androidx.media3:media3-exoplayer:1.11.1")
     implementation("androidx.media3:media3-datasource-okhttp:1.11.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.11.1")
@@ -63,20 +65,15 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer-smoothstreaming:1.11.1")
     implementation("androidx.media3:media3-ui:1.11.1")
     implementation("androidx.media3:media3-session:1.11.1")
-    implementation("androidx.work:work-runtime-ktx:2.9.1") // GassTV-compatible: keeps minSdk 23 supported
+    implementation("androidx.work:work-runtime-ktx:2.12.0")
     implementation("androidx.datastore:datastore-preferences:1.2.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
     implementation("com.squareup.okhttp3:okhttp:5.5.0")
     implementation("io.coil-kt.coil3:coil-compose:3.6.3")
     implementation("io.coil-kt.coil3:coil-network-okhttp:3.6.3")
-    // Keep minSdk 23: WireGuard raised the tunnel artifact minSdk to 24 in 1.0.20260102.
-    // 1.0.20250531 predates that upstream change and remains compatible with API 23.
-    implementation("com.wireguard.android:tunnel") {
-        // Strictly pin this API-23-compatible version. A higher transitive version (for example
-        // 1.0.20260102) must not silently win Gradle conflict resolution and raise minSdk to 24.
-        version { strictly("1.0.20250531") }
-    }
+    // Published WireGuard Android tunnel artifact; 1.0.20260315 is not present on Maven Central.
+    implementation("com.wireguard.android:tunnel:1.0.20260102")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
 }

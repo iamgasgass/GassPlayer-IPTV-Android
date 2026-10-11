@@ -1,6 +1,5 @@
 package com.gassplayer.android.ui
 
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import android.app.Activity
 import android.app.PendingIntent
 import android.content.Context
@@ -998,7 +997,6 @@ private fun MediaCard(
             .then(additionalFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
             .graphicsLayer { scaleX = scale; scaleY = scale }
             .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus?.invoke() }
-            .remoteFocusOutline(cornerRadius = 18.dp, strokeWidth = 2.dp)
             .combinedClickable(
                 interactionSource = null,
                 indication = androidx.compose.foundation.LocalIndication.current,
@@ -1007,7 +1005,7 @@ private fun MediaCard(
             ),
         shape = RoundedCornerShape(18.dp),
         color = Color.Transparent,
-        border = BorderStroke(if (focused) 2.dp else .55.dp, if (focused) Color(0xFF8CB7FF) else glassForeground(.15f))
+        border = BorderStroke(if (focused) 1.25.dp else .55.dp, glassForeground(if (focused) .42f else .15f))
     ) {
         LiquidGlassSurface(modifier = Modifier.fillMaxWidth(), cornerRadius = 18.dp, contentPadding = 0.dp, highlighted = focused) {
             Column {
@@ -1882,7 +1880,7 @@ private fun ExternalEpgManageScreen(app: GassPlayerApplication, onBack: () -> Un
                 onClick = onBack,
                 modifier = Modifier.then(entryFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
                     .remoteFocusOutline(cornerRadius = 50.dp),
-            ) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null); Spacer(Modifier.width(4.dp)); Text("Indietro") }
+            ) { Icon(Icons.Default.ArrowBack, null); Spacer(Modifier.width(4.dp)); Text("Indietro") }
             Text("Fonti XMLTV esterne", color = glassForeground(), fontSize = 20.sp, fontWeight = FontWeight.Bold)
         }
         OutlinedTextField(name, { name = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Nome fonte") })
