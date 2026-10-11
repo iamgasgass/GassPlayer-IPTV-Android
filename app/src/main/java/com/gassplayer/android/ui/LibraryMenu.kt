@@ -18,6 +18,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -61,6 +63,7 @@ internal fun LibraryHeader(
     showGroups: Boolean = true,
     isTelevision: Boolean = false,
     onContentFocus: (() -> Unit)? = null,
+    menuFocusRequester: FocusRequester? = null,
 ) {
     val counts = remember(items) { items.categoryCounts() }
     val ordered = remember(categories, counts) {
@@ -169,7 +172,9 @@ internal fun LibraryHeader(
         Box(Modifier.size(48.dp).zIndex(2f), contentAlignment = Alignment.Center) {
             Surface(
                 onClick = { sub = null; menuOpen = true },
-                modifier = Modifier.size(48.dp).onFocusChanged { if (it.isFocused) onContentFocus?.invoke() }.remoteFocusOutline(cornerRadius = 50.dp, enabled = isTelevision),
+                modifier = Modifier.size(48.dp)
+                    .then(menuFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
+                    .onFocusChanged { if (it.isFocused) onContentFocus?.invoke() }.remoteFocusOutline(cornerRadius = 50.dp, enabled = isTelevision),
                 shape = RoundedCornerShape(50),
                 color = Color.Transparent,
                 contentColor = glassForeground()

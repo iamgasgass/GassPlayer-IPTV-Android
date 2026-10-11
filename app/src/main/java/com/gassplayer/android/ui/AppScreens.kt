@@ -61,6 +61,7 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -291,6 +292,19 @@ private fun AdaptiveShell(
     // The tab that owns the current (possibly nested) route: used for selection visuals and Back/Left.
     val selectedTab = navigationRailDestination(route)
     var shellHasFocus by remember { mutableStateOf(true) }
+    // Moves DPAD focus from a tab into its page. Each page restores its previously focused element
+    // (focusRestorer) and falls back to its entry node; if that node was scrolled out of a lazy list
+    // the spatial search still lands on the nearest visible element of the page.
+    suspend fun enterSection(id: String) {
+        val owner = selectedTab == id
+        if (!owner) { onRoute(id); delay(220L) } else delay(30L)
+        val entry = routeEntryFocusRequesters[if (owner) route else id]
+        for (attempt in 0 until 10) {
+            if (focusManager.moveFocus(FocusDirection.Right)) return
+            if (attempt < 9) delay(55L)
+        }
+        entry?.requestFocusWithRetry(attempts = 4, delayMillis = 55L)
+    }
     val navFocusRequesters = remember {
         destinations.associate { (id, _) -> id to FocusRequester() }
     }
@@ -370,7 +384,7 @@ private fun AdaptiveShell(
                             if (!pageFocusAllowed) canFocus = false
                             exit = { direction ->
                                 if (tv && (direction == FocusDirection.Up || direction == FocusDirection.Down ||
-                                        direction == FocusDirection.Left || direction == FocusDirection.Right)
+                                        direction == FocusDirection.Left)
                                 ) FocusRequester.Cancel else FocusRequester.Default
                             }
                         }
@@ -388,16 +402,12 @@ private fun AdaptiveShell(
                                 .focusRequester(navFocusRequesters.getValue(id))
                                 .bringIntoViewRequester(bringIntoView)
                                 .onPreviewKeyEvent { event ->
-                                    if (tv && event.type == KeyEventType.KeyDown && event.key == Key.DirectionRight) {
-                                        // RIGHT always enters the section THIS tab stands for, never whatever page
-                                        // happens to be nearest on screen. If the tab is not the open one, open it.
-                                        if (event.nativeKeyEvent.repeatCount == 0) railScope.launch {
-                                            val owner = selectedTab == id
-                                            if (!owner) { onRoute(id); delay(200L) } else delay(30L)
-                                            val entry = routeEntryFocusRequesters[if (owner) route else id]
-                                            val entered = entry?.requestFocusWithRetry(attempts = 10, delayMillis = 55L) ?: false
-                                            if (!entered) focusManager.moveFocus(FocusDirection.Right)
-                                        }
+                                    val enterKey = event.key == Key.DirectionRight || event.key == Key.DirectionCenter ||
+                                        event.key == Key.Enter || event.key == Key.NumPadEnter
+                                    if (tv && event.type == KeyEventType.KeyDown && enterKey) {
+                                        // RIGHT and OK both enter the section THIS tab stands for (opening it if needed),
+                                        // landing on the last focused element of that page, never on a stray page.
+                                        if (event.nativeKeyEvent.repeatCount == 0) railScope.launch { enterSection(id) }
                                         true
                                     } else false
                                 }
@@ -500,6 +510,7 @@ private fun AdaptiveShell(
                                     .graphicsLayer { alpha = pageAlpha }
                                     .zIndex(if (active) 1f else 0f)
                                     .focusProperties { canFocus = active && pageFocusAllowed }
+                                    .focusRestorer(routeEntryFocusRequesters[section])
                                     .pointerInput(active) {
                                         if (!active) {
                                             awaitPointerEventScope {
@@ -529,7 +540,7 @@ private fun AdaptiveShell(
                             label = "secondary-route-content",
                         ) { activeRoute ->
                             saveableStateHolder.SaveableStateProvider(activeRoute) {
-                                Box(Modifier.fillMaxSize()) {
+                                Box(Modifier.fillMaxSize().focusRestorer(routeEntryFocusRequesters[activeRoute])) {
                                     CompositionLocalProvider(LocalFocusScopeEnabled provides pageFocusAllowed) {
                                         content(activeRoute, routeEntryFocusRequesters[activeRoute])
                                     }
@@ -1146,6 +1157,7 @@ private fun LibraryScreenTitle(
     onFocus: (() -> Unit)? = null,
     focusRequester: FocusRequester? = null,
     entryFocusRequester: FocusRequester? = null,
+    downFocusRequester: FocusRequester? = null,
 ) {
     Row(
         Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 2.dp),
@@ -1167,6 +1179,13 @@ private fun LibraryScreenTitle(
                 .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
                 .then(entryFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
                 .onFocusChanged { if (it.isFocused) onFocus?.invoke() }
+                .onPreviewKeyEvent { event ->
+                    // DOWN from "Modifica" goes straight to the "…" menu button of the header (when it
+                    // is composed); otherwise the normal spatial move applies.
+                    if (downFocusRequester != null && event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
+                        runCatching { downFocusRequester.requestFocus() }.getOrDefault(false)
+                    } else false
+                }
                 .remoteFocusOutline(cornerRadius = 50.dp),
             shape = RoundedCornerShape(50),
             color = Color.Transparent,
@@ -1326,6 +1345,7 @@ private fun CatalogScreen(
     }
     val firstMediaFocusRequester = remember(scopeKey) { FocusRequester() }
     val libraryFallbackFocusRequester = remember(scopeKey) { FocusRequester() }
+    val libraryMenuFocusRequester = remember(scopeKey) { FocusRequester() }
     val showContinue = detail && searchQuery.isBlank() && continueItems.isNotEmpty()
     val showTrending = detail && searchQuery.isBlank()
     val visibleContentSections = if (searchQuery.isNotBlank()) visibleSections.filter { it == "search" } else visibleSections
@@ -1390,6 +1410,7 @@ private fun CatalogScreen(
             onFocus = { if (tvCategoryMode) categoryRailExpanded = false },
             focusRequester = libraryFallbackFocusRequester,
             entryFocusRequester = if (!tvCategoryMode && filtered.isEmpty()) entryFocusRequester else null,
+            downFocusRequester = libraryMenuFocusRequester,
         )
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             val tileColumns = ((maxWidth.value + 9f) / 159f).toInt().coerceAtLeast(1)
@@ -1434,7 +1455,7 @@ private fun CatalogScreen(
             ) {
                 if (!groupAfterSearch) {
                     item(key = "library-groups-$scopeKey-before") {
-                        LibraryHeader(title, categories, items, filter, { filter = it }, libSettings, vm, allowPoster = detail, showGroups = showGroupChips && !tvCategoryMode, isTelevision = isTelevision, onContentFocus = { if (tvCategoryMode) categoryRailExpanded = false })
+                        LibraryHeader(title, categories, items, filter, { filter = it }, libSettings, vm, allowPoster = detail, showGroups = showGroupChips && !tvCategoryMode, isTelevision = isTelevision, onContentFocus = { if (tvCategoryMode) categoryRailExpanded = false }, menuFocusRequester = libraryMenuFocusRequester)
                     }
                 }
 
@@ -1452,7 +1473,7 @@ private fun CatalogScreen(
                             }
                             if (groupAfterSearch) {
                                 item(key = "library-groups-$scopeKey-after-search") {
-                                    LibraryHeader(title, categories, items, filter, { filter = it }, libSettings, vm, allowPoster = detail, showGroups = showGroupChips && !tvCategoryMode, isTelevision = isTelevision, onContentFocus = { if (tvCategoryMode) categoryRailExpanded = false })
+                                    LibraryHeader(title, categories, items, filter, { filter = it }, libSettings, vm, allowPoster = detail, showGroups = showGroupChips && !tvCategoryMode, isTelevision = isTelevision, onContentFocus = { if (tvCategoryMode) categoryRailExpanded = false }, menuFocusRequester = libraryMenuFocusRequester)
                                 }
                             }
                         }
@@ -1672,6 +1693,7 @@ private fun SeriesScreen(
     val groupAfterSearch = libSettings.groupUIStyle == "scorrevole" && visibleSections.firstOrNull() == "search" && !tvCategoryMode
     val firstMediaFocusRequester = remember { FocusRequester() }
     val libraryFallbackFocusRequester = remember { FocusRequester() }
+    val libraryMenuFocusRequester = remember { FocusRequester() }
     val firstResultItemIndex = remember(visibleContentSections, groupAfterSearch, showContinue, showTrending) {
         libraryFirstResultItemIndex(visibleContentSections, groupAfterSearch, showContinue, showTrending)
     }
@@ -1731,6 +1753,7 @@ private fun SeriesScreen(
             onFocus = { if (tvCategoryMode) categoryRailExpanded = false },
             focusRequester = libraryFallbackFocusRequester,
             entryFocusRequester = if (!tvCategoryMode && filtered.isEmpty()) entryFocusRequester else null,
+            downFocusRequester = libraryMenuFocusRequester,
         )
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             val tileColumns = ((maxWidth.value + 9f) / 159f).toInt().coerceAtLeast(1)
@@ -1771,7 +1794,7 @@ private fun SeriesScreen(
             ) {
                 if (!groupAfterSearch) {
                     item(key = "library-groups-series-before") {
-                        LibraryHeader("Serie TV", categories, series, filter, { filter = it }, libSettings, vm, allowPoster = true, showGroups = showGroupChips && !tvCategoryMode, isTelevision = isTelevision, onContentFocus = { if (tvCategoryMode) categoryRailExpanded = false })
+                        LibraryHeader("Serie TV", categories, series, filter, { filter = it }, libSettings, vm, allowPoster = true, showGroups = showGroupChips && !tvCategoryMode, isTelevision = isTelevision, onContentFocus = { if (tvCategoryMode) categoryRailExpanded = false }, menuFocusRequester = libraryMenuFocusRequester)
                     }
                 }
 
@@ -1783,7 +1806,7 @@ private fun SeriesScreen(
                             }
                             if (groupAfterSearch) {
                                 item(key = "library-groups-series-after-search") {
-                                    LibraryHeader("Serie TV", categories, series, filter, { filter = it }, libSettings, vm, allowPoster = true, showGroups = showGroupChips && !tvCategoryMode, isTelevision = isTelevision, onContentFocus = { if (tvCategoryMode) categoryRailExpanded = false })
+                                    LibraryHeader("Serie TV", categories, series, filter, { filter = it }, libSettings, vm, allowPoster = true, showGroups = showGroupChips && !tvCategoryMode, isTelevision = isTelevision, onContentFocus = { if (tvCategoryMode) categoryRailExpanded = false }, menuFocusRequester = libraryMenuFocusRequester)
                                 }
                             }
                         }

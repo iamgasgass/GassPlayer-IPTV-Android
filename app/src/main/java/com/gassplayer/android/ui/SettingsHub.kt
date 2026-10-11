@@ -120,7 +120,9 @@ internal fun SettingsHub(
     Column {
         TextButton(
             onClick = { page = null },
-            modifier = Modifier.focusRequester(settingsPageFocusRequester).remoteFocusOutline(cornerRadius = 50.dp)
+            modifier = Modifier.focusRequester(settingsPageFocusRequester)
+                .then(entryFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
+                .remoteFocusOutline(cornerRadius = 50.dp)
         ) { Icon(Icons.Default.ArrowBack, null); Spacer(Modifier.width(6.dp)); Text("Impostazioni") }
         toast?.let { Text(it, color = Color(0xFF30D158), fontSize = 13.sp, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 48.dp)) {
