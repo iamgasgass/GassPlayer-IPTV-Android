@@ -292,19 +292,7 @@ private fun AdaptiveShell(
     // The tab that owns the current (possibly nested) route: used for selection visuals and Back/Left.
     val selectedTab = navigationRailDestination(route)
     var shellHasFocus by remember { mutableStateOf(true) }
-    // Moves DPAD focus from a tab into its page. Each page restores its previously focused element
-    // (focusRestorer) and falls back to its entry node; if that node was scrolled out of a lazy list
-    // the spatial search still lands on the nearest visible element of the page.
-    suspend fun enterSection(id: String) {
-        val owner = selectedTab == id
-        if (!owner) { onRoute(id); delay(220L) } else delay(30L)
-        val entry = routeEntryFocusRequesters[if (owner) route else id]
-        for (attempt in 0 until 10) {
-            if (focusManager.moveFocus(FocusDirection.Right)) return
-            if (attempt < 9) delay(55L)
-        }
-        entry?.requestFocusWithRetry(attempts = 4, delayMillis = 55L)
-    }
+    var railHasFocus by remember { mutableStateOf(false) }
     val navFocusRequesters = remember {
         destinations.associate { (id, _) -> id to FocusRequester() }
     }
@@ -320,6 +308,19 @@ private fun AdaptiveShell(
             "downloads", "merged", "trakt", "vpn", "parental", "diagnostics", "backup", "epg-manage", "source-manager"
         ).associateWith { FocusRequester() }
     }
+    // Moves DPAD focus from a tab into its page. Each page restores its previously focused element
+    // (focusRestorer) and falls back to its entry node; if that node was scrolled out of a lazy list
+    // the spatial search still lands on the nearest visible element of the page.
+    suspend fun enterSection(id: String) {
+        val owner = selectedTab == id
+        if (!owner) { onRoute(id); delay(220L) } else delay(30L)
+        val entry = routeEntryFocusRequesters[if (owner) route else id]
+        for (attempt in 0 until 10) {
+            if (focusManager.moveFocus(FocusDirection.Right)) return
+            if (attempt < 9) delay(55L)
+        }
+        entry?.requestFocusWithRetry(attempts = 4, delayMillis = 55L)
+    }
     LaunchedEffect(tv) {
         if (tv) {
             delay(90L)
@@ -333,11 +334,17 @@ private fun AdaptiveShell(
         previousFocusRoute = route
         // Main-tab clicks keep focus on the selected rail item; entering/exiting a nested page
         // transfers focus to its first meaningful control, instead of leaving it on a disposed node.
-        if (tv && !playerActive && route != previous &&
-            (route !in mainNavigationRoutes || previous !in mainNavigationRoutes)
-        ) {
-            delay(105L)
-            routeEntryFocusRequesters[route]?.requestFocusWithRetry(attempts = 6, delayMillis = 45L)
+        if (tv && !playerActive && route != previous) {
+            if (route !in mainNavigationRoutes || previous !in mainNavigationRoutes) {
+                delay(105L)
+                routeEntryFocusRequesters[route]?.requestFocusWithRetry(attempts = 6, delayMillis = 45L)
+            } else if (!railHasFocus) {
+                // A main section was opened from page content (e.g. an OK on a Home card): the page that
+                // owned focus is now hidden, so select the matching tab in the side rail right away.
+                delay(40L)
+                navFocusRequesters[navigationRailDestination(route)]
+                    ?.requestFocusWithRetry(attempts = 6, delayMillis = 40L)
+            }
         }
     }
     LaunchedEffect(playerActive, route) {
@@ -388,6 +395,7 @@ private fun AdaptiveShell(
                                 ) FocusRequester.Cancel else FocusRequester.Default
                             }
                         }
+                        .onFocusChanged { railHasFocus = it.hasFocus }
                         .focusGroup().verticalScroll(railScrollState).padding(vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(7.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
@@ -510,7 +518,7 @@ private fun AdaptiveShell(
                                     .graphicsLayer { alpha = pageAlpha }
                                     .zIndex(if (active) 1f else 0f)
                                     .focusProperties { canFocus = active && pageFocusAllowed }
-                                    .focusRestorer(routeEntryFocusRequesters[section])
+                                    .focusRestorer(routeEntryFocusRequesters[section] ?: FocusRequester.Default)
                                     .pointerInput(active) {
                                         if (!active) {
                                             awaitPointerEventScope {
@@ -540,7 +548,7 @@ private fun AdaptiveShell(
                             label = "secondary-route-content",
                         ) { activeRoute ->
                             saveableStateHolder.SaveableStateProvider(activeRoute) {
-                                Box(Modifier.fillMaxSize().focusRestorer(routeEntryFocusRequesters[activeRoute])) {
+                                Box(Modifier.fillMaxSize().focusRestorer(routeEntryFocusRequesters[activeRoute] ?: FocusRequester.Default)) {
                                     CompositionLocalProvider(LocalFocusScopeEnabled provides pageFocusAllowed) {
                                         content(activeRoute, routeEntryFocusRequesters[activeRoute])
                                     }
