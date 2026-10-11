@@ -1,5 +1,7 @@
 package com.gassplayer.android.ui
 
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper

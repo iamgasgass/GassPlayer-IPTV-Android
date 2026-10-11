@@ -1,5 +1,8 @@
 package com.gassplayer.android.ui
 
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.MenuBook
+import androidx.compose.material.icons.automirrored.filled.PlaylistPlay
 import androidx.activity.compose.BackHandler
 
 import androidx.compose.foundation.BorderStroke

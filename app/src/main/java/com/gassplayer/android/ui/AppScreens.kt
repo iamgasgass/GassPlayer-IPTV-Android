@@ -1,5 +1,6 @@
 package com.gassplayer.android.ui
 
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import android.app.Activity
 import android.app.PendingIntent
 import android.content.Context

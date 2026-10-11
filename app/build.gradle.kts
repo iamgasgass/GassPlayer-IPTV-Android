@@ -70,8 +70,13 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:5.5.0")
     implementation("io.coil-kt.coil3:coil-compose:3.6.3")
     implementation("io.coil-kt.coil3:coil-network-okhttp:3.6.3")
-    // Published WireGuard Android tunnel artifact; 1.0.20260315 is not present on Maven Central.
-    implementation("com.wireguard.android:tunnel:1.0.20260102")
+    // Keep minSdk 23: WireGuard raised the tunnel artifact minSdk to 24 in 1.0.20260102.
+    // 1.0.20250531 predates that upstream change and remains compatible with API 23.
+    implementation("com.wireguard.android:tunnel") {
+        // Strictly pin this API-23-compatible version. A higher transitive version (for example
+        // 1.0.20260102) must not silently win Gradle conflict resolution and raise minSdk to 24.
+        version { strictly("1.0.20250531") }
+    }
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
 }
