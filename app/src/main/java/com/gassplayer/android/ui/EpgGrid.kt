@@ -752,7 +752,6 @@ internal fun EpgGridScreen(
                     // point is this persistent row, so Guide stays navigable while EPG is loading.
                     focusRequester = if (tvCategoryMode) searchFocusRequester else entryFocusRequester,
                     inputFocusRequester = searchInputFocusRequester,
-                    onActivate = { runCatching { searchInputFocusRequester.requestFocus() } },
                     onMoveDown = {
                         scope.launch {
                             var attempts = 0

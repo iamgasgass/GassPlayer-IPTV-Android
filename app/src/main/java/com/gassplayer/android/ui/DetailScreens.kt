@@ -435,14 +435,14 @@ fun SeriesDetailScreen(
                                     selected = number == season,
                                     onClick = { season = number },
                                     label = { Text(if (number == 0) "Stagione speciale" else "Stagione $number") },
-                                    modifier = Modifier.focusable()
+                                    modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp)
                                 )
                             }
                         }
                     }
                     Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text("${visibleEpisodes.size} episodi", color = DetailMuted, fontSize = 12.sp, modifier = Modifier.weight(1f))
-                        TextButton(onClick = { scope.launch { fetchEpisodes() } }, enabled = !loadingEpisodes) {
+                        TextButton(onClick = { scope.launch { fetchEpisodes() } }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp), enabled = !loadingEpisodes) {
                             if (loadingEpisodes) CircularProgressIndicator(Modifier.size(15.dp), strokeWidth = 2.dp)
                             else Icon(Icons.Default.Refresh, null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(4.dp)); Text("Aggiorna")
@@ -721,7 +721,7 @@ private fun EpisodeDetailRow(
                             )
                             Text(episode.title, color = DetailText, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
-                        IconButton(onClick = onDownload, modifier = Modifier.size(38.dp).focusable()) {
+                        IconButton(onClick = onDownload, modifier = Modifier.size(38.dp).remoteFocusOutline(cornerRadius = 50.dp)) {
                             Icon(Icons.Default.Download, "Scarica episodio", tint = DetailText.copy(.88f), modifier = Modifier.size(19.dp))
                         }
                     }

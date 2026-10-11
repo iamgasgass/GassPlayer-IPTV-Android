@@ -99,7 +99,7 @@ internal fun AlternateSourcesView(
                             overflow = TextOverflow.Ellipsis
                         )
                     }
-                    IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, "Chiudi", tint = glassForeground()) }
+                    IconButton(onClick = onDismiss, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp)) { Icon(Icons.Default.Close, "Chiudi", tint = glassForeground()) }
                 }
 
                 EpgStyleSearchField(

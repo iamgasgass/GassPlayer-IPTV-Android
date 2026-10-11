@@ -142,7 +142,7 @@ fun SourcesView(
                 Text("${displayedSources.size} sorgenti", color = SourcesMuted, fontSize = 11.sp)
             }
             Box {
-                TextButton(onClick = { sortExpanded = true }, contentPadding = PaddingValues(horizontal = 7.dp, vertical = 4.dp)) {
+                TextButton(onClick = { sortExpanded = true }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp), contentPadding = PaddingValues(horizontal = 7.dp, vertical = 4.dp)) {
                     Text(sortMode, color = SourcesBlue, fontSize = 11.sp, maxLines = 1)
                     Icon(Icons.Default.ExpandMore, null, tint = SourcesBlue, modifier = Modifier.size(16.dp))
                 }
@@ -188,7 +188,7 @@ fun SourcesView(
                         }
                         if (activeId == source.id) Icon(Icons.Default.CheckCircle, "Sorgente attiva", tint = SourcesGreen, modifier = Modifier.size(20.dp))
                         Box {
-                            IconButton(onClick = { sourceMenuTarget = source }) { Icon(Icons.Default.MoreVert, "Azioni sorgente", tint = glassForeground(.78f)) }
+                            IconButton(onClick = { sourceMenuTarget = source }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp)) { Icon(Icons.Default.MoreVert, "Azioni sorgente", tint = glassForeground(.78f)) }
                             DropdownMenu(expanded = sourceMenuTarget?.id == source.id, onDismissRequest = { sourceMenuTarget = null }) {
                                 DropdownMenuItem(text = { Text("Imposta attiva") }, leadingIcon = { Icon(Icons.Default.CheckCircle, null) }, onClick = { sourceMenuTarget = null; vm.setActive(source.id) })
                                 DropdownMenuItem(text = { Text(if (source.isPinned) "Rimuovi pin" else "Fissa in alto") }, leadingIcon = { Icon(Icons.Default.PushPin, null) }, onClick = { sourceMenuTarget = null; scope.launch { app.sources.pin(source.id, !source.isPinned); vm.refresh(false) } })
@@ -216,7 +216,7 @@ fun SourcesView(
                                 vm.refresh(true)
                             }
                         })
-                        TextButton(onClick = { vm.setActive(source.id) }) { Text(if (activeId == source.id) "Attiva" else "Usa", color = if (activeId == source.id) SourcesGreen else SourcesBlue) }
+                        TextButton(onClick = { vm.setActive(source.id) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp)) { Text(if (activeId == source.id) "Attiva" else "Usa", color = if (activeId == source.id) SourcesGreen else SourcesBlue) }
                     }
                     if (verifyingId == source.id) LinearProgressIndicator(Modifier.fillMaxWidth(), color = SourcesBlue, trackColor = Color.White.copy(.1f))
                 }
@@ -233,7 +233,7 @@ fun SourcesView(
                         Text(list.name, color = glassForeground(), fontWeight = FontWeight.SemiBold)
                         Text("${list.memberSourceIds.size} sorgenti unite", color = SourcesMuted, fontSize = 12.sp)
                     }
-                    IconButton(onClick = { scope.launch { app.mergedPlaylists.remove(list.id) } }) { Icon(Icons.Default.Delete, "Elimina playlist unita", tint = Color(0xFFFF8791)) }
+                    IconButton(onClick = { scope.launch { app.mergedPlaylists.remove(list.id) } }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp)) { Icon(Icons.Default.Delete, "Elimina playlist unita", tint = Color(0xFFFF8791)) }
                 }
             }
         }
@@ -510,7 +510,7 @@ private fun SourceManageView(
                 Text(current.name, color = glassForeground(), fontSize = 23.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(if (active) "Sorgente attiva" else current.type.name, color = if (active) SourcesGreen else SourcesMuted, fontSize = 12.sp)
             }
-            if (!active) TextButton(onClick = { vm.setActive(current.id) }) { Text("Attiva") }
+            if (!active) TextButton(onClick = { vm.setActive(current.id) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp)) { Text("Attiva") }
         }
         if (current.type == SourceType.XTREAM) {
             SourceSectionHeader("Informazioni sul server", "Account Xtream")

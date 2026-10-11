@@ -967,7 +967,7 @@ private fun TrendingCard(item: MetadataResult, isSeries: Boolean, onClick: () ->
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text(title, color = glassForeground(), fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
-            if (onSeeAll != null) TextButton(onSeeAll) { Text("Vedi tutto", color = Color(0xFF9ABEFF)) }
+            if (onSeeAll != null) TextButton(onClick = onSeeAll, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp)) { Text("Vedi tutto", color = Color(0xFF9ABEFF)) }
         }
         content()
     }
@@ -997,7 +997,6 @@ private fun MediaCard(
             .then(additionalFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
             .graphicsLayer { scaleX = scale; scaleY = scale }
             .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus?.invoke() }
-            // Use the same high-contrast DPAD outline as the Home "Personalizza" action.
             .remoteFocusOutline(cornerRadius = 18.dp)
             .combinedClickable(
                 interactionSource = null,
@@ -1007,9 +1006,7 @@ private fun MediaCard(
             ),
         shape = RoundedCornerShape(18.dp),
         color = Color.Transparent,
-        // Keep the card outline understated at rest; remoteFocusOutline supplies the selected
-        // blue highlight so cards, chips and other TV controls share a consistent focus language.
-        border = BorderStroke(.55.dp, glassForeground(.15f))
+        border = BorderStroke(if (focused) 1.25.dp else .55.dp, glassForeground(if (focused) .42f else .15f))
     ) {
         LiquidGlassSurface(modifier = Modifier.fillMaxWidth(), cornerRadius = 18.dp, contentPadding = 0.dp, highlighted = focused) {
             Column {
@@ -1858,12 +1855,11 @@ private fun SearchScreen(
             onSubmit = { submitted = q; scope.launch { app.search.add(q) } },
             focusRequester = entryFocusRequester,
             inputFocusRequester = inputFocusRequester,
-            onActivate = { runCatching { inputFocusRequester.requestFocus() } },
         )
         Spacer(Modifier.height(10.dp))
         if (submitted.isBlank() && history.terms.isNotEmpty()) {
             Text("Ricerche recenti", color = glassForeground().copy(.6f))
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { items(history.terms) { AssistChip({ q = it; submitted = it }, label = { Text(it) }) } }
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { items(history.terms) { term -> AssistChip(onClick = { q = term; submitted = term }, label = { Text(term) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp)) } }
             Spacer(Modifier.height(12.dp))
         }
         LazyVerticalGrid(GridCells.Adaptive(180.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -2172,7 +2168,7 @@ fun AddSourceDialog(app: GassPlayerApplication, vm: MainViewModel, onDismiss: ()
 
 @Composable internal fun SettingInt(label:String, value:Int, range:IntRange, step:Int=1, onChange:(Int)->Unit){ Column(Modifier.fillMaxWidth()){ Text("$label: $value",color = glassForeground()); Slider(value=value.toFloat(),onValueChange={onChange(it.toInt())},valueRange=range.first.toFloat()..range.last.toFloat(),steps=((range.last-range.first)/step-1).coerceAtLeast(0)) } }
 @Composable private fun SettingToggle(label:String, value:Boolean, onChange:(Boolean)->Unit){ Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){ Text(label,color = glassForeground()); Switch(value,onChange) } }
-@Composable private fun SettingRow(label:String, value:String, choices:List<String>, onChange:(String)->Unit){ var expanded by remember{mutableStateOf(false)}; Box{ OutlinedButton({expanded=true},Modifier.fillMaxWidth()){ Text("$label: $value") }; DropdownMenu(expanded,{expanded=false}){choices.forEach{DropdownMenuItem({Text(it)},onClick={onChange(it);expanded=false})}} } }
+@Composable private fun SettingRow(label:String, value:String, choices:List<String>, onChange:(String)->Unit){ var expanded by remember{mutableStateOf(false)}; Box{ OutlinedButton({expanded=true},Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 50.dp)){ Text("$label: $value") }; DropdownMenu(expanded,{expanded=false}){choices.forEach{DropdownMenuItem({Text(it)},onClick={onChange(it);expanded=false})}} } }
 
 @Composable private fun ParentalScreen(vm: MainViewModel, state: ParentalState, entryFocusRequester: FocusRequester? = null) {
     var pin by remember { mutableStateOf("") }
