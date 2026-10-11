@@ -54,7 +54,6 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import coil3.compose.AsyncImage
 import android.view.ViewGroup
 import androidx.media3.common.MediaItem as ExoMediaItem
-import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -176,7 +175,7 @@ internal class EpgGridSession {
         a.size == b.size && a.all { (id, guide) -> b[id] === guide }
 }
 
-@OptIn(ExperimentalFoundationApi::class, UnstableApi::class)
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun EpgGridScreen(
     app: GassPlayerApplication,
@@ -984,7 +983,6 @@ internal fun EpgGridScreen(
     }
 }
 
-@OptIn(UnstableApi::class)
 @Composable
 private fun TvEpgPreviewPanel(
     channel: MediaItem?,
@@ -1030,7 +1028,7 @@ private fun TvEpgPreviewPanel(
         ) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 if (!channel?.logoUrl.isNullOrBlank()) {
-                    AsyncImage(channel?.logoUrl, contentDescription = channel?.title, modifier = Modifier.fillMaxSize(.60f), contentScale = ContentScale.Fit)
+                    AsyncImage(channel.logoUrl, contentDescription = channel.title, modifier = Modifier.fillMaxSize(.60f), contentScale = ContentScale.Fit)
                 } else Icon(Icons.Default.LiveTv, null, tint = Color.White.copy(.75f), modifier = Modifier.size(36.dp))
                 if (player != null && channel != null) {
                     AndroidView(
@@ -1080,7 +1078,7 @@ private fun TvEpgPreviewPanel(
                     color = glassForeground(), fontSize = if (compactLayout) 10.sp else 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
                 LinearProgressIndicator(
-                    progress = { current.progress(now).toFloat().coerceIn(0f, 1f) },
+                    progress = { current.progress(now).coerceIn(0f, 1f) },
                     modifier = Modifier.fillMaxWidth().height(4.dp),
                     color = Color(0xFF89A8FF), trackColor = Color.White.copy(.18f),
                 )
@@ -1469,26 +1467,26 @@ private fun EpgTopBar(
                         DropdownMenuItem({ Text("Domani") }, { onDay(1); menuOpen = false }, leadingIcon = { Icon(Icons.Default.ChevronRight, null) })
                     }
                     "gruppi" -> {
-                        DropdownMenuItem({ Text("UI Gruppi") }, { page = null }, leadingIcon = { Icon(Icons.Default.ArrowBack, null) })
+                        DropdownMenuItem({ Text("UI Gruppi") }, { page = null }, leadingIcon = { Icon(Icons.AutoMirrored.Filled.ArrowBack, null) })
                         HorizontalDivider()
                         CheckItem("Categorie TV", settings.groupUIStyle == "categorie_tv") { onSettings(settings.copy(groupUIStyle = "categorie_tv")); menuOpen = false; page = null }
                         CheckItem("Scorrevole", settings.groupUIStyle == "scorrevole") { onSettings(settings.copy(groupUIStyle = "scorrevole")); menuOpen = false; page = null }
                         CheckItem("Espansibile", settings.groupUIStyle == "espansibile") { onSettings(settings.copy(groupUIStyle = "espansibile")); menuOpen = false; page = null }
                     }
                     "aspetto" -> {
-                        DropdownMenuItem({ Text("Aspetto EPG") }, { page = null }, leadingIcon = { Icon(Icons.Default.ArrowBack, null) })
+                        DropdownMenuItem({ Text("Aspetto EPG") }, { page = null }, leadingIcon = { Icon(Icons.AutoMirrored.Filled.ArrowBack, null) })
                         HorizontalDivider()
                         CheckItem("Compatta", settings.epgLayoutDensity == "compatta") { onSettings(settings.copy(epgLayoutDensity = "compatta")); menuOpen = false; page = null }
                         CheckItem("Comoda", settings.epgLayoutDensity != "compatta") { onSettings(settings.copy(epgLayoutDensity = "comoda")); menuOpen = false; page = null }
                     }
                     "assetti" -> {
-                        DropdownMenuItem({ Text("Assetti EPG") }, { page = null }, leadingIcon = { Icon(Icons.Default.ArrowBack, null) })
+                        DropdownMenuItem({ Text("Assetti EPG") }, { page = null }, leadingIcon = { Icon(Icons.AutoMirrored.Filled.ArrowBack, null) })
                         HorizontalDivider()
                         CheckItem("Griglia", settings.epgChannelCardStyle != "scheda") { onSettings(settings.copy(epgChannelCardStyle = "griglia")); menuOpen = false; page = null }
                         CheckItem("Scheda", settings.epgChannelCardStyle == "scheda") { onSettings(settings.copy(epgChannelCardStyle = "scheda")); menuOpen = false; page = null }
                     }
                     "colori" -> {
-                        DropdownMenuItem({ Text("Colori EPG") }, { page = null }, leadingIcon = { Icon(Icons.Default.ArrowBack, null) })
+                        DropdownMenuItem({ Text("Colori EPG") }, { page = null }, leadingIcon = { Icon(Icons.AutoMirrored.Filled.ArrowBack, null) })
                         HorizontalDivider()
                         CheckItem("Dinamico", settings.epgTileColor != "dark") { onSettings(settings.copy(epgTileColor = "dynamic")); menuOpen = false; page = null }
                         CheckItem("Dark", settings.epgTileColor == "dark") { onSettings(settings.copy(epgTileColor = "dark")); menuOpen = false; page = null }

@@ -733,7 +733,7 @@ fun IosPlayerScreen(
             enter = fadeIn(), exit = fadeOut(),
             modifier = Modifier.align(Alignment.CenterEnd).padding(end = 24.dp)
         ) {
-            PlayerLevelHud(Icons.Default.VolumeUp, volumeLevel, "Volume")
+            PlayerLevelHud(Icons.AutoMirrored.Filled.VolumeUp, volumeLevel, "Volume")
         }
 
         toast?.let { message ->
@@ -1190,7 +1190,7 @@ private fun PlayerControlsOverlay(
             if (supportsPip) {
                 PlayerGlassButton(Icons.Default.PictureInPictureAlt, "PiP", onClick = onPip)
             }
-            PlayerGlassButton(Icons.Default.OpenInNew, "Esterno", onClick = onExternal)
+            PlayerGlassButton(Icons.AutoMirrored.Filled.OpenInNew, "Esterno", onClick = onExternal)
             PlayerGlassButton(
                 Icons.Default.Memory,
                 if (settings.hardwareDecode) "Decodifica hardware" else "Decodifica software",
@@ -1487,7 +1487,7 @@ private fun PlayerOptionsDialog(
             DialogRow("Cerca canale", "Ricerca globale", Icons.Default.Search, onSearch)
         }
         DialogRow("Impostazioni avanzate", "Buffer, seek e decoder", Icons.Default.Tune, onAdvanced)
-        DialogRow("Apri con un altro player", "Lettore esterno", Icons.Default.OpenInNew, onExternal)
+        DialogRow("Apri con un altro player", "Lettore esterno", Icons.AutoMirrored.Filled.OpenInNew, onExternal)
         DialogRow("Blocca controlli", "Protegge dagli input accidentali", Icons.Default.Lock, onLock)
     }
 }
@@ -1604,7 +1604,7 @@ private fun TrackDialog(
                 DialogRow(
                     trackLanguageLabel(format, "Audio"),
                     if (selected) "✓ Attivo" else null,
-                    Icons.Default.VolumeUp
+                    Icons.AutoMirrored.Filled.VolumeUp
                 ) {
                     onAudio(format.language)
                 }

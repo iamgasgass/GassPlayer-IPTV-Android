@@ -345,7 +345,7 @@ class NetworkApi {
             val opposite = if (scheme == "https") "http" else "https"
 
             buildCandidate(opposite, uri, uri.port)?.let(result::add)
-            pairedPort(uri.port)?.let { paired ->
+            pairedPorts(uri.port).forEach { paired ->
                 buildCandidate(scheme, uri, paired)?.let(result::add)
                 buildCandidate(opposite, uri, paired)?.let(result::add)
             }
@@ -411,23 +411,23 @@ class NetworkApi {
         }
 
 
-        private fun pairedPort(port: Int): Int? = when (port) {
-            25461 -> 25463
-            25463 -> 25461
-            2052 -> 2053
-            2053 -> 2052
-            2082 -> 2083
-            2083 -> 2082
-            2086 -> 2087
-            2087 -> 2086
-            2095 -> 2096
-            2096 -> 2095
-            8000 -> 8443
-            8443 -> 8000
-            8080 -> 8443
-            8443 -> 8080
-            8880 -> 443
-            else -> null
+        private fun pairedPorts(port: Int): List<Int> = when (port) {
+            25461 -> listOf(25463)
+            25463 -> listOf(25461)
+            2052 -> listOf(2053)
+            2053 -> listOf(2052)
+            2082 -> listOf(2083)
+            2083 -> listOf(2082)
+            2086 -> listOf(2087)
+            2087 -> listOf(2086)
+            2095 -> listOf(2096)
+            2096 -> listOf(2095)
+            8000 -> listOf(8443)
+            // Several legacy panels share 8443 as a TLS endpoint for HTTP 8000 or 8080.
+            8443 -> listOf(8000, 8080)
+            8080 -> listOf(8443)
+            8880 -> listOf(443)
+            else -> emptyList()
         }
 
         private fun rewritePort(hostPort: String, port: Int): String {

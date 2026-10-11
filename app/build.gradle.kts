@@ -63,7 +63,7 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer-smoothstreaming:1.11.1")
     implementation("androidx.media3:media3-ui:1.11.1")
     implementation("androidx.media3:media3-session:1.11.1")
-    implementation("androidx.work:work-runtime-ktx:2.12.0")
+    implementation("androidx.work:work-runtime-ktx:2.9.1") // GassTV-compatible: keeps minSdk 23 supported
     implementation("androidx.datastore:datastore-preferences:1.2.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")

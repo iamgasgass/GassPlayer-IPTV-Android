@@ -1881,7 +1881,7 @@ private fun ExternalEpgManageScreen(app: GassPlayerApplication, onBack: () -> Un
                 onClick = onBack,
                 modifier = Modifier.then(entryFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
                     .remoteFocusOutline(cornerRadius = 50.dp),
-            ) { Icon(Icons.Default.ArrowBack, null); Spacer(Modifier.width(4.dp)); Text("Indietro") }
+            ) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null); Spacer(Modifier.width(4.dp)); Text("Indietro") }
             Text("Fonti XMLTV esterne", color = glassForeground(), fontSize = 20.sp, fontWeight = FontWeight.Bold)
         }
         OutlinedTextField(name, { name = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Nome fonte") })

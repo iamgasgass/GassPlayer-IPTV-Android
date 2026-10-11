@@ -14,7 +14,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
@@ -90,7 +89,7 @@ fun SourcesView(
     val catalog by vm.catalog.collectAsStateWithLifecycle()
     val merged by app.mergedPlaylists.flow.collectAsStateWithLifecycle(emptyList())
     val scope = rememberCoroutineScope()
-    val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
+    val clipboard = androidx.compose.ui.platform.LocalClipboard.current
     var query by remember { mutableStateOf("") }
     var sortMode by remember { mutableStateOf("Personalizzato") }
     var sortExpanded by remember { mutableStateOf(false) }
@@ -327,7 +326,7 @@ fun SourcesView(
             title = { Text("Backup sorgenti") },
             text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { Text("Copia il contenuto JSON per salvarlo in un luogo sicuro.", fontSize = 12.sp); OutlinedTextField(json, {}, modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp), readOnly = true) } },
             confirmButton = { TextButton(onClick = { exportJson = null }) { Text("Chiudi") } },
-            dismissButton = { TextButton(onClick = { clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(json)); feedback = "Backup copiato negli appunti." }) { Text("Copia") } }
+            dismissButton = { TextButton(onClick = { scope.launch { clipboard.setClipEntry(androidx.compose.ui.platform.ClipEntry(android.content.ClipData.newPlainText("GassPlayer backup", json))); feedback = "Backup copiato negli appunti." } }) { Text("Copia") } }
         )
     }
     feedback?.let { message ->
@@ -385,7 +384,7 @@ fun SourceManagerView(
                 OutlinedButton(
                     onClick = onBack,
                     modifier = Modifier.then(entryFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier).remoteFocusOutline(cornerRadius = 50.dp),
-                ) { Icon(Icons.Default.ArrowBack, null); Spacer(Modifier.width(5.dp)); Text("Indietro") }
+                ) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null); Spacer(Modifier.width(5.dp)); Text("Indietro") }
                 Column {
                     Text("Gestisci sorgenti", color = glassForeground(), fontSize = 23.sp, fontWeight = FontWeight.Bold)
                     Text("Apri una sorgente per ricaricarla, modificarla o gestirne contenuto ed EPG.", color = SourcesMuted, fontSize = 12.sp)
@@ -433,7 +432,7 @@ private fun SourceManageView(
     val favorites by vm.favorites.collectAsStateWithLifecycle()
     val current = sources.firstOrNull { it.id == source.id } ?: source
     val scope = rememberCoroutineScope()
-    val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
+    val clipboard = androidx.compose.ui.platform.LocalClipboard.current
     var account by remember(current.id) { mutableStateOf<XtreamAccountInfo?>(null) }
     var accountLoading by remember(current.id) { mutableStateOf(false) }
     var accountError by remember(current.id) { mutableStateOf<String?>(null) }
@@ -505,7 +504,7 @@ private fun SourceManageView(
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(15.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedButton(onClick = onBack, modifier = Modifier.then(entryFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier).remoteFocusOutline(cornerRadius = 50.dp)) { Icon(Icons.Default.ArrowBack, null); Spacer(Modifier.width(4.dp)); Text("Indietro") }
+            OutlinedButton(onClick = onBack, modifier = Modifier.then(entryFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier).remoteFocusOutline(cornerRadius = 50.dp)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null); Spacer(Modifier.width(4.dp)); Text("Indietro") }
             Column(Modifier.weight(1f)) {
                 Text(current.name, color = glassForeground(), fontSize = 23.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(if (active) "Sorgente attiva" else current.type.name, color = if (active) SourcesGreen else SourcesMuted, fontSize = 12.sp)
@@ -606,7 +605,7 @@ private fun SourceManageView(
         title = { Text("Backup ${current.name}") },
         text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { Text("Il JSON può contenere credenziali. Conservalo in un luogo sicuro.", color = SourcesMuted, fontSize = 12.sp); OutlinedTextField(json, {}, modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp), readOnly = true) } },
         confirmButton = { TextButton(onClick = { sourceExportJson = null }) { Text("Chiudi") } },
-        dismissButton = { TextButton(onClick = { clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(json)); feedback = "Backup copiato negli appunti." }) { Text("Copia") } }
+        dismissButton = { TextButton(onClick = { scope.launch { clipboard.setClipEntry(androidx.compose.ui.platform.ClipEntry(android.content.ClipData.newPlainText("GassPlayer backup", json))); feedback = "Backup copiato negli appunti." } }) { Text("Copia") } }
     ) }
     if (deleteDialog) AlertDialog(
         onDismissRequest = { deleteDialog = false },

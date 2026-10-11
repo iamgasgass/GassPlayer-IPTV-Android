@@ -9,7 +9,7 @@ Port nativo del progetto iOS `GassPlayer-IPTV` allegato, ricostruito per Android
 - compile SDK 37 / target SDK 35 / min SDK 23 (allineato a GassTV; Android 6.0+)
 - Jetpack Compose con UI ottimizzata per TV e navigazione DPAD
 - AndroidX Media3 1.11.1
-- WorkManager 2.12.0
+- WorkManager 2.9.1 (allineato a GassTV per mantenere minSdk 23)
 - DataStore 1.2.x + Android Keystore
 - OkHttp 5.5.x / Coil 3.6.x
 - Official WireGuard Android tunnel

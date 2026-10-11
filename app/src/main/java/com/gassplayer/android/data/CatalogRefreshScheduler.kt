@@ -25,15 +25,16 @@ object CatalogRefreshScheduler {
         val interval = RefreshInterval.from(settings.catalogRefreshInterval)
         val wm = WorkManager.getInstance(context)
 
-        if (interval.millis == null) {
+        val intervalMs = interval.millis
+        if (intervalMs == null) {
             wm.cancelUniqueWork(UNIQUE_WORK_NAME)
             return
         }
 
-        val repeatMs = max(interval.millis!!, 15 * 60_000L)
+        val repeatMs = max(intervalMs, 15 * 60_000L)
         val last = prefs.lastRefreshFlow().first()
         val initialDelay = last?.let {
-            (interval.millis!! - (System.currentTimeMillis() - it)).coerceAtLeast(0L)
+            (intervalMs - (System.currentTimeMillis() - it)).coerceAtLeast(0L)
         } ?: 0L
 
         val request = PeriodicWorkRequestBuilder<CatalogRefreshWorker>(

@@ -13,7 +13,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
@@ -24,8 +23,6 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Tv
-import androidx.compose.material.icons.filled.VolumeOff
-import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -163,14 +160,14 @@ fun MovieDetailScreen(
                             modifier = Modifier.weight(1f)
                         ) { scope.launch { app.favorites.toggle(item) } }
                         DetailActionButton(
-                            icon = if (settings.detailTrailerMuted) Icons.Default.VolumeOff else Icons.Default.VolumeUp,
+                            icon = if (settings.detailTrailerMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
                             label = if (settings.detailTrailerMuted) "Anteprima muta" else "Audio anteprima",
                             modifier = Modifier.weight(1f)
                         ) { scope.launch { app.prefs.saveSettings(settings.copy(detailTrailerMuted = !settings.detailTrailerMuted)) } }
                         DetailActionButton(
                             icon = if (downloadInfo?.state == WorkInfo.State.SUCCEEDED) Icons.Default.CheckCircle else Icons.Default.Download,
                             label = when (downloadInfo?.state) {
-                                WorkInfo.State.RUNNING -> "${((downloadInfo?.progress?.getFloat("progress", 0f) ?: 0f) * 100).roundToInt()}%"
+                                WorkInfo.State.RUNNING -> "${((downloadInfo.progress.getFloat("progress", 0f)) * 100).roundToInt()}%"
                                 WorkInfo.State.SUCCEEDED -> "Scaricato"
                                 WorkInfo.State.ENQUEUED, WorkInfo.State.BLOCKED -> "In coda"
                                 else -> "Scarica"
@@ -378,14 +375,14 @@ fun SeriesDetailScreen(
                             modifier = Modifier.weight(1f)
                         ) { scope.launch { app.favorites.toggle(series) } }
                         DetailActionButton(
-                            icon = if (settings.detailTrailerMuted) Icons.Default.VolumeOff else Icons.Default.VolumeUp,
+                            icon = if (settings.detailTrailerMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
                             label = if (settings.detailTrailerMuted) "Anteprima muta" else "Audio anteprima",
                             modifier = Modifier.weight(1f)
                         ) { scope.launch { app.prefs.saveSettings(settings.copy(detailTrailerMuted = !settings.detailTrailerMuted)) } }
                         DetailActionButton(
                             icon = if (downloadInfo?.state == WorkInfo.State.SUCCEEDED) Icons.Default.CheckCircle else Icons.Default.Download,
                             label = when (downloadInfo?.state) {
-                                WorkInfo.State.RUNNING -> "${((downloadInfo?.progress?.getFloat("progress", 0f) ?: 0f) * 100).roundToInt()}%"
+                                WorkInfo.State.RUNNING -> "${((downloadInfo.progress.getFloat("progress", 0f)) * 100).roundToInt()}%"
                                 WorkInfo.State.SUCCEEDED -> "Scaricato"
                                 WorkInfo.State.ENQUEUED, WorkInfo.State.BLOCKED -> "In coda"
                                 else -> "Scarica"
@@ -516,7 +513,7 @@ private fun MediaDetailHero(item: MediaItem, meta: MetadataResult?, height: andr
         ) {
             val logoUrl = meta?.logoUrl
             if (!logoUrl.isNullOrBlank()) {
-                AsyncImage(logoUrl, contentDescription = meta?.title, modifier = Modifier.fillMaxWidth(.72f).heightIn(max = 88.dp), contentScale = ContentScale.Fit)
+                AsyncImage(logoUrl, contentDescription = meta.title, modifier = Modifier.fillMaxWidth(.72f).heightIn(max = 88.dp), contentScale = ContentScale.Fit)
             } else {
                 Text(
                     meta?.title?.takeIf { it.isNotBlank() } ?: item.title,

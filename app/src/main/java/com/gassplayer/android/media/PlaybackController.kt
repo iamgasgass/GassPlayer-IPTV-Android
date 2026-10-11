@@ -12,7 +12,6 @@ import androidx.media3.common.Player
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
-import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DefaultDataSource
@@ -58,7 +57,6 @@ import java.util.concurrent.TimeUnit
  * applied to the real engine, and the load-control start buffer is no longer
  * a dead setting.
  */
-@OptIn(UnstableApi::class)
 class PlaybackController(
     private val context: Context,
     private val diagnostics: DiagnosticsService
@@ -1081,7 +1079,6 @@ private fun deepestHttpStatus(error: Throwable?): Int? {
  * one ExoPlayer/MediaSourceFactory is reused when the viewer changes channels, so the factory must
  * not capture the kind of the first item it ever played.
  */
-@OptIn(UnstableApi::class)
 private class CachePolicyDataSource(
     private val directFactory: DataSource.Factory,
     private val cachedFactory: DataSource.Factory,
@@ -1122,7 +1119,6 @@ private class CachePolicyDataSource(
     override fun getResponseHeaders(): Map<String, List<String>> = delegate?.responseHeaders ?: emptyMap()
 }
 
-@OptIn(UnstableApi::class)
 private class FailoverDataSource(
     private val factories: List<DataSource.Factory>,
     private val diagnostics: DiagnosticsService

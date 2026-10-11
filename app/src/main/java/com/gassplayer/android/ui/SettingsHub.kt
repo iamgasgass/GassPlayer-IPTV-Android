@@ -80,7 +80,7 @@ internal fun SettingsHub(
 
     if (page == null) {
         LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 48.dp)) {
-            item { HubSection("Playlist", "Sorgenti e sorgente attiva", Icons.Default.PlaylistPlay) {
+            item { HubSection("Playlist", "Sorgenti e sorgente attiva", Icons.AutoMirrored.Filled.PlaylistPlay) {
                 HubRow("Sorgenti", "${sources.size} configurate", Icons.Default.Storage, focusRequester = if (page == null) entryFocusRequester else null) { onOpen("sources") }
                 if (sources.size > 1) HubChoice("Sorgente attiva", sources.firstOrNull { it.id == active }?.name ?: "Nessuna", sources.map { it.name }) { name ->
                     sources.firstOrNull { it.name == name }?.let { vm.setActive(it.id) }
@@ -93,7 +93,7 @@ internal fun SettingsHub(
                 HubRow("Interfaccia utente", "Tema e griglia · ${themeLabel(local.theme)}, ${if (local.density == "compact") "compatta" else "comoda"}", Icons.Default.Tune) { page = "ui" }
                 HubRow("Lettore video", "Riproduzione, buffer, decodifica e sottotitoli", Icons.Default.PlayCircle) { page = "player" }
                 HubRow("Backup", "Esporta e importa", Icons.Default.Cloud) { onOpen("backup") }
-                HubRow("EPG", "Fonti EPG esterne", Icons.Default.MenuBook) { onOpen("epg-manage") }
+                HubRow("EPG", "Fonti EPG esterne", Icons.AutoMirrored.Filled.MenuBook) { onOpen("epg-manage") }
                 HubRow("Parental Lock", "Limiti di visione e codice di protezione", Icons.Default.Lock) { onOpen("parental") }
                 HubRow("Personalizza Home", "Ordine e visibilità delle sezioni", Icons.Default.Dashboard) { onOpen("home-customize") }
             } }
@@ -121,7 +121,7 @@ internal fun SettingsHub(
         TextButton(
             onClick = { page = null },
             modifier = Modifier.focusRequester(settingsPageFocusRequester).remoteFocusOutline(cornerRadius = 50.dp)
-        ) { Icon(Icons.Default.ArrowBack, null); Spacer(Modifier.width(6.dp)); Text("Impostazioni") }
+        ) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null); Spacer(Modifier.width(6.dp)); Text("Impostazioni") }
         toast?.let { Text(it, color = Color(0xFF30D158), fontSize = 13.sp, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 48.dp)) {
             when (page) {

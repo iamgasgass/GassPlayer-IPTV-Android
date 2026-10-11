@@ -79,12 +79,19 @@ private class WireGuardReflection(private val context: Context) {
         val backendClass = Class.forName("com.wireguard.android.backend.GoBackend")
         val backend = backendClass.getConstructor(Context::class.java).newInstance(context)
         val tunnelClass = Class.forName("com.wireguard.android.backend.Tunnel")
-        val callback = Proxy.newProxyInstance(tunnelClass.classLoader, arrayOf(tunnelClass)) { _, method, args ->
-            when (method.name) { "getName" -> "GassPlayer"; "onStateChange" -> Unit }
-            null
+        val callback = Proxy.newProxyInstance(tunnelClass.classLoader, arrayOf(tunnelClass)) { proxy, method, args ->
+            when (method.name) {
+                "getName" -> "GassPlayer"
+                "onStateChange" -> null // Java void callback
+                "hashCode" -> System.identityHashCode(proxy)
+                "equals" -> proxy === args?.firstOrNull()
+                "toString" -> "GassPlayerTunnel"
+                else -> null
+            }
         }
         val stateClass = Class.forName("com.wireguard.android.backend.Tunnel\$State")
-        val up = stateClass.enumConstants.firstOrNull { (it as? Enum<*>)?.name == "UP" } ?: error("WireGuard Tunnel state UP non trovato")
+        val up = stateClass.enumConstants?.firstOrNull { (it as? Enum<*>)?.name == "UP" }
+            ?: error("WireGuard Tunnel state UP non trovato")
         val setState = backendClass.methods.firstOrNull { it.name == "setState" && it.parameterTypes.size == 3 } ?: error("WireGuard backend API non trovato")
         setState.invoke(backend, callback, up, cfg)
     }

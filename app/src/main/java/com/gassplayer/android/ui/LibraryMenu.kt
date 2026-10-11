@@ -212,14 +212,14 @@ internal fun LibraryHeader(
                         )
                     }
                     "density" -> {
-                        DropdownMenuItem(text = { Text("Densità griglia") }, onClick = { sub = null }, leadingIcon = { Icon(Icons.Default.ArrowBack, null) })
+                        DropdownMenuItem(text = { Text("Densità griglia") }, onClick = { sub = null }, leadingIcon = { Icon(Icons.AutoMirrored.Filled.ArrowBack, null) })
                         HorizontalDivider()
                         CheckItem("Compatta", settings.density == "compact") { vm.updateSettings(settings.copy(density = "compact")); menuOpen = false; sub = null }
                         CheckItem("Comoda", settings.density == "comfortable") { vm.updateSettings(settings.copy(density = "comfortable")); menuOpen = false; sub = null }
                         if (allowPoster) CheckItem("Poster", settings.density == "poster") { vm.updateSettings(settings.copy(density = "poster")); menuOpen = false; sub = null }
                     }
                     "groups" -> {
-                        DropdownMenuItem(text = { Text("UI Gruppi") }, onClick = { sub = null }, leadingIcon = { Icon(Icons.Default.ArrowBack, null) })
+                        DropdownMenuItem(text = { Text("UI Gruppi") }, onClick = { sub = null }, leadingIcon = { Icon(Icons.AutoMirrored.Filled.ArrowBack, null) })
                         HorizontalDivider()
                         CheckItem("Categorie TV", settings.groupUIStyle == "categorie_tv") { vm.updateSettings(settings.copy(groupUIStyle = "categorie_tv")); menuOpen = false; sub = null }
                         CheckItem("Scorrevole", settings.groupUIStyle == "scorrevole") { vm.updateSettings(settings.copy(groupUIStyle = "scorrevole")); menuOpen = false; sub = null }
