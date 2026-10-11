@@ -2,6 +2,8 @@ package com.gassplayer.android.data
 
 import android.content.Context
 import android.content.res.Configuration
+import android.os.Build
+import com.gassplayer.android.ui.isAmazonFireTvBuild
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
@@ -37,8 +39,15 @@ class AppPreferences(private val context: Context) {
             runCatching { JsonStore.json.decodeFromString<AppSettings>(decoded) }.getOrNull()
         }
         val isTelevision = (context.resources.configuration.uiMode and Configuration.UI_MODE_TYPE_MASK) == Configuration.UI_MODE_TYPE_TELEVISION
-        // Fresh installs: dark theme (model default) and, on TV, software decoding by default.
-        val softwareByDefault = isTelevision || context.isTvOrFireTvDevice()
+        // Fresh installs: dark theme (model default) and, on Fire TV only, software decoding by default.
+        // Software decoding is the default ONLY on Amazon Fire TV (Fire OS). Regular Android TV,
+        // phones and tablets keep hardware decoding.
+        val softwareByDefault = isAmazonFireTvBuild(
+            manufacturer = Build.MANUFACTURER,
+            model = Build.MODEL,
+            device = Build.DEVICE,
+            product = Build.PRODUCT,
+        )
         var value = stored ?: AppSettings(
             groupUIStyle = defaultGroupUIStyle(isTelevision),
             hardwareDecode = !softwareByDefault,
@@ -70,7 +79,7 @@ class AppPreferences(private val context: Context) {
             )
         }
 
-        // Android TV / Fire TV: software decoding is the factory default. Settings saved before this
+        // Fire TV only: software decoding is the factory default. Settings saved before this
         // marker existed get it applied once; later manual choices are stored with the marker and kept.
         val hasDecoderDefaultsVersion = decodedSettings?.contains("\"decoderDefaultsVersion\"") == true
         if (stored != null && !hasDecoderDefaultsVersion && softwareByDefault) {
