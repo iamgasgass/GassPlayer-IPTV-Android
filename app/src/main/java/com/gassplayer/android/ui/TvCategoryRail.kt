@@ -43,9 +43,15 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
@@ -78,11 +84,42 @@ internal fun TvCategoryRail(
     onSelect: (String) -> Unit,
     modifier: Modifier = Modifier,
     expandedWidth: Dp = 236.dp,
+    entryFocusRequester: FocusRequester? = null,
+    onMoveRight: (() -> Boolean)? = null,
 ) {
     val width by animateDpAsState(if (expanded) expandedWidth else 0.dp, label = "tv-category-rail-width")
     val state = rememberLazyListState()
-    val firstOptionFocus = remember { FocusRequester() }
-    varWasExpandedEffect(expanded, firstOptionFocus)
+    val selectedOptionFocus = remember { FocusRequester() }
+    // One focus requester per node: when the shell supplies its route-entry requester, the selected
+    // category row serves both purposes instead of stacking competing FocusRequester modifiers.
+    val targetFocusRequester = entryFocusRequester ?: selectedOptionFocus
+    val remoteFirstDevice = LocalContext.current.isTvOrFireTvDevice()
+    val targetFocusId = options.firstOrNull { it.id == selectedId }?.id ?: options.firstOrNull()?.id
+    var previousExpanded by remember { mutableStateOf(expanded) }
+    var previousTargetId by remember { mutableStateOf(targetFocusId) }
+    var selectedTargetFocused by remember { mutableStateOf(false) }
+    LaunchedEffect(expanded, selectedId, options, remoteFirstDevice) {
+        val wasJustExpanded = expanded && !previousExpanded
+        val selectedTargetChanged = targetFocusId != previousTargetId
+        previousExpanded = expanded
+        previousTargetId = targetFocusId
+        if (!expanded) {
+            selectedTargetFocused = false
+            return@LaunchedEffect
+        }
+        // The same rail is available on phones too; touch navigation must not move focus
+        // automatically. DPAD focus restoration is specific to Android TV / Fire TV.
+        if (!remoteFirstDevice) return@LaunchedEffect
+        // Options can arrive after the rail is opened on a slow Stick. A changing selected category
+        // also changes which lazy row owns the entry requester, so restore focus to that row again.
+        if ((wasJustExpanded || selectedTargetChanged || !selectedTargetFocused) && options.isNotEmpty()) {
+            val selectedIndex = selectedFocusIndex(options.map { it.id }, selectedId)
+                .coerceIn(0, options.lastIndex)
+            runCatching { state.scrollToItem(selectedIndex) }
+            delay(70L)
+            selectedTargetFocused = targetFocusRequester.requestFocusWithRetry(attempts = 5, delayMillis = 45L)
+        }
+    }
 
     Box(
         modifier
@@ -124,8 +161,13 @@ internal fun TvCategoryRail(
                                 onClick = { onSelect(item.id) },
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .then(if (index == 0) Modifier.focusRequester(firstOptionFocus) else Modifier)
+                                    .then(if (item.id == targetFocusId) Modifier.focusRequester(targetFocusRequester) else Modifier)
                                     .onFocusChanged { focused = it.isFocused }
+                                    .onPreviewKeyEvent { event ->
+                                        event.type == KeyEventType.KeyDown &&
+                                            event.key == Key.DirectionRight &&
+                                            onMoveRight?.invoke() == true
+                                    }
                                     .remoteFocusOutline(cornerRadius = 14.dp),
                                 shape = RoundedCornerShape(14.dp),
                                 color = Color.Transparent,
@@ -175,19 +217,6 @@ internal fun TvCategoryRail(
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun varWasExpandedEffect(expanded: Boolean, focusRequester: FocusRequester) {
-    // After the rail reappears on DPAD LEFT, restore focus to its first reachable group.
-    var previousExpanded by remember { mutableStateOf(expanded) }
-    LaunchedEffect(expanded) {
-        if (expanded && !previousExpanded) {
-            delay(70)
-            runCatching { focusRequester.requestFocus() }
-        }
-        previousExpanded = expanded
     }
 }
 

@@ -1,9 +1,10 @@
 package com.gassplayer.android.ui
 
+import androidx.activity.compose.BackHandler
+
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -34,6 +35,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -46,6 +50,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gassplayer.android.GassPlayerApplication
 import com.gassplayer.android.data.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
@@ -72,7 +77,13 @@ private data class SourceFavoriteCounts(
 /** Android/Android TV translation of SourcesView.swift: source aggregation, sort/search,
  * merge playlists, favourites, backup/import and batch verification remain actionable. */
 @Composable
-fun SourcesView(app: GassPlayerApplication, vm: MainViewModel, onRoute: (String) -> Unit, onManage: (MediaSourceConfig) -> Unit) {
+fun SourcesView(
+    app: GassPlayerApplication,
+    vm: MainViewModel,
+    onRoute: (String) -> Unit,
+    onManage: (MediaSourceConfig) -> Unit,
+    entryFocusRequester: FocusRequester? = null,
+) {
     val sources by vm.sources.collectAsStateWithLifecycle()
     val activeId by vm.activeSource.collectAsStateWithLifecycle()
     val fav by vm.favorites.collectAsStateWithLifecycle()
@@ -148,7 +159,10 @@ fun SourcesView(app: GassPlayerApplication, vm: MainViewModel, onRoute: (String)
             modifier = Modifier.fillMaxWidth(),
             placeholder = "Cerca sorgenti"
         )
-        SourceActionRow(Icons.Default.Add, "Aggiungi playlist", "Collega una playlist M3U o un account Xtream", Color(0xFF73A7FF)) { showAdd = true }
+        SourceActionRow(
+            Icons.Default.Add, "Aggiungi playlist", "Collega una playlist M3U o un account Xtream", Color(0xFF73A7FF),
+            focusRequester = entryFocusRequester,
+        ) { showAdd = true }
         SourceActionRow(Icons.Default.Settings, "Gestisci sorgenti", "Modifica dettagli, contenuto ed EPG di ogni sorgente", Color(0xFF9E9BFF), enabled = sources.isNotEmpty()) { onRoute("source-manager") }
 
         if (displayedSources.isEmpty()) {
@@ -327,13 +341,30 @@ fun SourceManagerView(
     app: GassPlayerApplication,
     vm: MainViewModel,
     initialSourceId: String? = null,
+    entryFocusRequester: FocusRequester? = null,
     onBack: () -> Unit,
-    onRoute: (String) -> Unit
+    onRoute: (String) -> Unit,
 ) {
     val sources by vm.sources.collectAsStateWithLifecycle()
     val activeId by vm.activeSource.collectAsStateWithLifecycle()
     var selectedId by remember(initialSourceId) { mutableStateOf(initialSourceId) }
     val selected = sources.firstOrNull { it.id == selectedId }
+    val focusScope = rememberCoroutineScope()
+    val remoteFirstDevice = LocalContext.current.isTvOrFireTvDevice()
+
+    LaunchedEffect(selectedId, remoteFirstDevice) {
+        if (remoteFirstDevice && selectedId != null) {
+            delay(85L)
+            entryFocusRequester?.requestFocusWithRetry(attempts = 6, delayMillis = 45L)
+        }
+    }
+    BackHandler(enabled = selected != null) {
+        selectedId = null
+        if (remoteFirstDevice) focusScope.launch {
+            delay(85L)
+            entryFocusRequester?.requestFocusWithRetry(attempts = 6, delayMillis = 45L)
+        }
+    }
 
     if (selected != null) {
         SourceManageView(
@@ -341,13 +372,20 @@ fun SourceManagerView(
             vm = vm,
             source = selected,
             active = activeId == selected.id,
-            onBack = { selectedId = null },
-            onRoute = onRoute
+            onBack = {
+                selectedId = null
+                if (remoteFirstDevice) focusScope.launch { delay(85L); entryFocusRequester?.requestFocusWithRetry(attempts = 6, delayMillis = 45L) }
+            },
+            onRoute = onRoute,
+            entryFocusRequester = entryFocusRequester
         )
     } else {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedButton(onClick = onBack, modifier = Modifier.focusable()) { Icon(Icons.Default.ArrowBack, null); Spacer(Modifier.width(5.dp)); Text("Indietro") }
+                OutlinedButton(
+                    onClick = onBack,
+                    modifier = Modifier.then(entryFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier).remoteFocusOutline(cornerRadius = 50.dp),
+                ) { Icon(Icons.Default.ArrowBack, null); Spacer(Modifier.width(5.dp)); Text("Indietro") }
                 Column {
                     Text("Gestisci sorgenti", color = glassForeground(), fontSize = 23.sp, fontWeight = FontWeight.Bold)
                     Text("Apri una sorgente per ricaricarla, modificarla o gestirne contenuto ed EPG.", color = SourcesMuted, fontSize = 12.sp)
@@ -357,7 +395,7 @@ fun SourceManagerView(
             sources.sortedWith(compareByDescending<MediaSourceConfig> { it.isPinned }.thenBy { it.sortOrder }).forEach { source ->
                 Surface(
                     onClick = { selectedId = source.id },
-                    modifier = Modifier.fillMaxWidth().focusable(),
+                    modifier = Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 19.dp),
                     color = Color.Transparent,
                     shape = RoundedCornerShape(19.dp),
                     border = BorderStroke(.7.dp, Color.White.copy(.14f))
@@ -381,7 +419,15 @@ fun SourceManagerView(
 }
 
 @Composable
-private fun SourceManageView(app: GassPlayerApplication, vm: MainViewModel, source: MediaSourceConfig, active: Boolean, onBack: () -> Unit, onRoute: (String) -> Unit) {
+private fun SourceManageView(
+    app: GassPlayerApplication,
+    vm: MainViewModel,
+    source: MediaSourceConfig,
+    active: Boolean,
+    onBack: () -> Unit,
+    onRoute: (String) -> Unit,
+    entryFocusRequester: FocusRequester? = null,
+) {
     val sources by vm.sources.collectAsStateWithLifecycle()
     val catalog by vm.catalog.collectAsStateWithLifecycle()
     val favorites by vm.favorites.collectAsStateWithLifecycle()
@@ -459,7 +505,7 @@ private fun SourceManageView(app: GassPlayerApplication, vm: MainViewModel, sour
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(15.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedButton(onClick = onBack, modifier = Modifier.focusable()) { Icon(Icons.Default.ArrowBack, null); Spacer(Modifier.width(4.dp)); Text("Indietro") }
+            OutlinedButton(onClick = onBack, modifier = Modifier.then(entryFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier).remoteFocusOutline(cornerRadius = 50.dp)) { Icon(Icons.Default.ArrowBack, null); Spacer(Modifier.width(4.dp)); Text("Indietro") }
             Column(Modifier.weight(1f)) {
                 Text(current.name, color = glassForeground(), fontSize = 23.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(if (active) "Sorgente attiva" else current.type.name, color = if (active) SourcesGreen else SourcesMuted, fontSize = 12.sp)
@@ -605,12 +651,15 @@ private fun SourceActionRow(
     subtitle: String,
     tint: Color,
     enabled: Boolean = true,
+    focusRequester: FocusRequester? = null,
     onClick: () -> Unit
 ) {
     Surface(
         onClick = onClick,
         enabled = enabled,
-        modifier = Modifier.fillMaxWidth().focusable(),
+        modifier = Modifier.fillMaxWidth()
+            .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
+            .remoteFocusOutline(cornerRadius = 17.dp),
         shape = RoundedCornerShape(17.dp),
         color = Color.Transparent,
         border = BorderStroke(.65.dp, Color.White.copy(if (enabled) .14f else .06f))

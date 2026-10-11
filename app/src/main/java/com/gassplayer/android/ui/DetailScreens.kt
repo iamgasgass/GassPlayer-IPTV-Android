@@ -30,11 +30,14 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.statusBars
@@ -46,6 +49,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import com.gassplayer.android.GassPlayerApplication
 import com.gassplayer.android.data.*
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.collect
 import java.text.SimpleDateFormat
@@ -69,8 +73,10 @@ fun MovieDetailScreen(
     allItems: List<MediaItem>,
     favorite: FavoriteState,
     onBack: () -> Unit,
-    onPlay: (MediaItem, Long) -> Unit
+    onPlay: (MediaItem, Long) -> Unit,
+    entryFocusRequester: FocusRequester? = null,
 ) {
+    val remoteFirstDevice = LocalContext.current.isTvOrFireTvDevice()
     val settings by app.prefs.settingsFlow.collectAsStateWithLifecycle(AppSettings())
     val watch by app.watch.flow.collectAsStateWithLifecycle(emptyList())
     val sourceConfigs by app.sources.sources.collectAsStateWithLifecycle(emptyList())
@@ -92,6 +98,14 @@ fun MovieDetailScreen(
         sourceConfigs.any { it.isEnabled && it.type == SourceType.XTREAM && it.id != item.sourceId }
     }
     val topProgress = detailTopProgress(scrollState)
+
+    // Every detail page has a deterministic first DPAD target, even when posters/metadata load later.
+    LaunchedEffect(item.id, entryFocusRequester, remoteFirstDevice) {
+        if (remoteFirstDevice && entryFocusRequester != null) {
+            delay(90L)
+            entryFocusRequester.requestFocusWithRetry(attempts = 6, delayMillis = 45L)
+        }
+    }
 
     LaunchedEffect(item.id, settings.tmdbApiKey, settings.omdbApiKey, settings.traktClientId) {
         isLoadingDetail = true
@@ -127,7 +141,9 @@ fun MovieDetailScreen(
                     )
                     Button(
                         onClick = { onPlay(item, currentWatch?.positionMs ?: 0L) },
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp).focusable(),
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp)
+                            .then(entryFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
+                            .remoteFocusOutline(cornerRadius = 28.dp),
                         shape = RoundedCornerShape(28.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(.95f), contentColor = Color(0xFF111111))
                     ) {
@@ -251,8 +267,10 @@ fun SeriesDetailScreen(
     onBack: () -> Unit,
     onPlay: (MediaItem, Long) -> Unit,
     allSeries: List<MediaItem> = emptyList(),
-    onOpenAlternateSeries: (MediaItem) -> Unit = {}
+    onOpenAlternateSeries: (MediaItem) -> Unit = {},
+    entryFocusRequester: FocusRequester? = null,
 ) {
+    val remoteFirstDevice = LocalContext.current.isTvOrFireTvDevice()
     val settings by app.prefs.settingsFlow.collectAsStateWithLifecycle(AppSettings())
     val watch by app.watch.flow.collectAsStateWithLifecycle(emptyList())
     val sourceConfigs by app.sources.sources.collectAsStateWithLifecycle(emptyList())
@@ -272,6 +290,12 @@ fun SeriesDetailScreen(
     var season by remember(series.id) { mutableStateOf(0) }
     val seriesKey = series.id.substringAfterLast(':')
     val topProgress = detailTopProgress(scrollState)
+    LaunchedEffect(series.id, entryFocusRequester, remoteFirstDevice) {
+        if (remoteFirstDevice && entryFocusRequester != null) {
+            delay(90L)
+            entryFocusRequester.requestFocusWithRetry(attempts = 6, delayMillis = 45L)
+        }
+    }
     val alternates = remember(allSeries, series.id, series.title, series.sourceId) {
         allSeries.sameTitleAs(series).filter { it.kind == MediaKind.SERIES && it.sourceId != series.sourceId && it.title.normalizedMediaTitle() == series.title.normalizedMediaTitle() }
     }
@@ -336,7 +360,9 @@ fun SeriesDetailScreen(
                             if (ep != null) onPlay(ep, allWatch[ep.id]?.positionMs ?: 0L)
                             else actionMessage = "Nessun episodio disponibile per questa serie."
                         },
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp).focusable(),
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp)
+                            .then(entryFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
+                            .remoteFocusOutline(cornerRadius = 28.dp),
                         shape = RoundedCornerShape(28.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(.95f), contentColor = Color(0xFF111111))
                     ) {
@@ -544,7 +570,7 @@ private fun DetailActionButton(
             shape = CircleShape,
             color = Color.Transparent,
             border = BorderStroke(.7.dp, Color.White.copy(if (enabled) .18f else .07f)),
-            modifier = Modifier.size(48.dp).focusable()
+            modifier = Modifier.size(48.dp).remoteFocusOutline(cornerRadius = 50.dp)
         ) {
             Box(contentAlignment = Alignment.Center) {
                 LiquidGlassSurface(Modifier.fillMaxSize(), cornerRadius = 50.dp, contentPadding = 0.dp) {
@@ -661,7 +687,7 @@ private fun EpisodeDetailRow(
 ) {
     Surface(
         onClick = onPlay,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 7.dp).focusable(),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 7.dp).remoteFocusOutline(cornerRadius = 17.dp),
         shape = RoundedCornerShape(17.dp),
         color = Color.Transparent,
         border = BorderStroke(.65.dp, Color.White.copy(.13f))

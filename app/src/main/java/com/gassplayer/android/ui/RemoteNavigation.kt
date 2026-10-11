@@ -6,6 +6,7 @@ import android.app.UiModeManager
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
@@ -20,6 +21,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 
 /** Detect regular Android TV and Android-based Amazon Fire TV devices. */
 internal fun Context.isTvOrFireTvDevice(): Boolean {
@@ -99,6 +101,40 @@ internal fun Modifier.remoteFocusOutline(
         }
 }
 
+/**
+ * Request focus only after lazy content and focus nodes have had a chance to attach.
+ * Fire TV sticks can compose/measure a row later than an emulator; a single requestFocus()
+ * silently failing leaves DPAD navigation without a focused item.
+ */
+internal suspend fun FocusRequester.requestFocusWithRetry(
+    attempts: Int = 5,
+    delayMillis: Long = 45L,
+): Boolean {
+    val totalAttempts = attempts.coerceAtLeast(1)
+    for (attempt in 0 until totalAttempts) {
+        val focused = runCatching { requestFocus() }.getOrDefault(false)
+        if (focused) return true
+        if (attempt < totalAttempts - 1) delay(delayMillis.coerceAtLeast(0L))
+    }
+    return false
+}
+
+/** Resolve nested pages to the main rail item that owns them. */
+internal fun navigationRailDestination(route: String): String = when (route) {
+    "home-customize" -> "home"
+    "live-customize" -> "live"
+    "movies-customize" -> "movies"
+    "series-customize" -> "series"
+    "source-manager" -> "sources"
+    "epg-manage" -> "epg"
+    "vpn", "parental", "diagnostics", "backup", "trakt", "downloads", "merged" -> "settings"
+    else -> route
+}
+
+/** Prefer the currently selected rail item, falling back to its first entry if stale. */
+internal fun selectedFocusIndex(ids: List<String>, selectedId: String): Int =
+    ids.indexOf(selectedId).takeIf { it >= 0 } ?: 0
+
 /** Returns the sensible parent destination for Back, or null at the root. */
 internal fun destinationAfterRemoteBack(route: String, epgManageReturnRoute: String): String? = when (route) {
     "home" -> null
@@ -108,6 +144,6 @@ internal fun destinationAfterRemoteBack(route: String, epgManageReturnRoute: Str
     "series-customize" -> "series"
     "source-manager" -> "sources"
     "epg-manage" -> epgManageReturnRoute
-    "vpn", "parental", "diagnostics", "backup", "trakt" -> "settings"
+    "vpn", "parental", "diagnostics", "backup", "trakt", "downloads", "merged" -> "settings"
     else -> "home"
 }

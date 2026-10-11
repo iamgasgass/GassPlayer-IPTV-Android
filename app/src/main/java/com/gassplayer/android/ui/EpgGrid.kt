@@ -7,6 +7,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.BasicTextField
@@ -189,6 +190,7 @@ internal fun EpgGridScreen(
     tvCategoryMode: Boolean = false,
     playerActive: Boolean = false,
     screenActive: Boolean = true,
+    entryFocusRequester: FocusRequester? = null,
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -608,6 +610,7 @@ internal fun EpgGridScreen(
                 options = tvRailOptions,
                 selectedId = selectedTvRailId,
                 expanded = categoryRailExpanded,
+                entryFocusRequester = entryFocusRequester,
                 onSelect = { id ->
                     favoritesOnly = id == TV_CATEGORY_FAVORITES
                     groupId = when (id) {
@@ -618,6 +621,25 @@ internal fun EpgGridScreen(
                     debouncedSearch = ""
                     renderLimit = PAGE
                     previewChannelId = null
+                },
+                onMoveRight = {
+                    scope.launch {
+                        var attempts = 0
+                        while (visible.isEmpty() && attempts < 20) {
+                            delay(40L)
+                            attempts++
+                        }
+                        if (visible.isNotEmpty()) {
+                            runCatching { guideListState.scrollToItem(2) } // search + timeline header
+                            delay(70L)
+                            if (!firstChannelFocusRequester.requestFocusWithRetry(attempts = 5, delayMillis = 45L)) {
+                                searchFocusRequester.requestFocusWithRetry()
+                            }
+                        } else {
+                            searchFocusRequester.requestFocusWithRetry()
+                        }
+                    }
+                    true
                 }
             )
         }
@@ -705,7 +727,14 @@ internal fun EpgGridScreen(
         }
 
         if (live.isEmpty()) {
-            Text("Nessun canale live disponibile. Aggiungi una sorgente e attendi il caricamento.", color = glassForeground().copy(.6f), modifier = Modifier.padding(16.dp))
+            Text(
+                "Nessun canale live disponibile. Aggiungi una sorgente e attendi il caricamento.",
+                color = glassForeground().copy(.6f),
+                modifier = Modifier.padding(16.dp)
+                    .then(if (!tvCategoryMode) entryFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier else Modifier)
+                    .focusable()
+                    .remoteFocusOutline(cornerRadius = 12.dp),
+            )
         } else {
         LazyColumn(
             state = guideListState,
@@ -719,26 +748,26 @@ internal fun EpgGridScreen(
                     compact = compact,
                     horizontalInset = bannerInset,
                     onFocus = { if (tvCategoryMode) categoryRailExpanded = false },
-                    focusRequester = if (tvCategoryMode) searchFocusRequester else null,
-                    inputFocusRequester = if (tvCategoryMode) searchInputFocusRequester else null,
-                    onActivate = if (tvCategoryMode) ({ runCatching { searchInputFocusRequester.requestFocus() } }) else null,
-                    onMoveDown = if (tvCategoryMode) ({
+                    // Category mode receives focus through its rail. Otherwise the route's entry
+                    // point is this persistent row, so Guide stays navigable while EPG is loading.
+                    focusRequester = if (tvCategoryMode) searchFocusRequester else entryFocusRequester,
+                    inputFocusRequester = searchInputFocusRequester,
+                    onActivate = { runCatching { searchInputFocusRequester.requestFocus() } },
+                    onMoveDown = {
                         scope.launch {
-                            // Wait briefly for the paged channel rows to be composed. This covers
-                            // slower Fire TV sticks where the guide's first page arrives later.
                             var attempts = 0
                             while (visible.isEmpty() && attempts < 20) {
                                 delay(40L)
                                 attempts++
                             }
                             if (visible.isNotEmpty()) {
-                                guideListState.animateScrollToItem(2)
-                                delay(60L)
-                                runCatching { firstChannelFocusRequester.requestFocus() }
+                                runCatching { guideListState.animateScrollToItem(2) }
+                                delay(70L)
+                                firstChannelFocusRequester.requestFocusWithRetry(attempts = 5, delayMillis = 45L)
                             }
                         }
                         true
-                    }) else null
+                    }
                 )
             }
             // Like iOS, the day + time header is part of the vertical scroll content (not sticky).
@@ -822,7 +851,7 @@ internal fun EpgGridScreen(
                         onLongClick = { vm.toggleFavorite(ch) },
                         onFocus = { if (tvCategoryMode) { previewChannelId = ch.id; categoryRailExpanded = false } },
                         onExitLeft = { if (tvCategoryMode && !categoryRailExpanded) { categoryRailExpanded = true; true } else false },
-                        focusRequester = if (visibleIndex == 0) firstChannelFocusRequester else null
+                        focusRequester = if (visibleIndex == 0) firstChannelFocusRequester else null,
                     )
                     Box(
                         Modifier.weight(1f).fillMaxHeight().offset(x = -bleed).clipToBounds().horizontalScroll(hScroll)

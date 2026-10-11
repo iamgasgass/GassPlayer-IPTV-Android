@@ -1,5 +1,7 @@
 package com.gassplayer.android.ui
 
+import androidx.activity.compose.BackHandler
+
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -11,6 +13,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
@@ -22,6 +27,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gassplayer.android.BuildConfig
 import com.gassplayer.android.GassPlayerApplication
 import com.gassplayer.android.data.*
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -30,7 +36,13 @@ import kotlinx.coroutines.launch
  * Backup e dispositivi, Metadati, Diagnostica, Informazioni.
  */
 @Composable
-internal fun SettingsHub(app: GassPlayerApplication, settings: AppSettings, vm: MainViewModel, onOpen: (String) -> Unit) {
+internal fun SettingsHub(
+    app: GassPlayerApplication,
+    settings: AppSettings,
+    vm: MainViewModel,
+    onOpen: (String) -> Unit,
+    entryFocusRequester: FocusRequester? = null,
+) {
     var page by remember { mutableStateOf<String?>(null) }
     var local by remember(settings) { mutableStateOf(settings) }
     fun save(s: AppSettings) { local = s; vm.updateSettings(s) }
@@ -41,6 +53,25 @@ internal fun SettingsHub(app: GassPlayerApplication, settings: AppSettings, vm: 
     var toast by remember { mutableStateOf<String?>(null) }
     var confirm by remember { mutableStateOf<Pair<String, () -> Unit>?>(null) }
 
+    val focusScope = rememberCoroutineScope()
+    val remoteFirstDevice = LocalContext.current.isTvOrFireTvDevice()
+    val settingsPageFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(page, remoteFirstDevice) {
+        if (remoteFirstDevice && page != null) {
+            delay(80L)
+            settingsPageFocusRequester.requestFocusWithRetry(attempts = 6, delayMillis = 45L)
+        }
+    }
+    BackHandler(enabled = page != null || confirm != null) {
+        if (confirm != null) confirm = null else {
+            page = null
+            if (remoteFirstDevice) focusScope.launch {
+                delay(80L)
+                entryFocusRequester?.requestFocusWithRetry(attempts = 6, delayMillis = 45L)
+            }
+        }
+    }
+
     confirm?.let { (text, action) ->
         AlertDialog({ confirm = null }, title = { Text("Conferma") }, text = { Text(text, color = MaterialTheme.colorScheme.onSurface) },
             confirmButton = { TextButton({ action(); confirm = null }) { Text("Conferma", color = MaterialTheme.colorScheme.error) } },
@@ -50,7 +81,7 @@ internal fun SettingsHub(app: GassPlayerApplication, settings: AppSettings, vm: 
     if (page == null) {
         LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 48.dp)) {
             item { HubSection("Playlist", "Sorgenti e sorgente attiva", Icons.Default.PlaylistPlay) {
-                HubRow("Sorgenti", "${sources.size} configurate", Icons.Default.Storage) { onOpen("sources") }
+                HubRow("Sorgenti", "${sources.size} configurate", Icons.Default.Storage, focusRequester = if (page == null) entryFocusRequester else null) { onOpen("sources") }
                 if (sources.size > 1) HubChoice("Sorgente attiva", sources.firstOrNull { it.id == active }?.name ?: "Nessuna", sources.map { it.name }) { name ->
                     sources.firstOrNull { it.name == name }?.let { vm.setActive(it.id) }
                 } else HubRow("Sorgente attiva", sources.firstOrNull { it.id == active }?.name ?: "Nessuna", Icons.Default.CheckCircle) { onOpen("sources") }
@@ -87,7 +118,10 @@ internal fun SettingsHub(app: GassPlayerApplication, settings: AppSettings, vm: 
     }
 
     Column {
-        TextButton({ page = null }) { Icon(Icons.Default.ArrowBack, null); Spacer(Modifier.width(6.dp)); Text("Impostazioni") }
+        TextButton(
+            onClick = { page = null },
+            modifier = Modifier.focusRequester(settingsPageFocusRequester).remoteFocusOutline(cornerRadius = 50.dp)
+        ) { Icon(Icons.Default.ArrowBack, null); Spacer(Modifier.width(6.dp)); Text("Impostazioni") }
         toast?.let { Text(it, color = Color(0xFF30D158), fontSize = 13.sp, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 48.dp)) {
             when (page) {
@@ -269,13 +303,23 @@ private fun HubSection(title: String, subtitle: String, icon: ImageVector, conte
 }
 
 @Composable
-private fun HubRow(title: String, detail: String, icon: ImageVector, destructive: Boolean = false, onClick: () -> Unit) {
+private fun HubRow(
+    title: String,
+    detail: String,
+    icon: ImageVector,
+    destructive: Boolean = false,
+    focusRequester: FocusRequester? = null,
+    onClick: () -> Unit,
+) {
     var focused by remember(title) { mutableStateOf(false) }
     Surface(
         onClick = onClick,
         shape = RoundedCornerShape(14.dp),
         color = Color.Transparent,
-        modifier = Modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused }
+        modifier = Modifier.fillMaxWidth()
+            .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
+            .onFocusChanged { focused = it.isFocused }
+            .remoteFocusOutline(cornerRadius = 14.dp)
     ) {
         LiquidGlassSurface(modifier = Modifier.fillMaxWidth(), cornerRadius = 14.dp, contentPadding = 0.dp, highlighted = focused) {
             Row(Modifier.padding(horizontal = 13.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {

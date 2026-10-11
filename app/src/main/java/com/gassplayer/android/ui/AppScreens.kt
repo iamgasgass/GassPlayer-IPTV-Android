@@ -76,6 +76,7 @@ import coil3.compose.AsyncImage
 import com.gassplayer.android.GassPlayerApplication
 import com.gassplayer.android.data.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
@@ -179,36 +180,40 @@ fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
     AdaptiveShell(
         route = contentRoute,
         tv = tv,
+        playerActive = playerActive,
+        allowNavReturnFocus = customizationScope == null,
         loading = loading,
         message = message,
         onRetry = { vm.refresh(true) },
         onRoute = { route = it },
         title = shellTitle,
-        content = { activeRoute ->
+        content = { activeRoute, entryFocusRequester ->
             when (activeRoute) {
-                "home" -> HomeScreen(vm, catalog, favorite, watch, sources, onRoute = { route = it }, onPlay = { playerItem = it })
+                "home" -> HomeScreen(vm, catalog, favorite, watch, sources, onRoute = { route = it }, onPlay = { playerItem = it }, entryFocusRequester = entryFocusRequester)
                 "live" -> if (settings.groupUIStyle == "categorie_tv") {
                     // The same session/index powers both Live TV and the standalone Guida screen.
                     EpgGridScreen(app, vm, epgSession, catalog?.live.orEmpty(), catalog?.liveCategories.orEmpty(), favorite, settings,
                         onPlay = { playerItem = it }, tvCategoryMode = true, playerActive = playerActive,
-                        screenActive = activeRoute == contentRoute)
+                        screenActive = activeRoute == contentRoute, entryFocusRequester = entryFocusRequester)
                 } else CatalogScreen("Live TV", catalog?.live.orEmpty(), catalog?.liveCategories.orEmpty(), favorite, parental, vm,
                     onPlay = { playerItem = it }, showNumbers = settings.showChannelNumbers, scopeKey = "live",
-                    onCustomize = { route = "live-customize" }, isTelevision = tv, screenActive = activeRoute == contentRoute)
+                    onCustomize = { route = "live-customize" }, isTelevision = tv, screenActive = activeRoute == contentRoute,
+                    entryFocusRequester = entryFocusRequester)
                 "movies" -> CatalogScreen("Film (VOD)", catalog?.movies.orEmpty(), catalog?.vodCategories.orEmpty(), favorite, parental, vm,
                     onPlay = { playerItem = it }, detail = true, scopeKey = "movies", onCustomize = { route = "movies-customize" }, isTelevision = tv,
-                    screenActive = activeRoute == contentRoute)
+                    screenActive = activeRoute == contentRoute, entryFocusRequester = entryFocusRequester)
                 "series" -> SeriesScreen(catalog?.series.orEmpty(), catalog?.episodes.orEmpty(), catalog?.seriesCategories.orEmpty(), favorite, parental, vm,
                     onPlay = { playerItem = it }, onCustomize = { route = "series-customize" }, isTelevision = tv,
-                    screenActive = activeRoute == contentRoute)
+                    screenActive = activeRoute == contentRoute, entryFocusRequester = entryFocusRequester)
                 "epg" -> EpgGridScreen(app, vm, epgSession, catalog?.live.orEmpty(), catalog?.liveCategories.orEmpty(), favorite, settings,
-                    onPlay = { playerItem = it }, playerActive = playerActive, screenActive = activeRoute == contentRoute)
-                "epg-manage" -> ExternalEpgManageScreen(app, onBack = { route = epgManageReturnRoute })
-                "merged" -> MergedPlaylistScreen(app)
-                "trakt" -> TraktScreen(app, settings, vm)
-                "search" -> SearchScreen(app, catalog, onPlay = { playerItem = it }, onRoute = { route = it })
-                "sources" -> SourcesView(app, vm, onRoute = { route = it }, onManage = { managerSourceId = it.id; route = "source-manager" })
-                "source-manager" -> SourceManagerView(app, vm, initialSourceId = managerSourceId, onBack = { managerSourceId = null; route = "sources" }, onRoute = { next ->
+                    onPlay = { playerItem = it }, playerActive = playerActive, screenActive = activeRoute == contentRoute,
+                    entryFocusRequester = entryFocusRequester)
+                "epg-manage" -> ExternalEpgManageScreen(app, onBack = { route = epgManageReturnRoute }, entryFocusRequester = entryFocusRequester)
+                "merged" -> MergedPlaylistScreen(app, entryFocusRequester = entryFocusRequester)
+                "trakt" -> TraktScreen(app, settings, vm, entryFocusRequester = entryFocusRequester)
+                "search" -> SearchScreen(app, catalog, onPlay = { playerItem = it }, onRoute = { route = it }, entryFocusRequester = entryFocusRequester)
+                "sources" -> SourcesView(app, vm, onRoute = { route = it }, onManage = { managerSourceId = it.id; route = "source-manager" }, entryFocusRequester = entryFocusRequester)
+                "source-manager" -> SourceManagerView(app, vm, initialSourceId = managerSourceId, entryFocusRequester = entryFocusRequester, onBack = { managerSourceId = null; route = "sources" }, onRoute = { next ->
                     if (next == "epg-manage") {
                         epgManageReturnRoute = "source-manager"
                         route = next
@@ -217,12 +222,12 @@ fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
                         route = next
                     }
                 })
-                "downloads" -> DownloadsScreen(app)
-                "settings" -> SettingsHub(app, settings, vm, onOpen = { next -> if (next == "epg-manage") epgManageReturnRoute = "settings"; route = next })
-                "vpn" -> VpnScreen(app)
-                "parental" -> ParentalScreen(vm, parental)
-                "diagnostics" -> DiagnosticsScreen(app)
-                "backup" -> BackupScreen(app)
+                "downloads" -> DownloadsScreen(app, entryFocusRequester = entryFocusRequester)
+                "settings" -> SettingsHub(app, settings, vm, onOpen = { next -> if (next == "epg-manage") epgManageReturnRoute = "settings"; route = next }, entryFocusRequester = entryFocusRequester)
+                "vpn" -> VpnScreen(app, entryFocusRequester = entryFocusRequester)
+                "parental" -> ParentalScreen(vm, parental, entryFocusRequester = entryFocusRequester)
+                "diagnostics" -> DiagnosticsScreen(app, entryFocusRequester = entryFocusRequester)
+                "backup" -> BackupScreen(app, entryFocusRequester = entryFocusRequester)
             }
         },
         overlay = {
@@ -262,25 +267,65 @@ fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
 private fun AdaptiveShell(
     route: String,
     tv: Boolean,
+    playerActive: Boolean,
+    allowNavReturnFocus: Boolean,
     loading: Boolean,
     message: String?,
     onRetry: () -> Unit,
     onRoute: (String) -> Unit,
     title: String,
-    content: @Composable (String) -> Unit,
+    content: @Composable (String, FocusRequester?) -> Unit,
     overlay: @Composable () -> Unit,
 ) {
     val destinations = listOf("home" to "Home", "live" to "Live TV", "movies" to "Film", "series" to "Serie", "epg" to "Guida", "search" to "Cerca", "sources" to "Sorgenti", "settings" to "Impostazioni")
     val saveableStateHolder = rememberSaveableStateHolder()
     val railScrollState = rememberScrollState()
     val railScope = rememberCoroutineScope()
-    // Start with a predictable, visible focus target on remote-first devices. Without this,
-    // some Fire TV launchers leave Compose with no focused node until the first DPAD press.
-    val initialHomeFocusRequester = remember { FocusRequester() }
-    LaunchedEffect(Unit) {
+    val navFocusRequesters = remember {
+        destinations.associate { (id, _) -> id to FocusRequester() }
+    }
+    // Start with a predictable, visible focus target on remote-first devices. The Home rail node
+    // doubles as the initial target, avoiding two FocusRequester nodes on the same control.
+    val initialHomeFocusRequester = navFocusRequesters.getValue("home")
+    var previousPlayerActive by remember { mutableStateOf(false) }
+    // Route-specific entry points make DPAD RIGHT from the selected navigation item predictable.
+    // Pages without a registered entry point keep native Compose spatial focus traversal.
+    val routeEntryFocusRequesters = remember {
+        listOf(
+            "home", "live", "movies", "series", "epg", "search", "sources", "settings",
+            "downloads", "merged", "trakt", "vpn", "parental", "diagnostics", "backup", "epg-manage", "source-manager"
+        ).associateWith { FocusRequester() }
+    }
+    LaunchedEffect(tv) {
         if (tv) {
-            kotlinx.coroutines.delay(90)
-            runCatching { initialHomeFocusRequester.requestFocus() }
+            delay(90L)
+            initialHomeFocusRequester.requestFocusWithRetry(attempts = 6, delayMillis = 65L)
+        }
+    }
+    val mainNavigationRoutes = remember { setOf("home", "live", "movies", "series", "epg", "search", "sources", "settings") }
+    var previousFocusRoute by remember { mutableStateOf(route) }
+    LaunchedEffect(route) {
+        val previous = previousFocusRoute
+        previousFocusRoute = route
+        // Main-tab clicks keep focus on the selected rail item; entering/exiting a nested page
+        // transfers focus to its first meaningful control, instead of leaving it on a disposed node.
+        if (tv && !playerActive && route != previous &&
+            (route !in mainNavigationRoutes || previous !in mainNavigationRoutes)
+        ) {
+            delay(105L)
+            routeEntryFocusRequesters[route]?.requestFocusWithRetry(attempts = 6, delayMillis = 45L)
+        }
+    }
+    LaunchedEffect(playerActive, route) {
+        val returnedFromPlayer = previousPlayerActive && !playerActive
+        previousPlayerActive = playerActive
+        if (tv && returnedFromPlayer) {
+            // The player temporarily makes the page tree non-focusable. Restore to the current
+            // section's semantic entry after the page is visible again, rather than the first
+            // arbitrary node reported by Compose's spatial-search algorithm.
+            delay(180L)
+            val navRoute = navigationRailDestination(route)
+            routeEntryFocusRequesters[navRoute]?.requestFocusWithRetry(attempts = 8, delayMillis = 55L)
         }
     }
     LiquidGlassBackdrop(Modifier.fillMaxSize()) {
@@ -304,8 +349,20 @@ private fun AdaptiveShell(
                             onClick = { onRoute(id) },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .then(if (id == "home") Modifier.focusRequester(initialHomeFocusRequester) else Modifier)
+                                .focusRequester(navFocusRequesters.getValue(id))
                                 .bringIntoViewRequester(bringIntoView)
+                                .onPreviewKeyEvent { event ->
+                                    val entryTarget = routeEntryFocusRequesters[id]
+                                    if (tv && route == id && entryTarget != null &&
+                                        event.type == KeyEventType.KeyDown && event.key == Key.DirectionRight
+                                    ) {
+                                        railScope.launch {
+                                            delay(45L)
+                                            entryTarget.requestFocusWithRetry(attempts = 6, delayMillis = 45L)
+                                        }
+                                        true
+                                    } else false
+                                }
                                 .remoteFocusOutline(cornerRadius = 18.dp, enabled = tv)
                                 .onFocusChanged { state ->
                                     focused = state.isFocused
@@ -366,7 +423,21 @@ private fun AdaptiveShell(
                         visitedLibraryRoutes = visitedLibraryRoutes + route
                     }
                 }
-                Box(Modifier.fillMaxSize().focusGroup()) {
+                Box(
+                    Modifier.fillMaxSize().focusGroup().onKeyEvent { event ->
+                        // Child controls and a local category rail get first chance at LEFT. Only
+                        // when no child consumes it do we return to the selected app-level tab.
+                        if (tv && allowNavReturnFocus && event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft) {
+                            val navRoute = navigationRailDestination(route)
+                            val target = navFocusRequesters[navRoute] ?: navFocusRequesters["settings"]
+                            if (target != null) railScope.launch {
+                                delay(35L)
+                                target.requestFocusWithRetry(attempts = 6, delayMillis = 45L)
+                            }
+                            target != null
+                        } else false
+                    }
+                ) {
                     renderedLibraryRoutes.forEach { section ->
                         key(section) {
                             val active = route == section
@@ -393,7 +464,7 @@ private fun AdaptiveShell(
                             ) {
                                 // Library screens remain warm while another library or a secondary
                                 // page is open; screenActive stops Live TV's mini-player off-route.
-                                content(section)
+                                content(section, routeEntryFocusRequesters[section])
                             }
                         }
                     }
@@ -407,7 +478,7 @@ private fun AdaptiveShell(
                             label = "secondary-route-content",
                         ) { activeRoute ->
                             saveableStateHolder.SaveableStateProvider(activeRoute) {
-                                Box(Modifier.fillMaxSize()) { content(activeRoute) }
+                                Box(Modifier.fillMaxSize()) { content(activeRoute, routeEntryFocusRequesters[activeRoute]) }
                             }
                         }
                     }
@@ -440,8 +511,18 @@ private val homeSectionTitles = linkedMapOf(
 
 @Composable
 @OptIn(ExperimentalFoundationApi::class)
-private fun HomeScreen(vm: MainViewModel, catalog: CatalogState?, fav: FavoriteState, watch: List<WatchEntry>, sources: List<MediaSourceConfig>, onRoute: (String) -> Unit, onPlay: (MediaItem) -> Unit) {
+private fun HomeScreen(
+    vm: MainViewModel,
+    catalog: CatalogState?,
+    fav: FavoriteState,
+    watch: List<WatchEntry>,
+    sources: List<MediaSourceConfig>,
+    onRoute: (String) -> Unit,
+    onPlay: (MediaItem) -> Unit,
+    entryFocusRequester: FocusRequester? = null,
+) {
     val settings by vm.settings.collectAsStateWithLifecycle()
+    val remoteFirstDevice = LocalContext.current.isTvOrFireTvDevice()
     val activeSource by vm.activeSource.collectAsStateWithLifecycle()
     val allSectionOrder = remember(settings.homeSectionOrder) {
         // Ignore stale library-only sections from older Android preferences.
@@ -458,6 +539,14 @@ private fun HomeScreen(vm: MainViewModel, catalog: CatalogState?, fav: FavoriteS
     var trendingMovies by remember(settings.tmdbApiKey) { mutableStateOf<List<MetadataResult>>(emptyList()) }
     var trendingUnavailable by remember { mutableStateOf<String?>(null) }
     var continueMenuOpen by remember { mutableStateOf(false) }
+    val detailFocusScope = rememberCoroutineScope()
+    val closeHomeDetail: () -> Unit = {
+        selectedDetail = null
+        if (remoteFirstDevice) detailFocusScope.launch {
+            delay(90L)
+            entryFocusRequester?.requestFocusWithRetry(attempts = 6, delayMillis = 45L)
+        }
+    }
 
     LaunchedEffect(settings.tmdbApiKey, visibleOrder.contains("trendingSeries"), visibleOrder.contains("trendingMovies")) {
         if (settings.tmdbApiKey.isBlank()) {
@@ -471,8 +560,8 @@ private fun HomeScreen(vm: MainViewModel, catalog: CatalogState?, fav: FavoriteS
     if (selectedDetail != null) {
         val detail = selectedDetail!!
         when (detail.kind) {
-            MediaKind.MOVIE -> MovieDetailScreen(vm.app, detail, catalog?.movies.orEmpty(), fav, onBack = { selectedDetail = null }, onPlay = { item, pos -> onPlayWithPosition(onPlay, item, pos) })
-            MediaKind.SERIES -> SeriesDetailScreen(vm.app, detail, catalog?.episodes.orEmpty(), fav, onBack = { selectedDetail = null }, onPlay = { item, pos -> onPlayWithPosition(onPlay, item, pos) }, allSeries = catalog?.series.orEmpty(), onOpenAlternateSeries = { selectedDetail = it })
+            MediaKind.MOVIE -> MovieDetailScreen(vm.app, detail, catalog?.movies.orEmpty(), fav, onBack = closeHomeDetail, onPlay = { item, pos -> onPlayWithPosition(onPlay, item, pos) }, entryFocusRequester = entryFocusRequester)
+            MediaKind.SERIES -> SeriesDetailScreen(vm.app, detail, catalog?.episodes.orEmpty(), fav, onBack = closeHomeDetail, onPlay = { item, pos -> onPlayWithPosition(onPlay, item, pos) }, allSeries = catalog?.series.orEmpty(), onOpenAlternateSeries = { selectedDetail = it }, entryFocusRequester = entryFocusRequester)
             else -> onPlay(detail)
         }
         return
@@ -506,7 +595,14 @@ private fun HomeScreen(vm: MainViewModel, catalog: CatalogState?, fav: FavoriteS
         // The iOS Home menu is always available, even if the user hides the heading section.
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Box {
-                Surface(onClick = { homeMenuOpen = true }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp), shape = RoundedCornerShape(50), color = Color.Transparent) {
+                Surface(
+                    onClick = { homeMenuOpen = true },
+                    modifier = Modifier
+                        .then(entryFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
+                        .remoteFocusOutline(cornerRadius = 50.dp),
+                    shape = RoundedCornerShape(50),
+                    color = Color.Transparent,
+                ) {
                     LiquidGlassPill(selected = true) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                             Icon(when (homeMode) { "live" -> Icons.Default.LiveTv; "movies" -> Icons.Default.Movie; "series" -> Icons.Default.Tv; else -> Icons.Default.Home }, null, tint = Color(0xFF9ABEFF), modifier = Modifier.size(17.dp))
@@ -888,6 +984,8 @@ private fun MediaCard(
     onToggleFavorite: (() -> Unit)? = null,
     widthOverride: Dp? = null,
     onFocus: (() -> Unit)? = null,
+    focusRequester: FocusRequester? = null,
+    additionalFocusRequester: FocusRequester? = null,
 ) {
     val w = widthOverride ?: if (item.kind == MediaKind.LIVE) 190.dp else 160.dp
     val h = w * if (item.kind == MediaKind.LIVE) (108f / 190f) else (220f / 160f)
@@ -895,6 +993,8 @@ private fun MediaCard(
     val scale by androidx.compose.animation.core.animateFloatAsState(if (focused) 1.025f else 1f, label = "media-card-focus")
     Surface(
         modifier = Modifier.width(w)
+            .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
+            .then(additionalFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
             .graphicsLayer { scaleX = scale; scaleY = scale }
             .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus?.invoke() }
             .combinedClickable(
@@ -917,7 +1017,7 @@ private fun MediaCard(
                     if (onToggleFavorite != null) {
                         Surface(
                             onClick = onToggleFavorite,
-                            modifier = Modifier.align(Alignment.TopEnd).padding(7.dp).size(34.dp),
+                            modifier = Modifier.align(Alignment.TopEnd).padding(7.dp).size(34.dp).remoteFocusOutline(cornerRadius = 50.dp),
                             shape = RoundedCornerShape(50),
                             color = Color.Black.copy(.35f),
                             border = BorderStroke(.7.dp, Color.White.copy(.28f))
@@ -944,6 +1044,31 @@ private fun MediaCard(
 
 private data class LibraryCategoryEntry(val filterId: String, val name: String)
 
+/**
+ * LazyColumn item index of the first catalogue result for TV rail -> content DPAD movement.
+ * In Categorie TV mode the standalone category-tile section is hidden, so every counted entry
+ * here maps one-to-one to an item emitted before the first media row.
+ */
+internal fun libraryFirstResultItemIndex(
+    visibleSections: List<String>,
+    groupAfterSearch: Boolean,
+    showContinue: Boolean,
+    showTrending: Boolean,
+): Int {
+    var index = if (groupAfterSearch) 0 else 1 // group/header row before sections
+    visibleSections.forEach { section ->
+        when (section) {
+            "search" -> {
+                index++
+                if (groupAfterSearch) index++ // group selector below search
+            }
+            "continueWatching" -> if (showContinue) index++
+            "trendingMovies", "trendingSeries" -> if (showTrending) index++
+        }
+    }
+    return index.coerceAtLeast(0)
+}
+
 /** Category tiles from the independently configurable iOS "Categorie" section. */
 private fun buildLibraryCategoryEntries(categories: List<Category>, items: List<MediaItem>): List<LibraryCategoryEntry> {
     val counts = items.categoryCounts()
@@ -959,7 +1084,13 @@ private fun buildLibraryCategoryEntries(categories: List<Category>, items: List<
 }
 
 @Composable
-private fun LibraryScreenTitle(title: String, onCustomize: () -> Unit, onFocus: (() -> Unit)? = null) {
+private fun LibraryScreenTitle(
+    title: String,
+    onCustomize: () -> Unit,
+    onFocus: (() -> Unit)? = null,
+    focusRequester: FocusRequester? = null,
+    entryFocusRequester: FocusRequester? = null,
+) {
     Row(
         Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -974,7 +1105,16 @@ private fun LibraryScreenTitle(title: String, onCustomize: () -> Unit, onFocus: 
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
-        Surface(onClick = onCustomize, modifier = Modifier.onFocusChanged { if (it.isFocused) onFocus?.invoke() }.remoteFocusOutline(cornerRadius = 50.dp), shape = RoundedCornerShape(50), color = Color.Transparent) {
+        Surface(
+            onClick = onCustomize,
+            modifier = Modifier
+                .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
+                .then(entryFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
+                .onFocusChanged { if (it.isFocused) onFocus?.invoke() }
+                .remoteFocusOutline(cornerRadius = 50.dp),
+            shape = RoundedCornerShape(50),
+            color = Color.Transparent,
+        ) {
             LiquidGlassPill {
                 Row(
                     Modifier.height(26.dp),
@@ -1045,12 +1185,15 @@ private fun CatalogScreen(
     onCustomize: () -> Unit = {},
     isTelevision: Boolean = false,
     screenActive: Boolean = true,
+    entryFocusRequester: FocusRequester? = null,
 ) {
     var selected by remember { mutableStateOf<MediaItem?>(null) }
     var filter by remember { mutableStateOf<String?>(null) }
     var searchQuery by remember(scopeKey) { mutableStateOf("") }
     var trending by remember { mutableStateOf<List<MetadataResult>>(emptyList()) }
     var showTrendUnavailable by remember { mutableStateOf(false) }
+    val listState = rememberLazyListState()
+    val scrollScope = rememberCoroutineScope()
     val libSettings by vm.settings.collectAsStateWithLifecycle()
     val watch by vm.watch.collectAsStateWithLifecycle()
     val tvCategoryMode = libSettings.groupUIStyle == "categorie_tv"
@@ -1066,7 +1209,16 @@ private fun CatalogScreen(
         }
     }
     if (detail && selected != null && screenActive) {
-        MovieDetailScreen(vm.app, selected!!, vm.catalog.value?.movies.orEmpty(), favorite, onBack = { selected = null; if (tvCategoryMode) categoryRailExpanded = true }, onPlay = { i, pos -> onPlayWithPosition(onPlay, i, pos) })
+        MovieDetailScreen(
+            vm.app, selected!!, vm.catalog.value?.movies.orEmpty(), favorite,
+            onBack = {
+                selected = null
+                if (tvCategoryMode) categoryRailExpanded = true
+                if (isTelevision) scrollScope.launch { delay(90L); entryFocusRequester?.requestFocusWithRetry(attempts = 6, delayMillis = 45L) }
+            },
+            onPlay = { i, pos -> onPlayWithPosition(onPlay, i, pos) },
+            entryFocusRequester = entryFocusRequester,
+        )
         return
     }
     BackHandler(enabled = screenActive && tvCategoryMode && !categoryRailExpanded) { categoryRailExpanded = true }
@@ -1116,12 +1268,34 @@ private fun CatalogScreen(
                 .sortedByDescending { watchedIds[it.id]?.lastWatchedMs ?: 0L }
         }
     }
-    val listState = rememberLazyListState()
-    val scrollScope = rememberCoroutineScope()
+    val firstMediaFocusRequester = remember(scopeKey) { FocusRequester() }
+    val libraryFallbackFocusRequester = remember(scopeKey) { FocusRequester() }
     val showContinue = detail && searchQuery.isBlank() && continueItems.isNotEmpty()
     val showTrending = detail && searchQuery.isBlank()
     val visibleContentSections = if (searchQuery.isNotBlank()) visibleSections.filter { it == "search" } else visibleSections
     val groupAfterSearch = libSettings.groupUIStyle == "scorrevole" && visibleSections.firstOrNull() == "search" && !tvCategoryMode
+    val firstResultItemIndex = remember(visibleContentSections, groupAfterSearch, showContinue, showTrending) {
+        libraryFirstResultItemIndex(visibleContentSections, groupAfterSearch, showContinue, showTrending)
+    }
+    val focusFirstLibraryResult: () -> Unit = {
+        scrollScope.launch {
+            // Filter results may still be produced on Dispatchers.IO after the user changes a group.
+            var attempts = 0
+            while (filtered.isEmpty() && searchQuery.isBlank() && items.isNotEmpty() && attempts < 6) {
+                delay(35L)
+                attempts++
+            }
+            if (filtered.isNotEmpty()) {
+                runCatching { listState.scrollToItem(firstResultItemIndex) }
+                delay(70L)
+                if (!firstMediaFocusRequester.requestFocusWithRetry(attempts = 5, delayMillis = 45L)) {
+                    libraryFallbackFocusRequester.requestFocusWithRetry()
+                }
+            } else {
+                libraryFallbackFocusRequester.requestFocusWithRetry()
+            }
+        }
+    }
     val railOptions = rememberTvCategoryRailOptions(categories, items, favoriteIds)
     val selectedRailId = when {
         filter == TV_CATEGORY_FAVORITES -> TV_CATEGORY_FAVORITES
@@ -1140,7 +1314,9 @@ private fun CatalogScreen(
                     filter = when (id) { TV_CATEGORY_ALL -> null; TV_CATEGORY_FAVORITES -> TV_CATEGORY_FAVORITES; else -> id }
                     searchQuery = ""
                     scrollScope.launch { listState.scrollToItem(0) }
-                }
+                },
+                entryFocusRequester = if (tvCategoryMode) entryFocusRequester else null,
+                onMoveRight = { focusFirstLibraryResult(); true },
             )
         }
         Column(
@@ -1152,7 +1328,13 @@ private fun CatalogScreen(
             },
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-        LibraryScreenTitle(title, onCustomize, onFocus = { if (tvCategoryMode) categoryRailExpanded = false })
+        LibraryScreenTitle(
+            title,
+            onCustomize,
+            onFocus = { if (tvCategoryMode) categoryRailExpanded = false },
+            focusRequester = libraryFallbackFocusRequester,
+            entryFocusRequester = if (!tvCategoryMode && filtered.isEmpty()) entryFocusRequester else null,
+        )
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             val tileColumns = ((maxWidth.value + 9f) / 159f).toInt().coerceAtLeast(1)
             val tileWidth = ((maxWidth.value - 9f * (tileColumns - 1)) / tileColumns).dp.coerceAtMost(220.dp)
@@ -1286,7 +1468,9 @@ private fun CatalogScreen(
                                     onClick = { if (detail) selected = item else onPlay(item) },
                                     onToggleFavorite = { vm.toggleFavorite(item) },
                                     widthOverride = cardWidth,
-                                    onFocus = { if (tvCategoryMode) categoryRailExpanded = false }
+                                    onFocus = { if (tvCategoryMode) categoryRailExpanded = false },
+                                    focusRequester = if (item.id == filtered.firstOrNull()?.id) firstMediaFocusRequester else null,
+                                    additionalFocusRequester = if (!tvCategoryMode && item.id == filtered.firstOrNull()?.id) entryFocusRequester else null,
                                 )
                             }
                         }
@@ -1303,6 +1487,7 @@ private fun CatalogScreen(
             expanded = categoryRailExpanded,
             expandedWidth = mobileRailWidth,
             modifier = Modifier.align(Alignment.CenterStart).zIndex(30f),
+            entryFocusRequester = entryFocusRequester,
             onSelect = { id ->
                 filter = when (id) { TV_CATEGORY_ALL -> null; TV_CATEGORY_FAVORITES -> TV_CATEGORY_FAVORITES; else -> id }
                 searchQuery = ""
@@ -1333,12 +1518,15 @@ private fun SeriesScreen(
     onCustomize: () -> Unit = {},
     isTelevision: Boolean = false,
     screenActive: Boolean = true,
+    entryFocusRequester: FocusRequester? = null,
 ) {
     var selected by remember { mutableStateOf<MediaItem?>(null) }
     var filter by remember { mutableStateOf<String?>(null) }
     var searchQuery by remember { mutableStateOf("") }
     var trending by remember { mutableStateOf<List<MetadataResult>>(emptyList()) }
     var showTrendUnavailable by remember { mutableStateOf(false) }
+    val listState = rememberLazyListState()
+    val scrollScope = rememberCoroutineScope()
     val libSettings by vm.settings.collectAsStateWithLifecycle()
     val watch by vm.watch.collectAsStateWithLifecycle()
     val tvCategoryMode = libSettings.groupUIStyle == "categorie_tv"
@@ -1354,7 +1542,18 @@ private fun SeriesScreen(
         }
     }
     if (selected != null && screenActive) {
-        SeriesDetailScreen(vm.app, selected!!, episodes, favorite, onBack = { selected = null; if (tvCategoryMode) categoryRailExpanded = true }, onPlay = { i, pos -> onPlayWithPosition(onPlay, i, pos) }, allSeries = series, onOpenAlternateSeries = { selected = it })
+        SeriesDetailScreen(
+            vm.app, selected!!, episodes, favorite,
+            onBack = {
+                selected = null
+                if (tvCategoryMode) categoryRailExpanded = true
+                if (isTelevision) scrollScope.launch { delay(90L); entryFocusRequester?.requestFocusWithRetry(attempts = 6, delayMillis = 45L) }
+            },
+            onPlay = { i, pos -> onPlayWithPosition(onPlay, i, pos) },
+            allSeries = series,
+            onOpenAlternateSeries = { selected = it },
+            entryFocusRequester = entryFocusRequester,
+        )
         return
     }
     BackHandler(enabled = screenActive && tvCategoryMode && !categoryRailExpanded) { categoryRailExpanded = true }
@@ -1415,8 +1614,29 @@ private fun SeriesScreen(
     val showTrending = searchQuery.isBlank()
     val visibleContentSections = if (searchQuery.isNotBlank()) visibleSections.filter { it == "search" } else visibleSections
     val groupAfterSearch = libSettings.groupUIStyle == "scorrevole" && visibleSections.firstOrNull() == "search" && !tvCategoryMode
-    val listState = rememberLazyListState()
-    val scrollScope = rememberCoroutineScope()
+    val firstMediaFocusRequester = remember { FocusRequester() }
+    val libraryFallbackFocusRequester = remember { FocusRequester() }
+    val firstResultItemIndex = remember(visibleContentSections, groupAfterSearch, showContinue, showTrending) {
+        libraryFirstResultItemIndex(visibleContentSections, groupAfterSearch, showContinue, showTrending)
+    }
+    val focusFirstLibraryResult: () -> Unit = {
+        scrollScope.launch {
+            var attempts = 0
+            while (filtered.isEmpty() && searchQuery.isBlank() && series.isNotEmpty() && attempts < 6) {
+                delay(35L)
+                attempts++
+            }
+            if (filtered.isNotEmpty()) {
+                runCatching { listState.scrollToItem(firstResultItemIndex) }
+                delay(70L)
+                if (!firstMediaFocusRequester.requestFocusWithRetry(attempts = 5, delayMillis = 45L)) {
+                    libraryFallbackFocusRequester.requestFocusWithRetry()
+                }
+            } else {
+                libraryFallbackFocusRequester.requestFocusWithRetry()
+            }
+        }
+    }
     val railOptions = rememberTvCategoryRailOptions(categories, series, favoriteIds)
     val selectedRailId = when {
         filter == TV_CATEGORY_FAVORITES -> TV_CATEGORY_FAVORITES
@@ -1435,7 +1655,9 @@ private fun SeriesScreen(
                     filter = when (id) { TV_CATEGORY_ALL -> null; else -> id }
                     searchQuery = ""
                     scrollScope.launch { listState.scrollToItem(0) }
-                }
+                },
+                entryFocusRequester = if (tvCategoryMode) entryFocusRequester else null,
+                onMoveRight = { focusFirstLibraryResult(); true },
             )
         }
         Column(
@@ -1447,7 +1669,13 @@ private fun SeriesScreen(
             },
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-        LibraryScreenTitle("Serie TV", onCustomize, onFocus = { if (tvCategoryMode) categoryRailExpanded = false })
+        LibraryScreenTitle(
+            "Serie TV",
+            onCustomize,
+            onFocus = { if (tvCategoryMode) categoryRailExpanded = false },
+            focusRequester = libraryFallbackFocusRequester,
+            entryFocusRequester = if (!tvCategoryMode && filtered.isEmpty()) entryFocusRequester else null,
+        )
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             val tileColumns = ((maxWidth.value + 9f) / 159f).toInt().coerceAtLeast(1)
             val tileWidth = ((maxWidth.value - 9f * (tileColumns - 1)) / tileColumns).dp.coerceAtMost(220.dp)
@@ -1565,7 +1793,16 @@ private fun SeriesScreen(
                             val firstIndex = rowIndex * gridColumns
                             for (index in firstIndex until minOf(filtered.size, firstIndex + gridColumns)) {
                                 val item = filtered[index]
-                                MediaCard(item, item.id in favorite.series, onClick = { selected = item }, onToggleFavorite = { vm.toggleFavorite(item) }, widthOverride = cardWidth, onFocus = { if (tvCategoryMode) categoryRailExpanded = false })
+                                MediaCard(
+                                    item,
+                                    item.id in favorite.series,
+                                    onClick = { selected = item },
+                                    onToggleFavorite = { vm.toggleFavorite(item) },
+                                    widthOverride = cardWidth,
+                                    onFocus = { if (tvCategoryMode) categoryRailExpanded = false },
+                                    focusRequester = if (item.id == filtered.firstOrNull()?.id) firstMediaFocusRequester else null,
+                                    additionalFocusRequester = if (!tvCategoryMode && item.id == filtered.firstOrNull()?.id) entryFocusRequester else null,
+                                )
                             }
                         }
                     }
@@ -1581,6 +1818,7 @@ private fun SeriesScreen(
             expanded = categoryRailExpanded,
             expandedWidth = mobileRailWidth,
             modifier = Modifier.align(Alignment.CenterStart).zIndex(30f),
+            entryFocusRequester = entryFocusRequester,
             onSelect = { id ->
                 filter = when (id) { TV_CATEGORY_ALL -> null; else -> id }
                 searchQuery = ""
@@ -1594,19 +1832,29 @@ private fun SeriesScreen(
 }
 
 @Composable
-private fun SearchScreen(app: GassPlayerApplication, catalog: CatalogState?, onPlay: (MediaItem) -> Unit, onRoute: (String) -> Unit) {
+private fun SearchScreen(
+    app: GassPlayerApplication,
+    catalog: CatalogState?,
+    onPlay: (MediaItem) -> Unit,
+    onRoute: (String) -> Unit,
+    entryFocusRequester: FocusRequester? = null,
+) {
     var q by remember { mutableStateOf("") }
     var submitted by remember { mutableStateOf("") }
     val history by app.search.flow.collectAsStateWithLifecycle(SearchHistory())
     val scope = rememberCoroutineScope()
+    val inputFocusRequester = remember { FocusRequester() }
     val results = remember(submitted, catalog) { if (submitted.isBlank()) emptyList() else catalog?.search(submitted, 100).orEmpty() }
-    Column {
+    Column(Modifier.focusGroup()) {
         EpgStyleSearchField(
             value = q,
             onValueChange = { q = it; submitted = it },
             modifier = Modifier.fillMaxWidth(),
             placeholder = "Cerca live, film e serie",
-            onSubmit = { submitted = q; scope.launch { app.search.add(q) } }
+            onSubmit = { submitted = q; scope.launch { app.search.add(q) } },
+            focusRequester = entryFocusRequester,
+            inputFocusRequester = inputFocusRequester,
+            onActivate = { runCatching { inputFocusRequester.requestFocus() } },
         )
         Spacer(Modifier.height(10.dp))
         if (submitted.isBlank() && history.terms.isNotEmpty()) {
@@ -1621,14 +1869,18 @@ private fun SearchScreen(app: GassPlayerApplication, catalog: CatalogState?, onP
 }
 
 @Composable
-private fun ExternalEpgManageScreen(app: GassPlayerApplication, onBack: () -> Unit) {
+private fun ExternalEpgManageScreen(app: GassPlayerApplication, onBack: () -> Unit, entryFocusRequester: FocusRequester? = null) {
     val sources by app.externalEpg.flow.collectAsStateWithLifecycle(emptyList())
     val scope = rememberCoroutineScope()
     var name by remember { mutableStateOf("") }
     var url by remember { mutableStateOf("") }
     Column(Modifier.fillMaxSize().padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = onBack, modifier = Modifier.focusable()) { Icon(Icons.Default.ArrowBack, null); Spacer(Modifier.width(4.dp)); Text("Indietro") }
+            OutlinedButton(
+                onClick = onBack,
+                modifier = Modifier.then(entryFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
+                    .remoteFocusOutline(cornerRadius = 50.dp),
+            ) { Icon(Icons.Default.ArrowBack, null); Spacer(Modifier.width(4.dp)); Text("Indietro") }
             Text("Fonti XMLTV esterne", color = glassForeground(), fontSize = 20.sp, fontWeight = FontWeight.Bold)
         }
         OutlinedTextField(name, { name = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Nome fonte") })
@@ -1885,15 +2137,30 @@ fun AddSourceDialog(app: GassPlayerApplication, vm: MainViewModel, onDismiss: ()
     }
 }
 
-@Composable private fun DownloadsScreen(app: GassPlayerApplication) {
+@Composable private fun DownloadsScreen(app: GassPlayerApplication, entryFocusRequester: FocusRequester? = null) {
     val infos by androidx.work.WorkManager.getInstance(app).getWorkInfosByTagFlow("gass_download").collectAsStateWithLifecycle(emptyList())
     Column {
-        Text("Download in background", color = glassForeground())
+        Text(
+            "Download in background",
+            color = glassForeground(),
+            modifier = Modifier.then(entryFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
+                .focusable().remoteFocusOutline(cornerRadius = 8.dp),
+        )
         Spacer(Modifier.height(10.dp))
-        LazyColumn(verticalArrangement=Arrangement.spacedBy(8.dp)){
-            items(infos){info->
-                val p = info.progress.getInt("progress", if(info.state==androidx.work.WorkInfo.State.SUCCEEDED) 100 else 0)
-                LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius = 18.dp, contentPadding = 14.dp){Column(verticalArrangement=Arrangement.spacedBy(8.dp)){Text(info.outputData.getString("file") ?: info.id.toString(),color = glassForeground());LinearProgressIndicator(progress={p/100f},Modifier.fillMaxWidth(), color = Color(0xFF8CB7FF), trackColor = Color.White.copy(.08f));Text(info.state.name,color = glassForeground().copy(.6f))}}
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(infos) { info ->
+                val p = info.progress.getInt("progress", if (info.state == androidx.work.WorkInfo.State.SUCCEEDED) 100 else 0)
+                LiquidGlassSurface(
+                    Modifier.fillMaxWidth().focusable().remoteFocusOutline(cornerRadius = 18.dp),
+                    cornerRadius = 18.dp,
+                    contentPadding = 14.dp,
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(info.outputData.getString("file") ?: info.id.toString(), color = glassForeground())
+                        LinearProgressIndicator(progress = { p / 100f }, modifier = Modifier.fillMaxWidth(), color = Color(0xFF8CB7FF), trackColor = Color.White.copy(.08f))
+                        Text(info.state.name, color = glassForeground().copy(.6f))
+                    }
+                }
             }
         }
     }
@@ -1903,16 +2170,32 @@ fun AddSourceDialog(app: GassPlayerApplication, vm: MainViewModel, onDismiss: ()
 @Composable private fun SettingToggle(label:String, value:Boolean, onChange:(Boolean)->Unit){ Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){ Text(label,color = glassForeground()); Switch(value,onChange) } }
 @Composable private fun SettingRow(label:String, value:String, choices:List<String>, onChange:(String)->Unit){ var expanded by remember{mutableStateOf(false)}; Box{ OutlinedButton({expanded=true},Modifier.fillMaxWidth()){ Text("$label: $value") }; DropdownMenu(expanded,{expanded=false}){choices.forEach{DropdownMenuItem({Text(it)},onClick={onChange(it);expanded=false})}} } }
 
-@Composable private fun ParentalScreen(vm:MainViewModel,state:ParentalState){ var pin by remember{mutableStateOf("")}; var newPin by remember{mutableStateOf("")}; var msg by remember{mutableStateOf<String?>(null)}; val scope=rememberCoroutineScope(); Column(verticalArrangement=Arrangement.spacedBy(10.dp)){Text("PIN locale con SHA-256 e blocco per contenuto/categoria",color = glassForeground().copy(.7f));OutlinedTextField(newPin,{newPin=it},label={Text("Nuovo PIN")});Button({scope.launch{vm.app.parental.setPin(newPin);msg="PIN impostato"}}){Text("Imposta PIN")};OutlinedTextField(pin,{pin=it},label={Text("Verifica PIN")});Button({scope.launch{msg=if(vm.app.parental.verify(pin))"PIN corretto" else "PIN non valido"}}){Text("Verifica")};msg?.let{Text(it,color = glassForeground())} }
+@Composable private fun ParentalScreen(vm: MainViewModel, state: ParentalState, entryFocusRequester: FocusRequester? = null) {
+    var pin by remember { mutableStateOf("") }
+    var newPin by remember { mutableStateOf("") }
+    var msg by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("PIN locale con SHA-256 e blocco per contenuto/categoria", color = glassForeground().copy(.7f))
+        OutlinedTextField(
+            newPin, { newPin = it },
+            modifier = Modifier.fillMaxWidth().then(entryFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier),
+            label = { Text("Nuovo PIN") },
+        )
+        Button(onClick = { scope.launch { vm.app.parental.setPin(newPin); msg = "PIN impostato" } }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp)) { Text("Imposta PIN") }
+        OutlinedTextField(pin, { pin = it }, label = { Text("Verifica PIN") })
+        Button(onClick = { scope.launch { msg = if (vm.app.parental.verify(pin)) "PIN corretto" else "PIN non valido" } }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp)) { Text("Verifica") }
+        msg?.let { Text(it, color = glassForeground()) }
+    }
 }
 
-@Composable private fun VpnScreen(app:GassPlayerApplication){
+@Composable private fun VpnScreen(app: GassPlayerApplication, entryFocusRequester: FocusRequester? = null) {
     val cfg by app.prefs.vpnFlow.collectAsStateWithLifecycle(VPNConfig())
     var server by remember(cfg){mutableStateOf(cfg.serverEndpoint)}; var user by remember(cfg){mutableStateOf(cfg.username)}; var pass by remember(cfg){mutableStateOf(cfg.password)}; var state by remember{mutableStateOf("Disconnessa")}; var discovery by remember{mutableStateOf<VPNConfig?>(null)}; val scope=rememberCoroutineScope()
     val launcher=rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()){ result -> if(result.resultCode==Activity.RESULT_OK) runCatching{app.vpn.startIkev2();state="Connessa"} }
     LazyColumn(verticalArrangement=Arrangement.spacedBy(8.dp)){
         item{Text("IKEv2 usa lo stack VPN nativo Android; WireGuard usa il tunnel ufficiale del progetto WireGuard.",color = glassForeground().copy(.7f))}
-        item{OutlinedTextField(server,{server=it},Modifier.fillMaxWidth(),label={Text("Endpoint")})}
+        item { OutlinedTextField(server, { server = it }, Modifier.fillMaxWidth().then(entryFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier), label = { Text("Endpoint") }) }
         item{OutlinedTextField(user,{user=it},Modifier.fillMaxWidth(),label={Text("Username")})}
         item{OutlinedTextField(pass,{pass=it},Modifier.fillMaxWidth(),label={Text("Password")})}
         item{Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
@@ -1926,15 +2209,23 @@ fun AddSourceDialog(app: GassPlayerApplication, vm: MainViewModel, onDismiss: ()
     }
 }
 
-@Composable private fun BackupScreen(app:GassPlayerApplication){
+@Composable private fun BackupScreen(app: GassPlayerApplication, entryFocusRequester: FocusRequester? = null) {
     val context=LocalContext.current; val scope=rememberCoroutineScope(); var status by remember{mutableStateOf("")}
     val create=rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")){uri-> if(uri!=null) scope.launch{val text=app.backup.fullExport(); context.contentResolver.openOutputStream(uri)?.use{it.write(text.toByteArray())};status="Backup esportato"}}
     val pick=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()){uri-> if(uri!=null) scope.launch{val text=context.contentResolver.openInputStream(uri)?.bufferedReader()?.readText().orEmpty();runCatching{app.backup.importAny(text)};status="Import completato o parziale"}}
-    Column(verticalArrangement=Arrangement.spacedBy(10.dp)){Button({create.launch("gassplayer-backup.json")}){Text("Esporta sorgenti + preferenze")};OutlinedButton({pick.launch(arrayOf("application/json","text/*"))}){Text("Importa JSON")};Button({scope.launch{app.cloud.requestBackup();status="Richiesta Auto Backup inviata"}}){Text("Sincronizza con backup Android")};Text(status,color = glassForeground())}
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Button(
+            onClick = { create.launch("gassplayer-backup.json") },
+            modifier = Modifier.then(entryFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier).remoteFocusOutline(cornerRadius = 50.dp),
+        ) { Text("Esporta sorgenti + preferenze") }
+        OutlinedButton(onClick = { pick.launch(arrayOf("application/json", "text/*")) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp)) { Text("Importa JSON") }
+        Button(onClick = { scope.launch { app.cloud.requestBackup(); status = "Richiesta Auto Backup inviata" } }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp)) { Text("Sincronizza con backup Android") }
+        Text(status, color = glassForeground())
+    }
 }
 
 @Composable
-private fun TraktScreen(app: GassPlayerApplication, settings: AppSettings, vm: MainViewModel) {
+private fun TraktScreen(app: GassPlayerApplication, settings: AppSettings, vm: MainViewModel, entryFocusRequester: FocusRequester? = null) {
     val account by app.prefs.traktFlow.collectAsStateWithLifecycle(TraktAccount())
     var local by remember(settings) { mutableStateOf(settings) }
     var device by remember { mutableStateOf<TraktDeviceCode?>(null) }
@@ -1952,7 +2243,7 @@ private fun TraktScreen(app: GassPlayerApplication, settings: AppSettings, vm: M
     }
     LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 40.dp)) {
         item { Text("Collega Trakt.tv", color = glassForeground(), fontSize = 20.sp, fontWeight = FontWeight.Bold) }
-        item { OutlinedTextField(local.traktClientId, { local = local.copy(traktClientId = it); vm.updateSettings(local) }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("Client ID") }) }
+        item { OutlinedTextField(local.traktClientId, { local = local.copy(traktClientId = it); vm.updateSettings(local) }, modifier = Modifier.fillMaxWidth().then(entryFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier), singleLine = true, label = { Text("Client ID") }) }
         item { OutlinedTextField(local.traktClientSecret, { local = local.copy(traktClientSecret = it); vm.updateSettings(local) }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("Client Secret") }) }
         if (account.accessToken.isNotBlank()) {
             item { LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius = 18.dp, contentPadding = 14.dp) { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { Text("Connesso a Trakt.tv", color = glassForeground(), fontWeight = FontWeight.Bold); Text("Lo scrobbling di film/episodi usa il token salvato su questo dispositivo.", color = glassForeground().copy(.65f)); OutlinedButton({ scope.launch { app.prefs.saveTrakt(TraktAccount()) } }) { Text("Disconnetti") } } } }
@@ -1984,6 +2275,17 @@ private fun HomeCustomizationSheet(
     var dragTranslationPx by remember(scopeKey) { mutableStateOf(0f) }
     var dragOriginalOrder by remember(scopeKey) { mutableStateOf<List<String>>(emptyList()) }
     var dragOrder by remember(scopeKey) { mutableStateOf<List<String>?>(null) }
+    val customizationEntryFocusRequester = remember(scopeKey) { FocusRequester() }
+
+    LaunchedEffect(scopeKey, isTv) {
+        if (isTv) {
+            delay(120L)
+            if (!customizationEntryFocusRequester.requestFocusWithRetry(attempts = 6, delayMillis = 45L)) {
+                // Empty/fully-hidden layouts still offer an Add action as a remote entry point.
+                customizationEntryFocusRequester.requestFocusWithRetry(attempts = 3, delayMillis = 45L)
+            }
+        }
+    }
 
     val defaults = when (scopeKey) {
         "live" -> defaultLiveSections
@@ -2192,7 +2494,9 @@ private fun HomeCustomizationSheet(
                         Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
                             Surface(
                                 onClick = { tvMoveMenuFor = id },
-                                modifier = Modifier.size(40.dp),
+                                modifier = Modifier.size(40.dp)
+                                    .then(if (isTv && index == 0) Modifier.focusRequester(customizationEntryFocusRequester) else Modifier)
+                                    .remoteFocusOutline(cornerRadius = 50.dp, enabled = isTv),
                                 shape = RoundedCornerShape(50),
                                 color = Color.Transparent,
                                 contentColor = glassForeground()
@@ -2238,7 +2542,7 @@ private fun HomeCustomizationSheet(
                                 val newOrder = visible.filterNot { it == id } + hidden + id
                                 saveLayout(newOrder, newHidden)
                             },
-                            modifier = Modifier.size(40.dp),
+                            modifier = Modifier.size(40.dp).remoteFocusOutline(cornerRadius = 50.dp, enabled = isTv),
                             shape = RoundedCornerShape(50),
                             color = Color.Transparent,
                             contentColor = glassForeground()
@@ -2258,7 +2562,9 @@ private fun HomeCustomizationSheet(
                         Surface(
                             onClick = { addMenu = true },
                             enabled = hidden.isNotEmpty(),
-                            modifier = Modifier.size(44.dp),
+                            modifier = Modifier.size(44.dp)
+                                .then(if (isTv && displayOrder.isEmpty()) Modifier.focusRequester(customizationEntryFocusRequester) else Modifier)
+                                .remoteFocusOutline(cornerRadius = 50.dp, enabled = isTv),
                             shape = RoundedCornerShape(50),
                             color = Color.Transparent,
                             contentColor = glassForeground()
@@ -2291,7 +2597,7 @@ private fun HomeCustomizationSheet(
 }
 
 @Composable
-private fun MergedPlaylistScreen(app: GassPlayerApplication) {
+private fun MergedPlaylistScreen(app: GassPlayerApplication, entryFocusRequester: FocusRequester? = null) {
     val sources by app.sources.sources.collectAsStateWithLifecycle(emptyList())
     val playlists by app.mergedPlaylists.flow.collectAsStateWithLifecycle(emptyList())
     val scope = rememberCoroutineScope()
@@ -2300,7 +2606,7 @@ private fun MergedPlaylistScreen(app: GassPlayerApplication) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text("Playlist unificate", color = glassForeground(), fontSize = 20.sp, fontWeight = FontWeight.Bold)
         Text("Raggruppa sorgenti in raccolte logiche, mantenendo l'origine di ogni contenuto.", color = glassForeground().copy(.65f))
-        OutlinedTextField(name, { name = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Nome playlist") })
+        OutlinedTextField(name, { name = it }, modifier = Modifier.fillMaxWidth().then(entryFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier), label = { Text("Nome playlist") })
         LazyColumn(Modifier.heightIn(max = 220.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             items(sources, key = { it.id }) { source ->
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -2321,7 +2627,17 @@ private fun MergedPlaylistScreen(app: GassPlayerApplication) {
     }
 }
 
-@Composable private fun DiagnosticsScreen(app:GassPlayerApplication){ var log by remember{mutableStateOf(app.diagnostics.read())};Column{Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){Button({log=app.diagnostics.read()}){Text("Aggiorna")};OutlinedButton({app.diagnostics.clear();log=""}){Text("Svuota")}};Spacer(Modifier.height(10.dp));LazyColumn{item{Text(log, color = glassForeground().copy(.75f), fontSize=12.sp)}}}}
+@Composable private fun DiagnosticsScreen(app: GassPlayerApplication, entryFocusRequester: FocusRequester? = null) {
+    var log by remember { mutableStateOf(app.diagnostics.read()) }
+    Column {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = { log = app.diagnostics.read() }, modifier = Modifier.then(entryFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier).remoteFocusOutline(cornerRadius = 50.dp)) { Text("Aggiorna") }
+            OutlinedButton(onClick = { app.diagnostics.clear(); log = "" }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp)) { Text("Svuota") }
+        }
+        Spacer(Modifier.height(10.dp))
+        LazyColumn { item { Text(log, color = glassForeground().copy(.75f), fontSize = 12.sp) } }
+    }
+}
 
 private fun MainViewModel.appFavorite(state: FavoriteState,item:MediaItem)=when(item.kind){MediaKind.LIVE->item.id in state.live;MediaKind.MOVIE,MediaKind.EPISODE->item.id in state.movies;MediaKind.SERIES->item.id in state.series}
 

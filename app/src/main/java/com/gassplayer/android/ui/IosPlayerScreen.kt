@@ -108,6 +108,7 @@ fun IosPlayerScreen(
     onOpenSearch: () -> Unit
 ) {
     val context = LocalContext.current
+    val remoteFirstDevice = remember(context) { context.isTvOrFireTvDevice() }
     val scope = rememberCoroutineScope()
     val supportsPip = android.os.Build.VERSION.SDK_INT >= 26 &&
         context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE)
@@ -164,8 +165,12 @@ fun IosPlayerScreen(
         }
     }
 
-    LaunchedEffect(item.id) {
-        runCatching { playerFocusRequester.requestFocus() }
+    LaunchedEffect(item.id, showLiveCategoryRail, remoteFirstDevice) {
+        // Touch-first phones retain their native touch flow; deterministic DPAD focus applies to TV.
+        if (remoteFirstDevice && !showLiveCategoryRail) {
+            delay(60L)
+            playerFocusRequester.requestFocusWithRetry(attempts = 5, delayMillis = 45L)
+        }
     }
 
     // Il tasto Indietro di sistema/telecomando chiude SOLO il player (prima non era gestito e
@@ -175,7 +180,7 @@ fun IosPlayerScreen(
             showLiveCategoryRail && item.kind == MediaKind.LIVE -> {
                 showLiveCategoryRail = false
                 showControls = false
-                runCatching { playerFocusRequester.requestFocus() }
+                if (remoteFirstDevice) runCatching { playerFocusRequester.requestFocus() }
             }
             dialog != null -> dialog = null
             locked -> { toast = "Sblocca per uscire"; showControls = true }
@@ -923,20 +928,31 @@ private fun PlayerLiveCategoryRail(
 ) {
     val selectedGroupFocus = remember { FocusRequester() }
     val firstChannelFocus = remember { FocusRequester() }
+    val focusScope = rememberCoroutineScope()
     val groupListState = rememberLazyListState()
     val channelListState = rememberLazyListState()
-    LaunchedEffect(options, selectedGroupId) {
-        if (options.isNotEmpty()) {
-            val selectedIndex = options.indexOfFirst { it.id == selectedGroupId }.coerceAtLeast(0)
+    val optionIds = remember(options) { options.map { it.id } }
+    LaunchedEffect(optionIds, selectedGroupId) {
+        if (optionIds.isNotEmpty()) {
+            val selectedIndex = selectedFocusIndex(optionIds, selectedGroupId).coerceIn(0, optionIds.lastIndex)
             runCatching { groupListState.scrollToItem(selectedIndex) }
             delay(70L)
-            runCatching { selectedGroupFocus.requestFocus() }
+            selectedGroupFocus.requestFocusWithRetry(attempts = 5, delayMillis = 45L)
         }
     }
     val focusChannelId = channels.firstOrNull { it.id == currentChannelId }?.id ?: channels.firstOrNull()?.id
+    var previousPlayingChannelId by remember { mutableStateOf(currentChannelId) }
     LaunchedEffect(currentChannelId, channels) {
+        val channelChangedWhileRailOpen = currentChannelId != previousPlayingChannelId
+        previousPlayingChannelId = currentChannelId
         val activeIndex = channels.indexOfFirst { it.id == currentChannelId }
         runCatching { channelListState.scrollToItem(activeIndex.coerceAtLeast(0)) }
+        // Initial rail opening starts at the selected group; after a real zap/channel selection,
+        // keep focus on the newly playing channel so the next DPAD action is predictable.
+        if (channelChangedWhileRailOpen && channels.isNotEmpty()) {
+            delay(65L)
+            firstChannelFocus.requestFocusWithRetry(attempts = 5, delayMillis = 45L)
+        }
     }
 
     BoxWithConstraints(modifier) {
@@ -984,7 +1000,7 @@ private fun PlayerLiveCategoryRail(
                             Modifier.width(groupWidth).fillMaxHeight().focusGroup()
                                 .onPreviewKeyEvent { event ->
                                     if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionRight) {
-                                        runCatching { firstChannelFocus.requestFocus() }
+                                        focusScope.launch { firstChannelFocus.requestFocusWithRetry(attempts = 5, delayMillis = 45L) }
                                         true
                                     } else if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft) {
                                         onDismiss(); true
@@ -1007,7 +1023,7 @@ private fun PlayerLiveCategoryRail(
                                             .remoteFocusOutline(cornerRadius = 12.dp)
                                             .onPreviewKeyEvent { event ->
                                                 if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionRight) {
-                                                    runCatching { firstChannelFocus.requestFocus() }; true
+                                                    focusScope.launch { firstChannelFocus.requestFocusWithRetry(attempts = 5, delayMillis = 45L) }; true
                                                 } else false
                                             },
                                         shape = RoundedCornerShape(12.dp),
@@ -1040,7 +1056,7 @@ private fun PlayerLiveCategoryRail(
                             Modifier.weight(1f).fillMaxHeight().focusGroup()
                                 .onPreviewKeyEvent { event ->
                                     if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft) {
-                                        runCatching { selectedGroupFocus.requestFocus() }; true
+                                        focusScope.launch { selectedGroupFocus.requestFocusWithRetry(attempts = 5, delayMillis = 45L) }; true
                                     } else false
                                 }
                         ) {

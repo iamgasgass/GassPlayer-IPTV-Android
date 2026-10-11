@@ -269,7 +269,7 @@ fun EpgStyleSearchField(
             }
         )
         if (value.isNotEmpty()) {
-            IconButton(onClick = { onValueChange("") }, modifier = Modifier.size(32.dp)) {
+            IconButton(onClick = { onValueChange("") }, modifier = Modifier.size(32.dp).remoteFocusOutline(cornerRadius = 50.dp)) {
                 Icon(Icons.Default.Close, contentDescription = "Cancella ricerca", tint = glassForeground().copy(.6f), modifier = Modifier.size(18.dp))
             }
         }
