@@ -14,7 +14,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -73,6 +75,21 @@ internal fun isAmazonFireTvBuild(
 }
 
 /**
+ * Whether the focus targets composed below this point may take DPAD focus. Pages that stay composed
+ * but are not on screen (warm library tabs, content behind the customization sheet or the player,
+ * the tab rail while a sheet is open) provide `false`. This is enforced per focus target instead of
+ * relying on `focusProperties` inheritance from a distant parent, which does not reach targets that
+ * sit below nested focus groups (LazyRow/LazyColumn rails) and let the blue outline land on content
+ * that was not visible.
+ */
+internal val LocalFocusScopeEnabled = compositionLocalOf { true }
+
+/** Makes the next focus target on this node unfocusable while its page is hidden. Place it BEFORE the target. */
+internal fun Modifier.pageFocusGuard(): Modifier = composed {
+    if (LocalFocusScopeEnabled.current) this else this.focusProperties { canFocus = false }
+}
+
+/**
  * Consistent, high-contrast focus feedback for D-pad/keyboard users. This is deliberately a
  * draw-only outline: it does not change measurement, card positions or the LiquidGlass artwork.
  */
@@ -85,6 +102,7 @@ internal fun Modifier.remoteFocusOutline(
 ): Modifier = composed {
     var focused by remember { mutableStateOf(false) }
     this
+        .pageFocusGuard()
         .onFocusChanged { focused = it.isFocused || (includeDescendants && it.hasFocus) }
         .drawWithContent {
             drawContent()

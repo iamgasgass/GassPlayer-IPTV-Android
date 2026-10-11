@@ -774,6 +774,7 @@ internal fun EpgGridScreen(
                 Row(Modifier.fillMaxWidth().background(Color.Black).height(headerH)) {
                     Box(
                         Modifier.width(bannerColumnW).fillMaxHeight().background(Color.Black)
+                            .remoteFocusOutline(cornerRadius = 12.dp)
                             .combinedClickable(onClick = {
                                 dayOffset = (dayOffset - 1).coerceAtLeast(-7)
                             }),
@@ -1126,6 +1127,7 @@ private fun ChannelBanner(
         Box(
             Modifier.offset(x = cardLeft, y = (rowHeight - bannerH) / 2f).width(bannerW).height(bannerH)
                 .clip(RoundedCornerShape(if (compact) 14.dp else 16.dp))
+                .pageFocusGuard()
                 .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
                 .then(when {
                     focused -> Modifier.border(BorderStroke(2.dp, Color(0xFF8CB7FF)), RoundedCornerShape(if (compact) 14.dp else 16.dp))
@@ -1337,6 +1339,7 @@ private fun EpgProgramTile(
 
     Box(
         Modifier.offset(x = startX, y = verticalInset).width(fullWidth).height(height)
+            .pageFocusGuard()
             .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() }
             .onPreviewKeyEvent { e -> e.type == KeyEventType.KeyDown && e.key == Key.DirectionLeft && onExitLeft() }
             .combinedClickable(onClick = onClick, onLongClick = onClick)
@@ -1432,7 +1435,7 @@ private fun EpgTopBar(
     var page by remember { mutableStateOf<String?>(null) }
     Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         if (!tvCategoryMode) Box {
-            Row(Modifier.clip(RoundedCornerShape(50)).background(MaterialTheme.colorScheme.surfaceVariant.copy(.65f)).combinedClickableSafe { groupOpen = true }.padding(horizontal = 16.dp, vertical = 9.dp),
+            Row(Modifier.clip(RoundedCornerShape(50)).background(MaterialTheme.colorScheme.surfaceVariant.copy(.65f)).remoteFocusOutline(cornerRadius = 50.dp).combinedClickableSafe { groupOpen = true }.padding(horizontal = 16.dp, vertical = 9.dp),
                 verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.GridView, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(8.dp))
                 Text(groupName, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 280.dp))

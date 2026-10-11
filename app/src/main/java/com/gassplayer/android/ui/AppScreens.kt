@@ -53,12 +53,14 @@ import androidx.compose.ui.zIndex
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.nativeKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -283,6 +285,13 @@ private fun AdaptiveShell(
     val saveableStateHolder = rememberSaveableStateHolder()
     val railScrollState = rememberScrollState()
     val railScope = rememberCoroutineScope()
+    val focusManager = LocalFocusManager.current
+    // Pages that are composed but not the one on screen (and everything behind the player or the
+    // customization sheet) must never be reachable by DPAD: see LocalFocusScopeEnabled.
+    val pageFocusAllowed = allowNavReturnFocus && !playerActive
+    // The tab that owns the current (possibly nested) route: used for selection visuals and Back/Left.
+    val selectedTab = navigationRailDestination(route)
+    var shellHasFocus by remember { mutableStateOf(true) }
     val navFocusRequesters = remember {
         destinations.associate { (id, _) -> id to FocusRequester() }
     }
@@ -327,11 +336,26 @@ private fun AdaptiveShell(
             // arbitrary node reported by Compose's spatial-search algorithm.
             delay(180L)
             val navRoute = navigationRailDestination(route)
-            routeEntryFocusRequesters[navRoute]?.requestFocusWithRetry(attempts = 8, delayMillis = 55L)
+            val entry = routeEntryFocusRequesters[route] ?: routeEntryFocusRequesters[navRoute]
+            val restored = entry?.requestFocusWithRetry(attempts = 8, delayMillis = 55L) ?: false
+            // The entry node may be absent (collapsed group rail, empty list): never leave focus lost.
+            if (!restored) navFocusRequesters[navRoute]?.requestFocusWithRetry(attempts = 6, delayMillis = 45L)
+        }
+    }
+    // Focus recovery after ANY route change. When the focused node belongs to a page that has just
+    // been hidden (Back from Live to Home, a tab switched by code, a nested page closed) Compose
+    // clears focus, and the next DPAD press would pick an arbitrary node. If nothing in the shell
+    // holds focus shortly after the change, park it on the owning tab, which is always visible.
+    LaunchedEffect(route) {
+        if (!tv || playerActive) return@LaunchedEffect
+        delay(320L)
+        if (!shellHasFocus) {
+            navFocusRequesters[navigationRailDestination(route)]?.requestFocusWithRetry(attempts = 6, delayMillis = 45L)
         }
     }
     LiquidGlassBackdrop(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxSize()) {
+        Row(Modifier.fillMaxSize().onFocusChanged { shellHasFocus = it.hasFocus }.focusGroup()) {
+            CompositionLocalProvider(LocalFocusScopeEnabled provides pageFocusAllowed) {
             LiquidGlassSurface(
                 modifier = Modifier
                     .fillMaxHeight()
@@ -341,8 +365,16 @@ private fun AdaptiveShell(
             ) {
                 Column(
                     Modifier.fillMaxSize()
-                        // While the customization sheet is open, the app tabs behind it must not be reachable.
-                        .then(if (!allowNavReturnFocus) Modifier.focusProperties { canFocus = false } else Modifier)
+                        // The tab column is a closed focus box: UP/DOWN/LEFT never leave it by spatial
+                        // search (that used to land on content tiles); RIGHT is handled by each tab.
+                        .focusProperties {
+                            if (!pageFocusAllowed) canFocus = false
+                            exit = { direction ->
+                                if (tv && (direction == FocusDirection.Up || direction == FocusDirection.Down ||
+                                        direction == FocusDirection.Left || direction == FocusDirection.Right)
+                                ) FocusRequester.Cancel else FocusRequester.Default
+                            }
+                        }
                         .focusGroup().verticalScroll(railScrollState).padding(vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(7.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
@@ -357,13 +389,15 @@ private fun AdaptiveShell(
                                 .focusRequester(navFocusRequesters.getValue(id))
                                 .bringIntoViewRequester(bringIntoView)
                                 .onPreviewKeyEvent { event ->
-                                    val entryTarget = routeEntryFocusRequesters[id]
-                                    if (tv && route == id && entryTarget != null &&
-                                        event.type == KeyEventType.KeyDown && event.key == Key.DirectionRight
-                                    ) {
-                                        railScope.launch {
-                                            delay(45L)
-                                            entryTarget.requestFocusWithRetry(attempts = 6, delayMillis = 45L)
+                                    if (tv && event.type == KeyEventType.KeyDown && event.key == Key.DirectionRight) {
+                                        // RIGHT always enters the section THIS tab stands for, never whatever page
+                                        // happens to be nearest on screen. If the tab is not the open one, open it.
+                                        if (event.nativeKeyEvent.repeatCount == 0) railScope.launch {
+                                            val owner = selectedTab == id
+                                            if (!owner) { onRoute(id); delay(200L) } else delay(30L)
+                                            val entry = routeEntryFocusRequesters[if (owner) route else id]
+                                            val entered = entry?.requestFocusWithRetry(attempts = 10, delayMillis = 55L) ?: false
+                                            if (!entered) focusManager.moveFocus(FocusDirection.Right)
                                         }
                                         true
                                     } else false
@@ -380,18 +414,19 @@ private fun AdaptiveShell(
                                 modifier = Modifier.fillMaxWidth(),
                                 cornerRadius = 18.dp,
                                 contentPadding = if (tv) 13.dp else 9.dp,
-                                highlighted = route == id || focused,
+                                highlighted = selectedTab == id || focused,
                                 suppressTopHighlight = true
                             ) {
                                 Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                                    Icon(navIcon(id), null, tint = if (route == id) Color(0xFF9ABEFF) else glassForeground(.75f), modifier = Modifier.size(if (tv) 25.dp else 22.dp))
-                                    Text(label, color = if (route == id) glassForeground() else glassForeground(.72f), fontSize = if (tv) 12.sp else 10.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = androidx.compose.ui.text.style.TextAlign.Center, fontWeight = if (route == id) FontWeight.SemiBold else FontWeight.Normal)
+                                    Icon(navIcon(id), null, tint = if (selectedTab == id) Color(0xFF9ABEFF) else glassForeground(.75f), modifier = Modifier.size(if (tv) 25.dp else 22.dp))
+                                    Text(label, color = if (selectedTab == id) glassForeground() else glassForeground(.72f), fontSize = if (tv) 12.sp else 10.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = androidx.compose.ui.text.style.TextAlign.Center, fontWeight = if (selectedTab == id) FontWeight.SemiBold else FontWeight.Normal)
                                 }
                             }
                         }
                     }
                 }
             }
+            } // end tab-column focus scope
             Column(Modifier.fillMaxSize().padding(horizontal = if (tv) 28.dp else 16.dp, vertical = 18.dp)) {
                 if (title.isNotBlank()) {
                     Text(
@@ -437,11 +472,17 @@ private fun AdaptiveShell(
                         // consumed LEFT before Compose's spatial search, so it jumped to the rail
                         // from any column of a grid or any control of a row.
                         .focusProperties {
+                            // The page is a closed focus box too: LEFT leaves only to the owning tab, and
+                            // UP/DOWN/RIGHT can never jump out to the tab column or anywhere else.
                             exit = { direction ->
-                                if (tv && allowNavReturnFocus && direction == FocusDirection.Left) {
-                                    navFocusRequesters[navigationRailDestination(route)]
-                                        ?: navFocusRequesters.getValue("settings")
-                                } else FocusRequester.Default
+                                when {
+                                    !tv -> FocusRequester.Default
+                                    direction == FocusDirection.Left && pageFocusAllowed ->
+                                        navFocusRequesters[selectedTab] ?: navFocusRequesters.getValue("settings")
+                                    direction == FocusDirection.Left || direction == FocusDirection.Right ||
+                                        direction == FocusDirection.Up || direction == FocusDirection.Down -> FocusRequester.Cancel
+                                    else -> FocusRequester.Default
+                                }
                             }
                         }
                         .focusGroup()
@@ -459,7 +500,7 @@ private fun AdaptiveShell(
                                     .fillMaxSize()
                                     .graphicsLayer { alpha = pageAlpha }
                                     .zIndex(if (active) 1f else 0f)
-                                    .focusProperties { canFocus = active && allowNavReturnFocus }
+                                    .focusProperties { canFocus = active && pageFocusAllowed }
                                     .pointerInput(active) {
                                         if (!active) {
                                             awaitPointerEventScope {
@@ -472,7 +513,9 @@ private fun AdaptiveShell(
                             ) {
                                 // Library screens remain warm while another library or a secondary
                                 // page is open; screenActive stops Live TV's mini-player off-route.
-                                content(section, routeEntryFocusRequesters[section])
+                                CompositionLocalProvider(LocalFocusScopeEnabled provides (active && pageFocusAllowed)) {
+                                    content(section, routeEntryFocusRequesters[section])
+                                }
                             }
                         }
                     }
@@ -480,14 +523,18 @@ private fun AdaptiveShell(
                         AnimatedContent(
                             targetState = route,
                             modifier = Modifier.fillMaxSize().zIndex(2f)
-                                .then(if (!allowNavReturnFocus) Modifier.focusProperties { canFocus = false } else Modifier),
+                                .then(if (!pageFocusAllowed) Modifier.focusProperties { canFocus = false } else Modifier),
                             transitionSpec = {
                                 EnterTransition.None togetherWith ExitTransition.None
                             },
                             label = "secondary-route-content",
                         ) { activeRoute ->
                             saveableStateHolder.SaveableStateProvider(activeRoute) {
-                                Box(Modifier.fillMaxSize()) { content(activeRoute, routeEntryFocusRequesters[activeRoute]) }
+                                Box(Modifier.fillMaxSize()) {
+                                    CompositionLocalProvider(LocalFocusScopeEnabled provides pageFocusAllowed) {
+                                        content(activeRoute, routeEntryFocusRequesters[activeRoute])
+                                    }
+                                }
                             }
                         }
                     }
