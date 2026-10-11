@@ -732,8 +732,8 @@ internal fun EpgGridScreen(
                 color = glassForeground().copy(.6f),
                 modifier = Modifier.padding(16.dp)
                     .then(if (!tvCategoryMode) entryFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier else Modifier)
-                    .focusable()
-                    .remoteFocusOutline(cornerRadius = 12.dp),
+                    .remoteFocusOutline(cornerRadius = 12.dp)
+                    .focusable(),
             )
         } else {
         LazyColumn(
@@ -1022,7 +1022,7 @@ private fun TvEpgPreviewPanel(
     ) {
         Surface(
             onClick = onWatch,
-            modifier = if (compactLayout) Modifier.width(108.dp).aspectRatio(16f / 9f) else Modifier.fillMaxHeight().aspectRatio(16f / 9f),
+            modifier = (if (compactLayout) Modifier.width(108.dp).aspectRatio(16f / 9f) else Modifier.fillMaxHeight().aspectRatio(16f / 9f)).remoteFocusOutline(cornerRadius = 14.dp),
             shape = RoundedCornerShape(14.dp),
             color = Color.Black,
             border = BorderStroke(.8.dp, Color.White.copy(.16f)),
@@ -1439,10 +1439,10 @@ private fun EpgTopBar(
                 Spacer(Modifier.width(6.dp)); Icon(Icons.Default.ArrowDropDown, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             DropdownMenu(groupOpen, { groupOpen = false }, modifier = Modifier.heightIn(max = 420.dp)) {
-                DropdownMenuItem({ Text("Tutti i canali") }, { onGroup(null); groupOpen = false }, leadingIcon = { Icon(Icons.Default.GridView, null) })
-                if (uncategorized > 0) DropdownMenuItem({ Text("Senza categoria ($uncategorized)") }, { onGroup("__none__"); groupOpen = false })
+                DropdownMenuItem({ Text("Tutti i canali") }, { onGroup(null); groupOpen = false }, leadingIcon = { Icon(Icons.Default.GridView, null) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true))
+                if (uncategorized > 0) DropdownMenuItem({ Text("Senza categoria ($uncategorized)") }, { onGroup("__none__"); groupOpen = false }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true))
                 HorizontalDivider()
-                groups.forEach { g -> DropdownMenuItem({ Text("${g.name} (${counts[g.id] ?: 0})") }, { onGroup(g.id); groupOpen = false }) }
+                groups.forEach { g -> DropdownMenuItem({ Text("${g.name} (${counts[g.id] ?: 0})") }, { onGroup(g.id); groupOpen = false }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true)) }
             }
         }
         Spacer(Modifier.weight(1f))
@@ -1452,42 +1452,42 @@ private fun EpgTopBar(
                 when (page) {
                     null -> {
                         if (tvCategoryMode) {
-                            DropdownMenuItem({ Text("UI Gruppi") }, { page = "gruppi" }, leadingIcon = { Icon(Icons.Default.ViewAgenda, null) }, trailingIcon = { Icon(Icons.Default.ChevronRight, null) })
+                            DropdownMenuItem({ Text("UI Gruppi") }, { page = "gruppi" }, leadingIcon = { Icon(Icons.Default.ViewAgenda, null) }, trailingIcon = { Icon(Icons.Default.ChevronRight, null) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true))
                             HorizontalDivider()
                         }
-                        DropdownMenuItem({ Text("Aspetto EPG") }, { page = "aspetto" }, leadingIcon = { Icon(Icons.Default.AspectRatio, null) }, trailingIcon = { Icon(Icons.Default.ChevronRight, null) })
-                        DropdownMenuItem({ Text("Assetti EPG") }, { page = "assetti" }, leadingIcon = { Icon(Icons.Default.ViewAgenda, null) }, trailingIcon = { Icon(Icons.Default.ChevronRight, null) })
-                        DropdownMenuItem({ Text("Colori EPG") }, { page = "colori" }, leadingIcon = { Icon(Icons.Default.Palette, null) }, trailingIcon = { Icon(Icons.Default.ChevronRight, null) })
+                        DropdownMenuItem({ Text("Aspetto EPG") }, { page = "aspetto" }, leadingIcon = { Icon(Icons.Default.AspectRatio, null) }, trailingIcon = { Icon(Icons.Default.ChevronRight, null) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true))
+                        DropdownMenuItem({ Text("Assetti EPG") }, { page = "assetti" }, leadingIcon = { Icon(Icons.Default.ViewAgenda, null) }, trailingIcon = { Icon(Icons.Default.ChevronRight, null) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true))
+                        DropdownMenuItem({ Text("Colori EPG") }, { page = "colori" }, leadingIcon = { Icon(Icons.Default.Palette, null) }, trailingIcon = { Icon(Icons.Default.ChevronRight, null) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true))
                         HorizontalDivider()
-                        DropdownMenuItem({ Text("Aggiorna guida") }, { onRefresh(); menuOpen = false }, leadingIcon = { Icon(Icons.Default.Refresh, null) })
+                        DropdownMenuItem({ Text("Aggiorna guida") }, { onRefresh(); menuOpen = false }, leadingIcon = { Icon(Icons.Default.Refresh, null) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true))
                         DropdownMenuItem({ Text(if (favoritesOnly) "Mostra tutti" else "Solo preferiti") }, { onFavoritesOnly(); menuOpen = false },
-                            leadingIcon = { Icon(if (favoritesOnly) Icons.Default.Star else Icons.Default.StarBorder, null) })
+                            leadingIcon = { Icon(if (favoritesOnly) Icons.Default.Star else Icons.Default.StarBorder, null) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true))
                         HorizontalDivider()
-                        DropdownMenuItem({ Text("Ieri") }, { onDay(-1); menuOpen = false }, leadingIcon = { Icon(Icons.Default.ChevronLeft, null) })
-                        DropdownMenuItem({ Text("Oggi") }, { onDay(0); menuOpen = false }, leadingIcon = { Icon(Icons.Default.CalendarToday, null) })
-                        DropdownMenuItem({ Text("Domani") }, { onDay(1); menuOpen = false }, leadingIcon = { Icon(Icons.Default.ChevronRight, null) })
+                        DropdownMenuItem({ Text("Ieri") }, { onDay(-1); menuOpen = false }, leadingIcon = { Icon(Icons.Default.ChevronLeft, null) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true))
+                        DropdownMenuItem({ Text("Oggi") }, { onDay(0); menuOpen = false }, leadingIcon = { Icon(Icons.Default.CalendarToday, null) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true))
+                        DropdownMenuItem({ Text("Domani") }, { onDay(1); menuOpen = false }, leadingIcon = { Icon(Icons.Default.ChevronRight, null) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true))
                     }
                     "gruppi" -> {
-                        DropdownMenuItem({ Text("UI Gruppi") }, { page = null }, leadingIcon = { Icon(Icons.Default.ArrowBack, null) })
+                        DropdownMenuItem({ Text("UI Gruppi") }, { page = null }, leadingIcon = { Icon(Icons.Default.ArrowBack, null) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true))
                         HorizontalDivider()
                         CheckItem("Categorie TV", settings.groupUIStyle == "categorie_tv") { onSettings(settings.copy(groupUIStyle = "categorie_tv")); menuOpen = false; page = null }
                         CheckItem("Scorrevole", settings.groupUIStyle == "scorrevole") { onSettings(settings.copy(groupUIStyle = "scorrevole")); menuOpen = false; page = null }
                         CheckItem("Espansibile", settings.groupUIStyle == "espansibile") { onSettings(settings.copy(groupUIStyle = "espansibile")); menuOpen = false; page = null }
                     }
                     "aspetto" -> {
-                        DropdownMenuItem({ Text("Aspetto EPG") }, { page = null }, leadingIcon = { Icon(Icons.Default.ArrowBack, null) })
+                        DropdownMenuItem({ Text("Aspetto EPG") }, { page = null }, leadingIcon = { Icon(Icons.Default.ArrowBack, null) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true))
                         HorizontalDivider()
                         CheckItem("Compatta", settings.epgLayoutDensity == "compatta") { onSettings(settings.copy(epgLayoutDensity = "compatta")); menuOpen = false; page = null }
                         CheckItem("Comoda", settings.epgLayoutDensity != "compatta") { onSettings(settings.copy(epgLayoutDensity = "comoda")); menuOpen = false; page = null }
                     }
                     "assetti" -> {
-                        DropdownMenuItem({ Text("Assetti EPG") }, { page = null }, leadingIcon = { Icon(Icons.Default.ArrowBack, null) })
+                        DropdownMenuItem({ Text("Assetti EPG") }, { page = null }, leadingIcon = { Icon(Icons.Default.ArrowBack, null) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true))
                         HorizontalDivider()
                         CheckItem("Griglia", settings.epgChannelCardStyle != "scheda") { onSettings(settings.copy(epgChannelCardStyle = "griglia")); menuOpen = false; page = null }
                         CheckItem("Scheda", settings.epgChannelCardStyle == "scheda") { onSettings(settings.copy(epgChannelCardStyle = "scheda")); menuOpen = false; page = null }
                     }
                     "colori" -> {
-                        DropdownMenuItem({ Text("Colori EPG") }, { page = null }, leadingIcon = { Icon(Icons.Default.ArrowBack, null) })
+                        DropdownMenuItem({ Text("Colori EPG") }, { page = null }, leadingIcon = { Icon(Icons.Default.ArrowBack, null) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true))
                         HorizontalDivider()
                         CheckItem("Dinamico", settings.epgTileColor != "dark") { onSettings(settings.copy(epgTileColor = "dynamic")); menuOpen = false; page = null }
                         CheckItem("Dark", settings.epgTileColor == "dark") { onSettings(settings.copy(epgTileColor = "dark")); menuOpen = false; page = null }
@@ -1500,7 +1500,7 @@ private fun EpgTopBar(
 
 @Composable
 internal fun CheckItem(label: String, selected: Boolean, onClick: () -> Unit) {
-    DropdownMenuItem({ Text(label) }, onClick, trailingIcon = { if (selected) Icon(Icons.Default.Check, null) })
+    DropdownMenuItem({ Text(label) }, onClick, trailingIcon = { if (selected) Icon(Icons.Default.Check, null) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true))
 }
 
 @OptIn(ExperimentalFoundationApi::class)

@@ -1,5 +1,6 @@
 package com.gassplayer.android.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -33,6 +34,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -61,6 +63,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 
 /**
  * Backdrop for the Android port of iOS Liquid Glass. Android does not expose
@@ -218,6 +221,22 @@ fun EpgStyleSearchField(
     var containerFocused by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf(false) }
     var inputPreviouslyFocused by remember { mutableStateOf(false) }
+    val searchScope = rememberCoroutineScope()
+
+    // Leave text-entry mode and hand DPAD focus back to the search bar itself. Focus is moved to
+    // the container BEFORE the editable node becomes non-focusable, otherwise Compose would clear
+    // focus and the remote would "lose" the cursor until the next key press.
+    fun finishEditing() {
+        if (!remoteFirstDevice) return
+        searchScope.launch {
+            containerTarget.requestFocusWithRetry(attempts = 3, delayMillis = 30L)
+            editing = false
+            keyboardController?.hide()
+        }
+    }
+
+    // First Back closes the IME (handled by the system); the next Back returns to the DPAD state.
+    BackHandler(enabled = remoteFirstDevice && editing) { finishEditing() }
 
     // On TV, the search bar itself is the first focus target. Only OK makes the editable
     // text node focusable, which prevents Android/Fire TV IME from appearing while browsing.
@@ -238,16 +257,14 @@ fun EpgStyleSearchField(
     Row(
         modifier = modifier
             .height(50.dp)
-            .clip(RoundedCornerShape(50))
-            .background(Color.White.copy(.09f))
-            .border(
-                BorderStroke(
-                    if (containerFocused && (!remoteFirstDevice || editing)) 1.8.dp else 1.dp,
-                    if (containerFocused && (!remoteFirstDevice || editing)) Color(0xFF8CB7FF) else Color.White.copy(.12f)
-                ),
-                RoundedCornerShape(50)
-            )
-            .padding(horizontal = 16.dp)
+            // IMPORTANT: onFocusChanged / outline must sit BEFORE focusable(): a focus-event
+            // modifier only observes the focus target that follows it in the chain. Previously
+            // they were placed after it, so on TV the bar showed no focus until editing started.
+            .onFocusChanged {
+                containerFocused = it.isFocused || it.hasFocus
+                if (containerFocused) onFocus?.invoke()
+            }
+            .remoteFocusOutline(cornerRadius = 25.dp, enabled = remoteFirstDevice, includeDescendants = true)
             .then(
                 when {
                     remoteFirstDevice -> Modifier.focusRequester(containerTarget).focusable()
@@ -255,11 +272,15 @@ fun EpgStyleSearchField(
                     else -> Modifier
                 }
             )
-            .remoteFocusOutline(cornerRadius = 50.dp, enabled = remoteFirstDevice)
-            .onFocusChanged {
-                containerFocused = it.isFocused || it.hasFocus
-                if (containerFocused) onFocus?.invoke()
-            }
+            .clip(RoundedCornerShape(50))
+            .background(if (containerFocused) Color(0xFF8CB7FF).copy(.14f) else Color.White.copy(.09f))
+            .border(
+                BorderStroke(
+                    if (containerFocused) 1.8.dp else 1.dp,
+                    if (containerFocused) Color(0xFF8CB7FF) else Color.White.copy(.12f)
+                ),
+                RoundedCornerShape(50)
+            )
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) {
                     false
@@ -278,7 +299,8 @@ fun EpgStyleSearchField(
                     }
                     else -> false
                 }
-            },
+            }
+            .padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(Icons.Default.Search, contentDescription = "Cerca", tint = glassForeground().copy(.6f), modifier = Modifier.size(20.dp))
@@ -291,8 +313,8 @@ fun EpgStyleSearchField(
             cursorBrush = SolidColor(Color.White),
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false, imeAction = if (onSubmit == null) ImeAction.Done else ImeAction.Search),
             keyboardActions = KeyboardActions(
-                onSearch = { onSubmit?.invoke() },
-                onDone = { onSubmit?.invoke() }
+                onSearch = { onSubmit?.invoke(); finishEditing() },
+                onDone = { onSubmit?.invoke(); finishEditing() }
             ),
             modifier = Modifier.weight(1f)
                 .focusProperties { canFocus = !remoteFirstDevice || editing }

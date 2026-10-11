@@ -142,6 +142,9 @@ fun IosPlayerScreen(
     // Keep the host activity brightness intact after leaving the player.
     val originalWindowBrightness = remember { context.findActivity()?.window?.attributes?.screenBrightness ?: -1f }
     var hudTimerKey by remember(item.id) { mutableIntStateOf(0) }
+    // Bumped on every remote key while the controls are visible, so the 4s auto-hide timer
+    // restarts instead of hiding the controls under the user's focus mid-navigation.
+    var controlsActivity by remember(item.id) { mutableIntStateOf(0) }
     val playerFocusRequester = remember(item.id) { FocusRequester() }
     // Like GassTV, LEFT opens the live channel browser while immersive. Keep its state
     // independent from item.id so zapping channels does not collapse the rail on every tune.
@@ -165,9 +168,12 @@ fun IosPlayerScreen(
         }
     }
 
-    LaunchedEffect(item.id, showLiveCategoryRail, remoteFirstDevice) {
+    LaunchedEffect(item.id, showLiveCategoryRail, remoteFirstDevice, showControls, dialog) {
         // Touch-first phones retain their native touch flow; deterministic DPAD focus applies to TV.
-        if (remoteFirstDevice && !showLiveCategoryRail) {
+        // Also runs when the controls fade out or a dialog closes: the focused node is removed from
+        // the tree then, and without this the remote would stop reaching the key handler. It cannot
+        // steal focus from a control, because controls are only visible after the root handled OK.
+        if (remoteFirstDevice && !showLiveCategoryRail && dialog == null) {
             delay(60L)
             playerFocusRequester.requestFocusWithRetry(attempts = 5, delayMillis = 45L)
         }
@@ -280,7 +286,7 @@ fun IosPlayerScreen(
         showVolumeHud = false
     }
 
-    LaunchedEffect(showControls, dialog, locked, snapshot.isBuffering) {
+    LaunchedEffect(showControls, dialog, locked, snapshot.isBuffering, controlsActivity) {
         if (!showControls || dialog != null || locked) return@LaunchedEffect
         delay(4_000L)
         showControls = false
@@ -398,6 +404,7 @@ fun IosPlayerScreen(
             .focusable()
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown || locked || dialog != null) return@onPreviewKeyEvent false
+                if (showControls) controlsActivity++
                 // When the channel browser is visible, let its focused lists consume the DPAD,
                 // but keep hardware/media play-pause available on remotes that expose those keys.
                 if (showLiveCategoryRail && item.kind == MediaKind.LIVE) {
@@ -705,7 +712,8 @@ fun IosPlayerScreen(
                 onClick = { locked = false; showControls = true },
                 modifier = Modifier
                     .align(Alignment.BottomStart)
-                    .padding(24.dp),
+                    .padding(24.dp)
+                    .remoteFocusOutline(cornerRadius = 18.dp),
                 shape = RoundedCornerShape(18.dp),
                 color = Color.Black.copy(.58f),
                 border = BorderStroke(1.dp, Color.White.copy(.14f))
@@ -1316,7 +1324,7 @@ private fun PlayerControlsOverlay(
                     value = progress.position.coerceIn(0L, snapshot.duration).toFloat(),
                     onValueChange = { onSeek(it.toLong()) },
                     valueRange = 0f..snapshot.duration.toFloat(),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 50.dp, includeDescendants = true)
                 )
             }
 
@@ -1361,7 +1369,7 @@ private fun NextEpisodePrompt(
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomEnd) {
         Surface(
             onClick = onClick,
-            modifier = Modifier.padding(end = 24.dp, bottom = 104.dp),
+            modifier = Modifier.padding(end = 24.dp, bottom = 104.dp).remoteFocusOutline(cornerRadius = 18.dp),
             color = Color.Black.copy(.75f),
             shape = RoundedCornerShape(18.dp),
             border = BorderStroke(1.dp, Color.White.copy(.14f))
@@ -1798,7 +1806,7 @@ private fun SettingDelay(
                 onValueChange = { draft = it },
                 valueRange = range.first.toFloat()..range.last.toFloat(),
                 steps = ((range.last - range.first) / step - 1).coerceAtLeast(0),
-                onValueChangeFinished = { onChange(draft.roundToInt().coerceIn(range.first, range.last)) }
+                onValueChangeFinished = { onChange(draft.roundToInt().coerceIn(range.first, range.last)) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp, includeDescendants = true)
             )
         }
     }
@@ -1815,7 +1823,7 @@ private fun SettingOption(
     Box {
         Surface(
             onClick = { expanded = true },
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 14.dp),
             color = MaterialTheme.colorScheme.surfaceVariant.copy(.60f),
             shape = RoundedCornerShape(14.dp),
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(.20f))
@@ -1834,7 +1842,7 @@ private fun SettingOption(
                 DropdownMenuItem(
                     text = { Text(option) },
                     onClick = { expanded = false; onSelected(option) },
-                    trailingIcon = { if (option == current) Icon(Icons.Default.Check, null) }
+                    trailingIcon = { if (option == current) Icon(Icons.Default.Check, null) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true)
                 )
             }
         }
@@ -1870,7 +1878,7 @@ private fun SettingSwitch(title: String, checked: Boolean, onChange: (Boolean) -
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(title, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
-        Switch(checked = checked, onCheckedChange = onChange)
+        Switch(checked = checked, onCheckedChange = onChange, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp, includeDescendants = true))
     }
 }
 
@@ -1883,7 +1891,7 @@ private fun DialogRow(
 ) {
     Surface(
         onClick = onClick,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 14.dp),
         shape = RoundedCornerShape(14.dp),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(.60f),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(.20f))

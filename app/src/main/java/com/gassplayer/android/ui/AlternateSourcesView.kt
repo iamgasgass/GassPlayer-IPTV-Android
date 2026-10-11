@@ -134,7 +134,7 @@ internal fun AlternateSourcesView(
                             val sourceName = sourceNames[result.sourceId] ?: result.sourceId
                             Surface(
                                 onClick = { onSelect(result); onDismiss() },
-                                modifier = Modifier.fillMaxWidth().focusable(),
+                                modifier = Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 16.dp),
                                 shape = RoundedCornerShape(16.dp),
                                 color = Color.Transparent
                             ) {

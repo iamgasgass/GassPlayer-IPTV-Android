@@ -127,18 +127,18 @@ internal fun LibraryHeader(
                     DropdownMenuItem(
                         text = { Text("Tutti (${items.size})", maxLines = 1) },
                         onClick = { onFilter(null); groupOpen = false },
-                        leadingIcon = { Icon(Icons.Default.GridView, null) }
+                        leadingIcon = { Icon(Icons.Default.GridView, null) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true)
                     )
                     if (uncategorized > 0) DropdownMenuItem(
                         text = { Text("Senza categoria ($uncategorized)", maxLines = 1) },
                         onClick = { onFilter(GROUP_NONE); groupOpen = false },
-                        leadingIcon = { Icon(Icons.Default.Inbox, null) }
+                        leadingIcon = { Icon(Icons.Default.Inbox, null) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true)
                     )
                     HorizontalDivider()
                     ordered.forEach { category ->
                         DropdownMenuItem(
                             text = { Text("${category.name} (${counts[category.id] ?: 0})", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                            onClick = { onFilter(category.id); groupOpen = false }
+                            onClick = { onFilter(category.id); groupOpen = false }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true)
                         )
                     }
                 }
@@ -197,29 +197,29 @@ internal fun LibraryHeader(
                             text = { Text("Densità griglia", maxLines = 1) },
                             onClick = { sub = "density" },
                             leadingIcon = { Icon(Icons.Default.GridOn, null) },
-                            trailingIcon = { Icon(Icons.Default.ChevronRight, null) }
+                            trailingIcon = { Icon(Icons.Default.ChevronRight, null) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true)
                         )
                         DropdownMenuItem(
                             text = { Text("UI Gruppi", maxLines = 1) },
                             onClick = { sub = "groups" },
                             leadingIcon = { Icon(Icons.Default.ViewAgenda, null) },
-                            trailingIcon = { Icon(Icons.Default.ChevronRight, null) }
+                            trailingIcon = { Icon(Icons.Default.ChevronRight, null) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true)
                         )
                         DropdownMenuItem(
                             text = { Text("Ricarica $kindLabel", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                             onClick = { vm.refresh(true); menuOpen = false },
-                            leadingIcon = { Icon(Icons.Default.Refresh, null) }
+                            leadingIcon = { Icon(Icons.Default.Refresh, null) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true)
                         )
                     }
                     "density" -> {
-                        DropdownMenuItem(text = { Text("Densità griglia") }, onClick = { sub = null }, leadingIcon = { Icon(Icons.Default.ArrowBack, null) })
+                        DropdownMenuItem(text = { Text("Densità griglia") }, onClick = { sub = null }, leadingIcon = { Icon(Icons.Default.ArrowBack, null) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true))
                         HorizontalDivider()
                         CheckItem("Compatta", settings.density == "compact") { vm.updateSettings(settings.copy(density = "compact")); menuOpen = false; sub = null }
                         CheckItem("Comoda", settings.density == "comfortable") { vm.updateSettings(settings.copy(density = "comfortable")); menuOpen = false; sub = null }
                         if (allowPoster) CheckItem("Poster", settings.density == "poster") { vm.updateSettings(settings.copy(density = "poster")); menuOpen = false; sub = null }
                     }
                     "groups" -> {
-                        DropdownMenuItem(text = { Text("UI Gruppi") }, onClick = { sub = null }, leadingIcon = { Icon(Icons.Default.ArrowBack, null) })
+                        DropdownMenuItem(text = { Text("UI Gruppi") }, onClick = { sub = null }, leadingIcon = { Icon(Icons.Default.ArrowBack, null) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true))
                         HorizontalDivider()
                         CheckItem("Categorie TV", settings.groupUIStyle == "categorie_tv") { vm.updateSettings(settings.copy(groupUIStyle = "categorie_tv")); menuOpen = false; sub = null }
                         CheckItem("Scorrevole", settings.groupUIStyle == "scorrevole") { vm.updateSettings(settings.copy(groupUIStyle = "scorrevole")); menuOpen = false; sub = null }

@@ -147,7 +147,7 @@ internal fun SettingsHub(
                         }
                     } }
                     item { HubSection("User Agent", "Identificativo delle richieste di rete", Icons.Default.Public) {
-                        OutlinedTextField(local.customUserAgent, { save(local.copy(customUserAgent = it)) }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("User Agent") }, placeholder = { Text(NetworkApi.DEFAULT_USER_AGENT) })
+                        OutlinedTextField(local.customUserAgent, { save(local.copy(customUserAgent = it)) }, modifier = Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 14.dp, includeDescendants = true), singleLine = true, label = { Text("User Agent") }, placeholder = { Text(NetworkApi.DEFAULT_USER_AGENT) })
                         Text("Vuoto = ${NetworkApi.DEFAULT_USER_AGENT}. La modifica viene applicata alle nuove richieste di rete.", color = glassForeground().copy(.5f), fontSize = 12.sp)
                     } }
                 }
@@ -238,11 +238,11 @@ internal fun SettingsHub(
                 "metadata" -> {
                     item { PageTitle("TMDB e OMDb") }
                     item { HubSection("Chiavi API", "Metadati, locandine e sottotitoli", Icons.Default.Key) {
-                        OutlinedTextField(local.tmdbApiKey, { save(local.copy(tmdbApiKey = it)) }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("TMDB API key") })
-                        OutlinedTextField(local.omdbApiKey, { save(local.copy(omdbApiKey = it)) }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("OMDb API key") })
-                        OutlinedTextField(local.traktClientId, { save(local.copy(traktClientId = it)) }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("Trakt client ID") })
-                        OutlinedTextField(local.traktClientSecret, { save(local.copy(traktClientSecret = it)) }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("Trakt client secret") })
-                        OutlinedTextField(local.openSubtitlesApiKey, { save(local.copy(openSubtitlesApiKey = it)) }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("OpenSubtitles API key") })
+                        OutlinedTextField(local.tmdbApiKey, { save(local.copy(tmdbApiKey = it)) }, modifier = Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 14.dp, includeDescendants = true), singleLine = true, label = { Text("TMDB API key") })
+                        OutlinedTextField(local.omdbApiKey, { save(local.copy(omdbApiKey = it)) }, modifier = Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 14.dp, includeDescendants = true), singleLine = true, label = { Text("OMDb API key") })
+                        OutlinedTextField(local.traktClientId, { save(local.copy(traktClientId = it)) }, modifier = Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 14.dp, includeDescendants = true), singleLine = true, label = { Text("Trakt client ID") })
+                        OutlinedTextField(local.traktClientSecret, { save(local.copy(traktClientSecret = it)) }, modifier = Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 14.dp, includeDescendants = true), singleLine = true, label = { Text("Trakt client secret") })
+                        OutlinedTextField(local.openSubtitlesApiKey, { save(local.copy(openSubtitlesApiKey = it)) }, modifier = Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 14.dp, includeDescendants = true), singleLine = true, label = { Text("OpenSubtitles API key") })
                     } }
                 }
                 "diagnostics" -> {
@@ -343,7 +343,7 @@ private fun HubToggle(title: String, detail: String?, value: Boolean, onChange: 
                 Text(title, color = glassForeground(), fontWeight = FontWeight.Medium)
                 if (detail != null) Text(detail, color = glassForeground().copy(.56f), fontSize = 12.sp)
             }
-            Switch(value, onChange)
+            Switch(value, onChange, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp, includeDescendants = true))
         }
     }
 }
@@ -382,7 +382,7 @@ private fun SettingDelayCommit(
             onValueChange = { draft = it },
             valueRange = range.first.toFloat()..range.last.toFloat(),
             steps = ((range.last - range.first) / step - 1).coerceAtLeast(0),
-                onValueChangeFinished = { onChange(draft.toInt().coerceIn(range.first, range.last)) }
+                onValueChangeFinished = { onChange(draft.toInt().coerceIn(range.first, range.last)) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp, includeDescendants = true)
             )
         }
     }

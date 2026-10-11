@@ -58,6 +58,7 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -263,7 +264,7 @@ fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
 }
 
 @Composable
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, androidx.compose.ui.ExperimentalComposeUiApi::class)
 private fun AdaptiveShell(
     route: String,
     tv: Boolean,
@@ -424,19 +425,22 @@ private fun AdaptiveShell(
                     }
                 }
                 Box(
-                    Modifier.fillMaxSize().focusGroup().onKeyEvent { event ->
-                        // Child controls and a local category rail get first chance at LEFT. Only
-                        // when no child consumes it do we return to the selected app-level tab.
-                        if (tv && allowNavReturnFocus && event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft) {
-                            val navRoute = navigationRailDestination(route)
-                            val target = navFocusRequesters[navRoute] ?: navFocusRequesters["settings"]
-                            if (target != null) railScope.launch {
-                                delay(35L)
-                                target.requestFocusWithRetry(attempts = 6, delayMillis = 45L)
+                    Modifier
+                        .fillMaxSize()
+                        // DPAD LEFT must first move focus *inside* the page (previous grid column,
+                        // category rail, etc.). Only when focus would leave the page area to the left
+                        // do we redirect it to the selected app tab. The previous onKeyEvent handler
+                        // consumed LEFT before Compose's spatial search, so it jumped to the rail
+                        // from any column of a grid or any control of a row.
+                        .focusProperties {
+                            exit = { direction ->
+                                if (tv && allowNavReturnFocus && direction == FocusDirection.Left) {
+                                    navFocusRequesters[navigationRailDestination(route)]
+                                        ?: navFocusRequesters.getValue("settings")
+                                } else FocusRequester.Default
                             }
-                            target != null
-                        } else false
-                    }
+                        }
+                        .focusGroup()
                 ) {
                     renderedLibraryRoutes.forEach { section ->
                         key(section) {
@@ -613,7 +617,7 @@ private fun HomeScreen(
                 }
                 DropdownMenu(homeMenuOpen, { homeMenuOpen = false }) {
                     menuItems.forEach { (id, label) ->
-                        DropdownMenuItem(text = { Text(label) }, onClick = { homeMode = id; homeMenuOpen = false }, leadingIcon = { Icon(when (id) { "live" -> Icons.Default.LiveTv; "movies" -> Icons.Default.Movie; "series" -> Icons.Default.Tv; else -> Icons.Default.Home }, null) }, trailingIcon = { if (homeMode == id) Icon(Icons.Default.Check, null) })
+                        DropdownMenuItem(text = { Text(label) }, onClick = { homeMode = id; homeMenuOpen = false }, leadingIcon = { Icon(when (id) { "live" -> Icons.Default.LiveTv; "movies" -> Icons.Default.Movie; "series" -> Icons.Default.Tv; else -> Icons.Default.Home }, null) }, trailingIcon = { if (homeMode == id) Icon(Icons.Default.Check, null) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true))
                     }
                 }
             }
@@ -721,7 +725,7 @@ private fun HomeScreen(
                                     Box {
                                         TextButton(onClick = { continueMenuOpen = true }) { Text(when (settings.homeContinueKind) { "live" -> "Live TV"; "movie" -> "Film"; "series" -> "Serie TV"; else -> "Tutti" }); Icon(Icons.Default.ExpandMore, null) }
                                         DropdownMenu(continueMenuOpen, { continueMenuOpen = false }) {
-                                            listOf(null to "Tutti", "live" to "Live TV", "movie" to "Film", "series" to "Serie TV").forEach { (value, label) -> DropdownMenuItem(text = { Text(label) }, onClick = { vm.updateSettings(settings.copy(homeContinueKind = value)); continueMenuOpen = false }) }
+                                            listOf(null to "Tutti", "live" to "Live TV", "movie" to "Film", "series" to "Serie TV").forEach { (value, label) -> DropdownMenuItem(text = { Text(label) }, onClick = { vm.updateSettings(settings.copy(homeContinueKind = value)); continueMenuOpen = false }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true)) }
                                         }
                                     }
                                 }
@@ -762,7 +766,7 @@ private fun HomeScreen(
                                                             text = { Text(source.name) },
                                                             leadingIcon = { Icon(Icons.Default.Storage, null) },
                                                             trailingIcon = { if (source.id == activeSource) Icon(Icons.Default.Check, null) },
-                                                            onClick = { vm.setActive(source.id); sourceMenuOpen = false }
+                                                            onClick = { vm.setActive(source.id); sourceMenuOpen = false }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true)
                                                         )
                                                     }
                                                 }
@@ -1883,14 +1887,14 @@ private fun ExternalEpgManageScreen(app: GassPlayerApplication, onBack: () -> Un
             ) { Icon(Icons.Default.ArrowBack, null); Spacer(Modifier.width(4.dp)); Text("Indietro") }
             Text("Fonti XMLTV esterne", color = glassForeground(), fontSize = 20.sp, fontWeight = FontWeight.Bold)
         }
-        OutlinedTextField(name, { name = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Nome fonte") })
-        OutlinedTextField(url, { url = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("URL XMLTV") })
+        OutlinedTextField(name, { name = it }, modifier = Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 14.dp, includeDescendants = true), label = { Text("Nome fonte") })
+        OutlinedTextField(url, { url = it }, modifier = Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 14.dp, includeDescendants = true), singleLine = true, label = { Text("URL XMLTV") })
         Button({ scope.launch { if (app.externalEpg.add(name, url)) { name = ""; url = "" } } }) { Text("Aggiungi fonte EPG") }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(sources, key = { it.id }) { source ->
                 LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius = 18.dp, contentPadding = 0.dp) { Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) { Text(source.name, color = glassForeground(), fontWeight = FontWeight.Bold); Text(source.urlString, color = glassForeground().copy(.6f), maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                    Switch(source.isEnabled, { enabled -> scope.launch { app.externalEpg.toggle(source.id, enabled) } })
+                    Switch(source.isEnabled, { enabled -> scope.launch { app.externalEpg.toggle(source.id, enabled) } }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp, includeDescendants = true))
                     IconButton({ scope.launch { app.externalEpg.remove(source.id) } }) { Icon(Icons.Default.Delete, null) }
                 } }
             }
@@ -1919,7 +1923,7 @@ private fun ExternalEpgManageScreen(app: GassPlayerApplication, onBack: () -> Un
                             Text(if (s.lastVerificationSucceeded) "Verificata • ${s.lastKnownChannelCount}" else "Non verificata", color = if (s.lastVerificationSucceeded) Color(0xFF6EDC82) else Color(0xFFFFB55E))
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Switch(checked = s.isEnabled, onCheckedChange = { value -> scope.launch { app.sources.toggle(s.id, value); vm.refresh(true) } })
+                            Switch(checked = s.isEnabled, onCheckedChange = { value -> scope.launch { app.sources.toggle(s.id, value); vm.refresh(true) } }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp, includeDescendants = true))
                             IconButton({ vm.setActive(s.id) }) { Icon(if (vm.activeSource.value == s.id) Icons.Default.RadioButtonChecked else Icons.Default.RadioButtonUnchecked, null) }
                             IconButton({ renameOpen = true }) { Icon(Icons.Default.Edit, null) }
                             IconButton({ scope.launch { app.sources.pin(s.id, !s.isPinned); vm.refresh(false) } }) { Icon(Icons.Default.PushPin, null) }
@@ -1985,7 +1989,7 @@ private fun RenameSourceDialog(current: String, onDismiss: () -> Unit, onSave: (
         OutlinedTextField(
             value = name,
             onValueChange = { name = it },
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 14.dp, includeDescendants = true),
             singleLine = true,
             label = { Text("Nome") }
         )
@@ -2030,7 +2034,7 @@ fun AddSourceDialog(app: GassPlayerApplication, vm: MainViewModel, onDismiss: ()
         OutlinedTextField(
             value = name,
             onValueChange = { name = it },
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 14.dp, includeDescendants = true),
             singleLine = true,
             label = { Text("Nome") }
         )
@@ -2043,16 +2047,16 @@ fun AddSourceDialog(app: GassPlayerApplication, vm: MainViewModel, onDismiss: ()
                     selected = sourceType == type,
                     onClick = { if (!busy) type = sourceType },
                     label = { Text(sourceType.name) },
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(1f).remoteFocusOutline(cornerRadius = 50.dp, includeDescendants = true)
                 )
             }
         }
         if (type == SourceType.XTREAM) {
-            OutlinedTextField(host, { host = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("Host Xtream") })
-            OutlinedTextField(user, { user = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("Username") })
-            OutlinedTextField(pass, { pass = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("Password") })
+            OutlinedTextField(host, { host = it }, modifier = Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 14.dp, includeDescendants = true), singleLine = true, label = { Text("Host Xtream") })
+            OutlinedTextField(user, { user = it }, modifier = Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 14.dp, includeDescendants = true), singleLine = true, label = { Text("Username") })
+            OutlinedTextField(pass, { pass = it }, modifier = Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 14.dp, includeDescendants = true), singleLine = true, label = { Text("Password") })
         } else {
-            OutlinedTextField(url, { url = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("URL M3U/M3U8") })
+            OutlinedTextField(url, { url = it }, modifier = Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 14.dp, includeDescendants = true), singleLine = true, label = { Text("URL M3U/M3U8") })
         }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp) }
         Row(
@@ -2144,14 +2148,14 @@ fun AddSourceDialog(app: GassPlayerApplication, vm: MainViewModel, onDismiss: ()
             "Download in background",
             color = glassForeground(),
             modifier = Modifier.then(entryFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
-                .focusable().remoteFocusOutline(cornerRadius = 8.dp),
+                .remoteFocusOutline(cornerRadius = 8.dp).focusable(),
         )
         Spacer(Modifier.height(10.dp))
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(infos) { info ->
                 val p = info.progress.getInt("progress", if (info.state == androidx.work.WorkInfo.State.SUCCEEDED) 100 else 0)
                 LiquidGlassSurface(
-                    Modifier.fillMaxWidth().focusable().remoteFocusOutline(cornerRadius = 18.dp),
+                    Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 18.dp).focusable(),
                     cornerRadius = 18.dp,
                     contentPadding = 14.dp,
                 ) {
@@ -2166,9 +2170,9 @@ fun AddSourceDialog(app: GassPlayerApplication, vm: MainViewModel, onDismiss: ()
     }
 }
 
-@Composable internal fun SettingInt(label:String, value:Int, range:IntRange, step:Int=1, onChange:(Int)->Unit){ Column(Modifier.fillMaxWidth()){ Text("$label: $value",color = glassForeground()); Slider(value=value.toFloat(),onValueChange={onChange(it.toInt())},valueRange=range.first.toFloat()..range.last.toFloat(),steps=((range.last-range.first)/step-1).coerceAtLeast(0)) } }
-@Composable private fun SettingToggle(label:String, value:Boolean, onChange:(Boolean)->Unit){ Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){ Text(label,color = glassForeground()); Switch(value,onChange) } }
-@Composable private fun SettingRow(label:String, value:String, choices:List<String>, onChange:(String)->Unit){ var expanded by remember{mutableStateOf(false)}; Box{ OutlinedButton({expanded=true},Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 50.dp)){ Text("$label: $value") }; DropdownMenu(expanded,{expanded=false}){choices.forEach{DropdownMenuItem({Text(it)},onClick={onChange(it);expanded=false})}} } }
+@Composable internal fun SettingInt(label:String, value:Int, range:IntRange, step:Int=1, onChange:(Int)->Unit){ Column(Modifier.fillMaxWidth()){ Text("$label: $value",color = glassForeground()); Slider(value=value.toFloat(),onValueChange={onChange(it.toInt())},valueRange=range.first.toFloat()..range.last.toFloat(),steps=((range.last-range.first)/step-1).coerceAtLeast(0), modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp, includeDescendants = true)) } }
+@Composable private fun SettingToggle(label:String, value:Boolean, onChange:(Boolean)->Unit){ Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){ Text(label,color = glassForeground()); Switch(value,onChange, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp, includeDescendants = true)) } }
+@Composable private fun SettingRow(label:String, value:String, choices:List<String>, onChange:(String)->Unit){ var expanded by remember{mutableStateOf(false)}; Box{ OutlinedButton({expanded=true},Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 50.dp)){ Text("$label: $value") }; DropdownMenu(expanded,{expanded=false}){choices.forEach{DropdownMenuItem({Text(it)},onClick={onChange(it);expanded=false}, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true))}} } }
 
 @Composable private fun ParentalScreen(vm: MainViewModel, state: ParentalState, entryFocusRequester: FocusRequester? = null) {
     var pin by remember { mutableStateOf("") }
@@ -2179,11 +2183,11 @@ fun AddSourceDialog(app: GassPlayerApplication, vm: MainViewModel, onDismiss: ()
         Text("PIN locale con SHA-256 e blocco per contenuto/categoria", color = glassForeground().copy(.7f))
         OutlinedTextField(
             newPin, { newPin = it },
-            modifier = Modifier.fillMaxWidth().then(entryFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier),
+            modifier = Modifier.fillMaxWidth().then(entryFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier).remoteFocusOutline(cornerRadius = 14.dp, includeDescendants = true),
             label = { Text("Nuovo PIN") },
         )
         Button(onClick = { scope.launch { vm.app.parental.setPin(newPin); msg = "PIN impostato" } }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp)) { Text("Imposta PIN") }
-        OutlinedTextField(pin, { pin = it }, label = { Text("Verifica PIN") })
+        OutlinedTextField(pin, { pin = it }, label = { Text("Verifica PIN") }, modifier = Modifier.remoteFocusOutline(cornerRadius = 14.dp, includeDescendants = true))
         Button(onClick = { scope.launch { msg = if (vm.app.parental.verify(pin)) "PIN corretto" else "PIN non valido" } }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp)) { Text("Verifica") }
         msg?.let { Text(it, color = glassForeground()) }
     }
@@ -2195,9 +2199,9 @@ fun AddSourceDialog(app: GassPlayerApplication, vm: MainViewModel, onDismiss: ()
     val launcher=rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()){ result -> if(result.resultCode==Activity.RESULT_OK) runCatching{app.vpn.startIkev2();state="Connessa"} }
     LazyColumn(verticalArrangement=Arrangement.spacedBy(8.dp)){
         item{Text("IKEv2 usa lo stack VPN nativo Android; WireGuard usa il tunnel ufficiale del progetto WireGuard.",color = glassForeground().copy(.7f))}
-        item { OutlinedTextField(server, { server = it }, Modifier.fillMaxWidth().then(entryFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier), label = { Text("Endpoint") }) }
-        item{OutlinedTextField(user,{user=it},Modifier.fillMaxWidth(),label={Text("Username")})}
-        item{OutlinedTextField(pass,{pass=it},Modifier.fillMaxWidth(),label={Text("Password")})}
+        item { OutlinedTextField(server, { server = it }, Modifier.fillMaxWidth().then(entryFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier).remoteFocusOutline(cornerRadius = 14.dp, includeDescendants = true), label = { Text("Endpoint") }) }
+        item{OutlinedTextField(user,{user=it},Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 14.dp, includeDescendants = true),label={Text("Username")})}
+        item{OutlinedTextField(pass,{pass=it},Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 14.dp, includeDescendants = true),label={Text("Password")})}
         item{Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){
             Button({scope.launch{val n=cfg.copy(protocol="ikev2",serverEndpoint=server,username=user,password=pass); app.prefs.saveVpn(n); val intent=runCatching{app.vpn.provisionIkev2(n)}.getOrNull(); if(intent!=null) launcher.launch(intent) else runCatching{app.vpn.startIkev2();state="Connessa"}}}){Text("Configura IKEv2")};
             OutlinedButton({app.vpn.stopIkev2();state="Disconnessa"}){Text("Stop")}
@@ -2243,8 +2247,8 @@ private fun TraktScreen(app: GassPlayerApplication, settings: AppSettings, vm: M
     }
     LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 40.dp)) {
         item { Text("Collega Trakt.tv", color = glassForeground(), fontSize = 20.sp, fontWeight = FontWeight.Bold) }
-        item { OutlinedTextField(local.traktClientId, { local = local.copy(traktClientId = it); vm.updateSettings(local) }, modifier = Modifier.fillMaxWidth().then(entryFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier), singleLine = true, label = { Text("Client ID") }) }
-        item { OutlinedTextField(local.traktClientSecret, { local = local.copy(traktClientSecret = it); vm.updateSettings(local) }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text("Client Secret") }) }
+        item { OutlinedTextField(local.traktClientId, { local = local.copy(traktClientId = it); vm.updateSettings(local) }, modifier = Modifier.fillMaxWidth().then(entryFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier).remoteFocusOutline(cornerRadius = 14.dp, includeDescendants = true), singleLine = true, label = { Text("Client ID") }) }
+        item { OutlinedTextField(local.traktClientSecret, { local = local.copy(traktClientSecret = it); vm.updateSettings(local) }, modifier = Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 14.dp, includeDescendants = true), singleLine = true, label = { Text("Client Secret") }) }
         if (account.accessToken.isNotBlank()) {
             item { LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius = 18.dp, contentPadding = 14.dp) { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { Text("Connesso a Trakt.tv", color = glassForeground(), fontWeight = FontWeight.Bold); Text("Lo scrobbling di film/episodi usa il token salvato su questo dispositivo.", color = glassForeground().copy(.65f)); OutlinedButton({ scope.launch { app.prefs.saveTrakt(TraktAccount()) } }) { Text("Disconnetti") } } } }
         } else if (device == null) {
@@ -2466,7 +2470,7 @@ private fun HomeCustomizationSheet(
                         Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
                             Surface(
                                 onClick = { continueMenu = true },
-                                modifier = Modifier.size(40.dp),
+                                modifier = Modifier.size(40.dp).remoteFocusOutline(cornerRadius = 50.dp),
                                 shape = RoundedCornerShape(50),
                                 color = Color.Transparent,
                                 contentColor = glassForeground()
@@ -2484,7 +2488,7 @@ private fun HomeCustomizationSheet(
                                         onClick = {
                                             saveLayout(completeOrder, hiddenSet, value)
                                             continueMenu = false
-                                        }
+                                        }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true)
                                     )
                                 }
                             }
@@ -2518,7 +2522,7 @@ private fun HomeCustomizationSheet(
                                         reordered.add(index - 1, moved)
                                         saveLayout(reordered + hidden, hiddenSet)
                                         tvMoveMenuFor = null
-                                    }
+                                    }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true)
                                 )
                                 DropdownMenuItem(
                                     text = { Text("Sposta giù") },
@@ -2530,7 +2534,7 @@ private fun HomeCustomizationSheet(
                                         reordered.add(index + 1, moved)
                                         saveLayout(reordered + hidden, hiddenSet)
                                         tvMoveMenuFor = null
-                                    }
+                                    }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true)
                                 )
                             }
                         }
@@ -2585,7 +2589,7 @@ private fun HomeCustomizationSheet(
                                         val newOrder = newVisible + hidden.filterNot { it == id }
                                         saveLayout(newOrder, hiddenSet - id)
                                         addMenu = false
-                                    }
+                                    }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true)
                                 )
                             }
                         }
@@ -2606,11 +2610,11 @@ private fun MergedPlaylistScreen(app: GassPlayerApplication, entryFocusRequester
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text("Playlist unificate", color = glassForeground(), fontSize = 20.sp, fontWeight = FontWeight.Bold)
         Text("Raggruppa sorgenti in raccolte logiche, mantenendo l'origine di ogni contenuto.", color = glassForeground().copy(.65f))
-        OutlinedTextField(name, { name = it }, modifier = Modifier.fillMaxWidth().then(entryFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier), label = { Text("Nome playlist") })
+        OutlinedTextField(name, { name = it }, modifier = Modifier.fillMaxWidth().then(entryFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier).remoteFocusOutline(cornerRadius = 14.dp, includeDescendants = true), label = { Text("Nome playlist") })
         LazyColumn(Modifier.heightIn(max = 220.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             items(sources, key = { it.id }) { source ->
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(selected.contains(source.id), { selected = if (it) selected + source.id else selected - source.id })
+                    Checkbox(selected.contains(source.id), { selected = if (it) selected + source.id else selected - source.id }, modifier = Modifier.remoteFocusOutline(cornerRadius = 6.dp, includeDescendants = true))
                     Column { Text(source.name, color = glassForeground()); Text(source.host, color = glassForeground().copy(.5f), fontSize = 12.sp) }
                 }
             }
