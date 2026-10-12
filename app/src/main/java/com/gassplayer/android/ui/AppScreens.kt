@@ -332,6 +332,12 @@ private fun AdaptiveShell(
     // Counts DPAD/remote key presses inside the shell: a pending automatic focus move is abandoned as
     // soon as the user presses a key, so it can never fight the user.
     var userKeyNonce by remember { mutableIntStateOf(0) }
+    // Whether the side navigation held focus when the LAST key was pressed. A route change must be judged
+    // by where the user was when pressing OK, not afterwards: when a Home link opens Live TV / Film /
+    // Serie TV, the Home page (and its focused card) is removed in that same frame and Compose gives focus
+    // to the first focusable element, the "Home" tab. Reading railHasFocus afterwards wrongly looked like a
+    // side-navigation move, so the entry into the section was skipped and the blue outline stayed on Home.
+    var keyPressedOnRail by remember { mutableStateOf(false) }
     val currentShellRoute by rememberUpdatedState(route)
 
     // Puts DPAD focus INSIDE the page of [target], in one step. Order:
@@ -416,7 +422,7 @@ private fun AdaptiveShell(
             if (route !in mainNavigationRoutes || previous !in mainNavigationRoutes) {
                 delay(105L)
                 routeEntryFocusRequesters[route]?.requestFocusWithRetry(attempts = 6, delayMillis = 45L)
-            } else if (!railHasFocus && sectionEntriesInProgress == 0) {
+            } else if (!keyPressedOnRail && sectionEntriesInProgress == 0) {
                 // A main section was opened from page content (any Home link): the page that owned focus
                 // is now hidden. Move focus straight INTO the new section (its rail group or first visible
                 // element); the side tab is highlighted by the route. Fall back to the tab, never nowhere.
@@ -472,6 +478,7 @@ private fun AdaptiveShell(
                     // move first; a side-navigation OK/RIGHT then starts its own entry.
                     if (event.type == KeyEventType.KeyDown) {
                         userKeyNonce++
+                        keyPressedOnRail = railHasFocus
                         autoEntryJob?.cancel()
                         autoEntryJob = null
                     }

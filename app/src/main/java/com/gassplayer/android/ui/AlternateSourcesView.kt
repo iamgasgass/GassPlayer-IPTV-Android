@@ -74,7 +74,8 @@ internal fun AlternateSourcesView(
         candidates.fromSourceIds(eligibleSources.map { it.id }).excludingSource(excludingSourceId)
     }
     val results = remember(candidateSources, query) {
-        if (query.isBlank()) emptyList() else candidateSources.matchingText(query)
+        // distinctBy: duplicated catalogue rows would give the keyed LazyColumn a repeated key (crash).
+        if (query.isBlank()) emptyList() else candidateSources.matchingText(query).distinctBy { it.id }
     }
     val sourceNames = remember(configuredSources) { configuredSources.associate { it.id to it.name } }
 

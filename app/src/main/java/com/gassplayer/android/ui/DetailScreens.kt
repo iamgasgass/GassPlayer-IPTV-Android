@@ -111,7 +111,9 @@ fun MovieDetailScreen(
     var downloadWorkId by remember(item.id) { mutableStateOf<String?>(null) }
     val downloadInfo = rememberDownloadWorkInfo(app, downloadWorkId)
     val alternates = remember(allItems, item.id, item.sourceId) {
-        allItems.sameTitleAs(item).filter { it.kind == MediaKind.MOVIE && it.sourceId != item.sourceId }
+        // distinctBy: the catalogue DB does not enforce unique ids, and a title listed twice in another source
+        // gave the LazyRow below a duplicated key, crashing the app when the detail opened.
+        allItems.sameTitleAs(item).filter { it.kind == MediaKind.MOVIE && it.sourceId != item.sourceId }.distinctBy { it.id }
     }
     val canSearchAlternates = remember(sourceConfigs, item.sourceId) {
         sourceConfigs.any { it.isEnabled && it.type == SourceType.XTREAM && it.id != item.sourceId }
@@ -330,7 +332,7 @@ fun SeriesDetailScreen(
         }
     }
     val alternates = remember(allSeries, series.id, series.title, series.sourceId) {
-        allSeries.sameTitleAs(series).filter { it.kind == MediaKind.SERIES && it.sourceId != series.sourceId && it.title.normalizedMediaTitle() == series.title.normalizedMediaTitle() }
+        allSeries.sameTitleAs(series).filter { it.kind == MediaKind.SERIES && it.sourceId != series.sourceId && it.title.normalizedMediaTitle() == series.title.normalizedMediaTitle() }.distinctBy { it.id }
     }
     val canSearchAlternates = remember(sourceConfigs, series.sourceId) {
         sourceConfigs.any { it.isEnabled && it.type == SourceType.XTREAM && it.id != series.sourceId }
