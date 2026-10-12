@@ -54,6 +54,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import com.gassplayer.android.GassPlayerApplication
 import com.gassplayer.android.data.*
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.collect
@@ -80,6 +82,8 @@ fun MovieDetailScreen(
     onBack: () -> Unit,
     onPlay: (MediaItem, Long) -> Unit,
     entryFocusRequester: FocusRequester? = null,
+    /** Metadata already known by the caller (a TMDB trending card): shown at once while details load. */
+    initialMeta: MetadataResult? = null,
 ) {
     val remoteFirstDevice = LocalContext.current.isTvOrFireTvDevice()
     val settings by app.prefs.settingsFlow.collectAsStateWithLifecycle(AppSettings())
@@ -102,7 +106,7 @@ fun MovieDetailScreen(
         }
         true
     }
-    var meta by remember(item.id) { mutableStateOf<MetadataResult?>(null) }
+    var meta by remember(item.id) { mutableStateOf(initialMeta) }
     var ratings by remember(item.id) { mutableStateOf<Ratings?>(null) }
     var traktRating by remember(item.id) { mutableStateOf<Double?>(null) }
     var isLoadingDetail by remember(item.id) { mutableStateOf(true) }
@@ -130,15 +134,24 @@ fun MovieDetailScreen(
 
     LaunchedEffect(item.id, settings.tmdbApiKey, settings.omdbApiKey, settings.traktClientId) {
         isLoadingDetail = true
-        meta = if (settings.tmdbApiKey.isBlank()) null else {
+        val fetched = if (settings.tmdbApiKey.isBlank()) null else {
             val direct = item.tmdbId?.takeIf { it.isNotBlank() }?.let { id -> runCatching { app.tmdb.details(id, settings.tmdbApiKey, false) }.getOrNull() }
             direct ?: runCatching { app.tmdb.searchMovies(item.title, settings.tmdbApiKey).firstOrNull() }.getOrNull()?.let { found ->
                 runCatching { app.tmdb.details(found.id, settings.tmdbApiKey, false) }.getOrNull() ?: found
             }
         }
-        ratings = runCatching { app.omdb.lookup(item.title, settings.omdbApiKey) }.getOrNull()
-        traktRating = runCatching { app.trakt.ratings(item.title, settings.traktClientId) }.getOrNull()
+        // Keep the metadata already shown (e.g. from the trending card) if the request fails.
+        meta = fetched ?: meta
         isLoadingDetail = false
+        // Ratings in parallel, after the main metadata: OMDb by IMDb id when TMDB provides it (exact),
+        // otherwise by the original title rather than the playlist name ("IT: Title [4K]").
+        val omdbTitle = meta?.originalTitle?.takeIf { it.isNotBlank() } ?: meta?.title?.takeIf { it.isNotBlank() } ?: item.title
+        coroutineScope {
+            val omdb = async { runCatching { app.omdb.lookup(omdbTitle, settings.omdbApiKey, meta?.externalId) }.getOrNull() }
+            val trakt = async { runCatching { app.trakt.ratings(item.title, settings.traktClientId) }.getOrNull() }
+            ratings = omdb.await()
+            traktRating = trakt.await()
+        }
     }
 
     Box(Modifier.fillMaxSize()) {
@@ -290,6 +303,8 @@ fun SeriesDetailScreen(
     allSeries: List<MediaItem> = emptyList(),
     onOpenAlternateSeries: (MediaItem) -> Unit = {},
     entryFocusRequester: FocusRequester? = null,
+    /** Metadata already known by the caller (a TMDB trending card): shown at once while details load. */
+    initialMeta: MetadataResult? = null,
 ) {
     val remoteFirstDevice = LocalContext.current.isTvOrFireTvDevice()
     val settings by app.prefs.settingsFlow.collectAsStateWithLifecycle(AppSettings())
@@ -316,7 +331,7 @@ fun SeriesDetailScreen(
     var loadedEpisodes by remember(series.id) { mutableStateOf<List<MediaItem>>(emptyList()) }
     var loadingEpisodes by remember(series.id) { mutableStateOf(false) }
     var loadError by remember(series.id) { mutableStateOf<String?>(null) }
-    var meta by remember(series.id) { mutableStateOf<MetadataResult?>(null) }
+    var meta by remember(series.id) { mutableStateOf(initialMeta) }
     var showAlternates by remember(series.id) { mutableStateOf(false) }
     var actionMessage by remember(series.id) { mutableStateOf<String?>(null) }
     var downloadWorkId by remember(series.id) { mutableStateOf<String?>(null) }
@@ -349,12 +364,12 @@ fun SeriesDetailScreen(
     }
 
     LaunchedEffect(series.id, settings.tmdbApiKey) {
-        meta = if (settings.tmdbApiKey.isBlank()) null else {
+        meta = (if (settings.tmdbApiKey.isBlank()) null else {
             val direct = series.tmdbId?.takeIf { it.isNotBlank() }?.let { id -> runCatching { app.tmdb.details(id, settings.tmdbApiKey, true) }.getOrNull() }
             direct ?: runCatching { app.tmdb.searchSeries(series.title, settings.tmdbApiKey).firstOrNull() }.getOrNull()?.let { found ->
                 runCatching { app.tmdb.details(found.id, settings.tmdbApiKey, true) }.getOrNull() ?: found
             }
-        }
+        }) ?: meta // keep the metadata already shown if the request fails
     }
     LaunchedEffect(series.id) { fetchEpisodes() }
     LaunchedEffect(meta?.id, season, settings.tmdbApiKey) {

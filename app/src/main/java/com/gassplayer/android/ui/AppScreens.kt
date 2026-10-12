@@ -107,6 +107,7 @@ fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
     var playerItem by remember { mutableStateOf<MediaItem?>(null) }
     // A Home trending title to open inside its own section (Film / Serie TV), consumed by that section.
     var pendingSectionDetail by remember { mutableStateOf<MediaItem?>(null) }
+    var pendingSectionMeta by remember { mutableStateOf<MetadataResult?>(null) }
     var managerSourceId by remember { mutableStateOf<String?>(null) }
     var epgManageReturnRoute by remember { mutableStateOf("settings") }
     val catalog by vm.catalog.collectAsStateWithLifecycle()
@@ -197,7 +198,7 @@ fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
         content = { activeRoute, entryFocusRequester ->
             when (activeRoute) {
                 "home" -> HomeScreen(vm, catalog, favorite, watch, sources, onRoute = { route = it }, onPlay = { playerItem = it }, entryFocusRequester = entryFocusRequester,
-                    onOpenInSection = { item -> pendingSectionDetail = item; route = if (item.kind == MediaKind.SERIES) "series" else "movies" })
+                    onOpenInSection = { item, meta -> pendingSectionDetail = item; pendingSectionMeta = meta; route = if (item.kind == MediaKind.SERIES) "series" else "movies" })
                 "live" -> if (settings.groupUIStyle == "categorie_tv") {
                     // The same session/index powers both Live TV and the standalone Guida screen.
                     EpgGridScreen(app, vm, epgSession, catalog?.live.orEmpty(), catalog?.liveCategories.orEmpty(), favorite, settings,
@@ -210,11 +211,13 @@ fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
                 "movies" -> CatalogScreen("Film (VOD)", catalog?.movies.orEmpty(), catalog?.vodCategories.orEmpty(), favorite, parental, vm,
                     onPlay = { playerItem = it }, detail = true, scopeKey = "movies", onCustomize = { route = "movies-customize" }, isTelevision = tv,
                     screenActive = activeRoute == contentRoute, entryFocusRequester = entryFocusRequester,
-                    openRequest = pendingSectionDetail?.takeIf { it.kind == MediaKind.MOVIE }, onOpenRequestHandled = { pendingSectionDetail = null })
+                    openRequest = pendingSectionDetail?.takeIf { it.kind == MediaKind.MOVIE }, openRequestMeta = pendingSectionMeta,
+                    onOpenRequestHandled = { pendingSectionDetail = null; pendingSectionMeta = null })
                 "series" -> SeriesScreen(catalog?.series.orEmpty(), catalog?.episodes.orEmpty(), catalog?.seriesCategories.orEmpty(), favorite, parental, vm,
                     onPlay = { playerItem = it }, onCustomize = { route = "series-customize" }, isTelevision = tv,
                     screenActive = activeRoute == contentRoute, entryFocusRequester = entryFocusRequester,
-                    openRequest = pendingSectionDetail?.takeIf { it.kind == MediaKind.SERIES }, onOpenRequestHandled = { pendingSectionDetail = null })
+                    openRequest = pendingSectionDetail?.takeIf { it.kind == MediaKind.SERIES }, openRequestMeta = pendingSectionMeta,
+                    onOpenRequestHandled = { pendingSectionDetail = null; pendingSectionMeta = null })
                 "epg" -> EpgGridScreen(app, vm, epgSession, catalog?.live.orEmpty(), catalog?.liveCategories.orEmpty(), favorite, settings,
                     onPlay = { playerItem = it }, playerActive = playerActive, screenActive = activeRoute == contentRoute,
                     entryFocusRequester = entryFocusRequester)
@@ -728,7 +731,7 @@ private fun HomeScreen(
     onRoute: (String) -> Unit,
     onPlay: (MediaItem) -> Unit,
     entryFocusRequester: FocusRequester? = null,
-    onOpenInSection: ((MediaItem) -> Unit)? = null,
+    onOpenInSection: ((MediaItem, MetadataResult?) -> Unit)? = null,
 ) {
     val settings by vm.settings.collectAsStateWithLifecycle()
     val remoteFirstDevice = LocalContext.current.isTvOrFireTvDevice()
@@ -780,6 +783,24 @@ private fun HomeScreen(
         when (item.kind) {
             MediaKind.MOVIE, MediaKind.SERIES -> selectedDetail = item
             MediaKind.LIVE, MediaKind.EPISODE -> onPlay(item)
+        }
+    }
+
+    // Trending card -> catalogue title, looked up off the main thread with the accurate matcher
+    // (TrendMatching.kt). Not found: the "not in catalogue" notice. A newer press replaces an older one.
+    val trendScope = rememberCoroutineScope()
+    var trendLookup by remember { mutableStateOf<Job?>(null) }
+    fun openTrend(trend: MetadataResult, isSeries: Boolean) {
+        trendLookup?.cancel()
+        trendLookup = trendScope.launch {
+            val catalogue = if (isSeries) catalog?.series.orEmpty() else catalog?.movies.orEmpty()
+            val match = findTrendInCatalogue(catalogue, trend, if (isSeries) MediaKind.SERIES else MediaKind.MOVIE)
+            when {
+                match == null -> trendingUnavailable = trend.title
+                // Open the title INSIDE its section (Film / Serie TV), focus on its play button.
+                onOpenInSection != null -> onOpenInSection(match, trend)
+                else -> openLibraryItem(match)
+            }
         }
     }
 
@@ -1027,22 +1048,14 @@ private fun HomeScreen(
                             if (settings.tmdbApiKey.isBlank()) EmptyHint("Configura la chiave API TMDB in Impostazioni per caricare le tendenze.")
                             else if (trendingSeries.isEmpty()) EmptyHint("Tendenze serie non disponibili: controlla la chiave TMDB e la rete.")
                             else androidx.compose.foundation.lazy.LazyRow(modifier = Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                items(trendingSeries.take(16), key = { it.id }) { trend -> TrendingCard(trend, true, onClick = {
-                                    val match = catalog?.series.orEmpty().firstOrNull { item -> item.title.matchesTrendTitle(trend.title) || (trend.originalTitle?.let { item.title.matchesTrendTitle(it) } == true) }
-                                    // Open the title INSIDE its section (Film / Serie TV), focus on its play button.
-                                    if (match != null) { if (onOpenInSection != null) onOpenInSection(match) else openLibraryItem(match) } else trendingUnavailable = trend.title
-                                }) }
+                                items(trendingSeries.take(16), key = { it.id }) { trend -> TrendingCard(trend, true, onClick = { openTrend(trend, isSeries = true) }) }
                             }
                         }
                         "trendingMovies" -> Section("Film di tendenza", { onRoute("movies") }) {
                             if (settings.tmdbApiKey.isBlank()) EmptyHint("Configura la chiave API TMDB in Impostazioni per caricare le tendenze.")
                             else if (trendingMovies.isEmpty()) EmptyHint("Tendenze film non disponibili: controlla la chiave TMDB e la rete.")
                             else androidx.compose.foundation.lazy.LazyRow(modifier = Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                items(trendingMovies.take(16), key = { it.id }) { trend -> TrendingCard(trend, false, onClick = {
-                                    val match = catalog?.movies.orEmpty().firstOrNull { item -> item.title.matchesTrendTitle(trend.title) || (trend.originalTitle?.let { item.title.matchesTrendTitle(it) } == true) }
-                                    // Open the title INSIDE its section (Film / Serie TV), focus on its play button.
-                                    if (match != null) { if (onOpenInSection != null) onOpenInSection(match) else openLibraryItem(match) } else trendingUnavailable = trend.title
-                                }) }
+                                items(trendingMovies.take(16), key = { it.id }) { trend -> TrendingCard(trend, false, onClick = { openTrend(trend, isSeries = false) }) }
                             }
                         }
                     }
@@ -1061,25 +1074,6 @@ private fun HomeScreen(
             dismissButton = { TextButton(onClick = { trendingUnavailable = null; onRoute("sources") }) { Text("Gestisci sorgenti") } }
         )
     }
-}
-
-private fun String.normalizedTitle(): String {
-    val folded = java.text.Normalizer.normalize(lowercase(), java.text.Normalizer.Form.NFD)
-        .replace("\\p{Mn}+".toRegex(), "")
-        .filter { it.isLetterOrDigit() || it.isWhitespace() }
-        .trim()
-    val noYear = folded.replace("\\s+(?:19|20)\\d{2}$".toRegex(), "").trim()
-    return (if (noYear.length >= 2) noYear else folded).filter { it.isLetterOrDigit() }
-}
-
-/** Exact normalized matches first, then conservative partial matches for TMDB/playlist naming variants. */
-private fun String.matchesTrendTitle(other: String): Boolean {
-    val left = normalizedTitle()
-    val right = other.normalizedTitle()
-    if (left.isBlank() || right.isBlank()) return false
-    if (left == right) return true
-    if (minOf(left.length, right.length) < 5) return false
-    return left.contains(right) || right.contains(left)
 }
 
 @Composable
@@ -1407,17 +1401,23 @@ private fun CatalogScreen(
     screenActive: Boolean = true,
     entryFocusRequester: FocusRequester? = null,
     openRequest: MediaItem? = null,
+    openRequestMeta: MetadataResult? = null,
     onOpenRequestHandled: () -> Unit = {},
 ) {
     var selected by remember { mutableStateOf<MediaItem?>(null) }
+    // TMDB metadata already known for the opened title (trending): the detail shows it at once.
+    var openedMeta by remember { mutableStateOf<Pair<String, MetadataResult>?>(null) }
     // A title opened from Home (trending) is shown here, inside its own section, as a detail sheet.
     LaunchedEffect(openRequest, screenActive) {
         val request = openRequest
         if (request != null && screenActive) {
+            openedMeta = openRequestMeta?.let { request.id to it }
             selected = request
             onOpenRequestHandled()
         }
     }
+    val trendScope = rememberCoroutineScope()
+    var trendLookup by remember { mutableStateOf<Job?>(null) }
     var filter by remember { mutableStateOf<String?>(null) }
     var searchQuery by remember(scopeKey) { mutableStateOf("") }
     var trending by remember { mutableStateOf<List<MetadataResult>>(emptyList()) }
@@ -1448,6 +1448,7 @@ private fun CatalogScreen(
             },
             onPlay = { i, pos -> onPlayWithPosition(onPlay, i, pos) },
             entryFocusRequester = entryFocusRequester,
+            initialMeta = openedMeta?.takeIf { it.first == selected?.id }?.second,
         )
         return
     }
@@ -1670,9 +1671,12 @@ private fun CatalogScreen(
                                     else LazyRow(modifier = Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                         items(trending.take(16), key = { it.id }) { trend ->
                                             TrendingCard(trend, false, onClick = {
-                                                val match = items.firstOrNull { it.title.equals(trend.title, ignoreCase = true) }
-                                                    ?: items.firstOrNull { it.title.contains(trend.title, ignoreCase = true) }
-                                                if (match != null) selected = match else showTrendUnavailable = true
+                                                // Accurate lookup off the main thread; parental-locked titles excluded as in the grid.
+                                                trendLookup?.cancel()
+                                                trendLookup = trendScope.launch {
+                                                    val match = findTrendInCatalogue(items.withoutIds(parental.lockedIds), trend, MediaKind.MOVIE)
+                                                    if (match != null) { openedMeta = match.id to trend; selected = match } else showTrendUnavailable = true
+                                                }
                                             }, onFocus = { if (tvCategoryMode) categoryRailExpanded = false })
                                         }
                                     }
@@ -1756,17 +1760,23 @@ private fun SeriesScreen(
     screenActive: Boolean = true,
     entryFocusRequester: FocusRequester? = null,
     openRequest: MediaItem? = null,
+    openRequestMeta: MetadataResult? = null,
     onOpenRequestHandled: () -> Unit = {},
 ) {
     var selected by remember { mutableStateOf<MediaItem?>(null) }
+    // TMDB metadata already known for the opened title (trending): the detail shows it at once.
+    var openedMeta by remember { mutableStateOf<Pair<String, MetadataResult>?>(null) }
     // A title opened from Home (trending) is shown here, inside its own section, as a detail sheet.
     LaunchedEffect(openRequest, screenActive) {
         val request = openRequest
         if (request != null && screenActive) {
+            openedMeta = openRequestMeta?.let { request.id to it }
             selected = request
             onOpenRequestHandled()
         }
     }
+    val trendScope = rememberCoroutineScope()
+    var trendLookup by remember { mutableStateOf<Job?>(null) }
     var filter by remember { mutableStateOf<String?>(null) }
     var searchQuery by remember { mutableStateOf("") }
     var trending by remember { mutableStateOf<List<MetadataResult>>(emptyList()) }
@@ -1799,6 +1809,7 @@ private fun SeriesScreen(
             allSeries = series,
             onOpenAlternateSeries = { selected = it },
             entryFocusRequester = entryFocusRequester,
+            initialMeta = openedMeta?.takeIf { it.first == selected?.id }?.second,
         )
         return
     }
@@ -2017,9 +2028,12 @@ private fun SeriesScreen(
                                     else LazyRow(modifier = Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                         items(trending.take(16), key = { it.id }) { trend ->
                                             TrendingCard(trend, true, onClick = {
-                                                val match = series.firstOrNull { it.title.equals(trend.title, ignoreCase = true) }
-                                                    ?: series.firstOrNull { it.title.contains(trend.title, ignoreCase = true) }
-                                                if (match != null) selected = match else showTrendUnavailable = true
+                                                // Accurate lookup off the main thread; parental-locked titles excluded as in the grid.
+                                                trendLookup?.cancel()
+                                                trendLookup = trendScope.launch {
+                                                    val match = findTrendInCatalogue(series.withoutIds(parental.lockedIds), trend, MediaKind.SERIES)
+                                                    if (match != null) { openedMeta = match.id to trend; selected = match } else showTrendUnavailable = true
+                                                }
                                             }, onFocus = { if (tvCategoryMode) categoryRailExpanded = false })
                                         }
                                     }

@@ -55,6 +55,7 @@ class TmdbService(private val api: NetworkApi) {
         return MetadataResult(
             id = id,
             title = stringOrNull("title") ?: stringOrNull("name") ?: "",
+            year = (stringOrNull("release_date") ?: stringOrNull("first_air_date"))?.take(4)?.takeIf { y -> y.length == 4 && y.all { it.isDigit() } },
             rating = doubleOrNull("vote_average"),
             posterUrl = stringOrNull("poster_path")?.let { "https://image.tmdb.org/t/p/w780$it" },
             backdropUrl = stringOrNull("backdrop_path")?.let { "https://image.tmdb.org/t/p/w1280$it" },
@@ -81,7 +82,7 @@ class TmdbService(private val api: NetworkApi) {
 }
 
 class OmdbService(private val api: NetworkApi) {
-    suspend fun lookup(title: String, apiKey: String): Ratings? = withContext(Dispatchers.IO) { if (apiKey.isBlank()) return@withContext null; val o = api.getJson("https://www.omdbapi.com/?apikey=${enc(apiKey)}&t=${enc(title)}").jsonObject; Ratings(o["imdbRating"]?.jsonPrimitive?.doubleOrNull, o["Ratings"]?.jsonArray?.firstOrNull { it.jsonObject["Source"]?.jsonPrimitive?.contentOrNull == "Rotten Tomatoes" }?.jsonObject?.get("Value")?.jsonPrimitive?.contentOrNull, o["Metascore"]?.jsonPrimitive?.intOrNull) }
+    suspend fun lookup(title: String, apiKey: String, imdbId: String? = null): Ratings? = withContext(Dispatchers.IO) { if (apiKey.isBlank()) return@withContext null; val o = api.getJson("https://www.omdbapi.com/?apikey=${enc(apiKey)}&" + (if (!imdbId.isNullOrBlank()) "i=${enc(imdbId)}" else "t=${enc(title)}")).jsonObject; Ratings(o["imdbRating"]?.jsonPrimitive?.doubleOrNull, o["Ratings"]?.jsonArray?.firstOrNull { it.jsonObject["Source"]?.jsonPrimitive?.contentOrNull == "Rotten Tomatoes" }?.jsonObject?.get("Value")?.jsonPrimitive?.contentOrNull, o["Metascore"]?.jsonPrimitive?.intOrNull) }
     private fun enc(v:String)=URLEncoder.encode(v,"UTF-8")
 }
 
@@ -111,7 +112,9 @@ data class MetadataResult(
     val castMembers: List<MetadataCastMember> = emptyList(),
     val externalId: String? = null,
     val originalTitle: String? = null,
-    val logoUrl: String? = null
+    val logoUrl: String? = null,
+    /** Release / first-air year from TMDB, used to match trending titles to the playlist accurately. */
+    val year: String? = null
 )
 
 @kotlinx.serialization.Serializable
