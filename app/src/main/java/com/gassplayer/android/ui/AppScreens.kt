@@ -197,8 +197,19 @@ fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
         title = shellTitle,
         content = { activeRoute, entryFocusRequester ->
             when (activeRoute) {
-                "home" -> HomeScreen(vm, catalog, favorite, watch, sources, onRoute = { route = it }, onPlay = { playerItem = it }, entryFocusRequester = entryFocusRequester,
-                    onOpenInSection = { item, meta -> pendingSectionDetail = item; pendingSectionMeta = meta; route = if (item.kind == MediaKind.SERIES) "series" else "movies" })
+                "home" -> {
+                    // Home links to a main section open it AND enter it (rail group / first element), verified by
+                    // the shell, instead of only changing the route and inferring the origin afterwards.
+                    val openSection = LocalOpenSection.current
+                    val openFromHome: (String) -> Unit = { target ->
+                        if (openSection != null && target in homeLinkSections) openSection(target) else route = target
+                    }
+                    HomeScreen(vm, catalog, favorite, watch, sources, onRoute = openFromHome, onPlay = { playerItem = it }, entryFocusRequester = entryFocusRequester,
+                        onOpenInSection = { item, meta ->
+                            pendingSectionDetail = item; pendingSectionMeta = meta
+                            openFromHome(if (item.kind == MediaKind.SERIES) "series" else "movies")
+                        })
+                }
                 "live" -> if (settings.groupUIStyle == "categorie_tv") {
                     // The same session/index powers both Live TV and the standalone Guida screen.
                     EpgGridScreen(app, vm, epgSession, catalog?.live.orEmpty(), catalog?.liveCategories.orEmpty(), favorite, settings,
@@ -326,6 +337,8 @@ private fun AdaptiveShell(
     // The automatic focus move currently running (side-navigation OK/RIGHT or a Home link). Any key press
     // cancels it first, so a slow page can never pull focus away from the user afterwards.
     var autoEntryJob by remember { mutableStateOf<Job?>(null) }
+    // Route currently being entered by openSectionFromContent: the generic route-change effect skips it.
+    var pendingContentEntryRoute by remember { mutableStateOf<String?>(null) }
     // One focus-group requester per page route. requestFocus() on a group moves focus to its first
     // VISIBLE focusable child (top-left), so it always works, also after the page list was scrolled.
     val pageGroupRequesters = remember { HashMap<String, FocusRequester>() }
@@ -401,13 +414,57 @@ private fun AdaptiveShell(
             val owner = selectedTab == id
             if (!owner) {
                 onRoute(id)
-                delay(32L) // let the newly shown page attach its focus nodes
+                // Wait for the shell to apply the new route (not a fixed delay: a slow frame made the entry
+                // see the previous route and stop).
+                var waited = 0
+                do { delay(16L); waited++ } while (navigationRailDestination(currentShellRoute) != navigationRailDestination(id) && waited < 40)
             }
             focusIntoPage(if (owner) route else id, fromRail = true)
         } finally {
             sectionEntriesInProgress--
         }
     }
+    // Home link / trending title -> open [target] and put focus INSIDE it. Explicit (no guessing where the
+    // route change came from) and verified: shortly after entering, focus must really be in the page; if
+    // something moved it (the system's automatic initial focus on the first tab, "Home", or a late page
+    // effect) it enters again, up to 3 times. Any key press stops it (the user is in control).
+    fun openSectionFromContent(target: String) {
+        if (!tv) { onRoute(target); return }
+        autoEntryJob?.cancel()
+        pendingContentEntryRoute = target
+        onRoute(target)
+        val job = railScope.launch {
+            val startKeys = userKeyNonce
+            // Wait until the shell has really switched to [target] (next recomposition). Entering before that
+            // made focusIntoPage see the OLD route ("home") for Live TV / Film / Serie TV and give up at once:
+            // that is why only those links left the blue outline on "Home".
+            var waited = 0
+            while (navigationRailDestination(currentShellRoute) != navigationRailDestination(target) && waited < 40) {
+                delay(16L)
+                waited++
+            }
+            for (round in 0 until 3) {
+                focusIntoPage(target, fromRail = false)
+                if (userKeyNonce != startKeys) return@launch
+                // Re-check after the frames in which late focus changes can happen.
+                var stable = true
+                for (check in 0 until 6) {
+                    delay(70L)
+                    if (userKeyNonce != startKeys) return@launch
+                    if (focusedPageRoute != target) { stable = false; break }
+                }
+                if (stable) return@launch
+            }
+            // Could not enter (page without focusable content): at least select the section's tab.
+            if (userKeyNonce == startKeys && focusedPageRoute != target) {
+                navFocusRequesters[navigationRailDestination(target)]?.requestFocusWithRetry(attempts = 6, delayMillis = 40L)
+            }
+        }
+        job.invokeOnCompletion { if (pendingContentEntryRoute == target) pendingContentEntryRoute = null }
+        autoEntryJob = job
+    }
+    val openSectionState = rememberUpdatedState<(String) -> Unit> { target -> openSectionFromContent(target) }
+    val stableOpenSection = remember { { target: String -> openSectionState.value(target) } }
     LaunchedEffect(tv) {
         if (tv) {
             delay(90L)
@@ -425,7 +482,7 @@ private fun AdaptiveShell(
             if (route !in mainNavigationRoutes || previous !in mainNavigationRoutes) {
                 delay(105L)
                 routeEntryFocusRequesters[route]?.requestFocusWithRetry(attempts = 6, delayMillis = 45L)
-            } else if (!keyPressedOnRail && sectionEntriesInProgress == 0) {
+            } else if (!keyPressedOnRail && sectionEntriesInProgress == 0 && pendingContentEntryRoute != route) {
                 // A main section was opened from page content (any Home link): the page that owned focus
                 // is now hidden. Move focus straight INTO the new section (its rail group or first visible
                 // element); the side tab is highlighted by the route. Fall back to the tab, never nowhere.
@@ -472,7 +529,7 @@ private fun AdaptiveShell(
             navFocusRequesters[navigationRailDestination(route)]?.requestFocusWithRetry(attempts = 6, delayMillis = 45L)
         }
     }
-    CompositionLocalProvider(LocalSectionEntryController provides sectionEntry) {
+    CompositionLocalProvider(LocalSectionEntryController provides sectionEntry, LocalOpenSection provides stableOpenSection) {
     LiquidGlassBackdrop(Modifier.fillMaxSize()) {
         Row(
             Modifier.fillMaxSize()
@@ -622,6 +679,9 @@ private fun AdaptiveShell(
                     renderedLibraryRoutes.forEach { section ->
                         key(section) {
                             val active = route == section
+                            // A hidden page can no longer hold focus: never let a stale marker make an entry
+                            // into another section look successful.
+                            LaunchedEffect(active) { if (!active && focusedPageRoute == section) focusedPageRoute = null }
                             val pageAlpha by animateFloatAsState(
                                 targetValue = if (active) 1f else 0f,
                                 animationSpec = tween(if (active || renderedLibraryRoutes.size > 1) 110 else 0),
@@ -700,6 +760,9 @@ private fun AdaptiveShell(
     }
     } // LocalSectionEntryController
 }
+
+/** Main sections reachable from Home links: they open with focus inside (see LocalOpenSection). */
+private val homeLinkSections = setOf("live", "movies", "series", "epg", "search", "sources", "settings")
 
 private fun navIcon(id: String) = when(id) { "home" -> Icons.Default.Home; "live" -> Icons.Default.LiveTv; "movies" -> Icons.Default.Movie; "series" -> Icons.Default.Tv; "epg" -> Icons.Default.CalendarMonth; "search" -> Icons.Default.Search; "sources" -> Icons.Default.SettingsInputAntenna; else -> Icons.Default.Settings }
 
@@ -1134,13 +1197,35 @@ private fun HomeDestinationCard(title: String, metric: String, subtitle: String,
     }
 }
 
+/** Which cover holds DPAD focus in VOD / Serie TV and whether it sits on the left edge of its row. */
+@Stable
+private class LeftEdgeCoverFocus {
+    var key by mutableStateOf<String?>(null)
+    var atEdge by mutableStateOf(false)
+    val active: Boolean get() = key != null && atEdge
+    /** A cover NOT on the left edge holds focus: LEFT must navigate to the previous cover. */
+    val blocksRail: Boolean get() = key != null && !atEdge
+}
+
+/** Order-safe: a cover clears the state only if it still owns it when it loses focus. */
+private fun Modifier.trackLeftEdgeCover(state: LeftEdgeCoverFocus, key: String, atEdge: Boolean): Modifier =
+    onFocusChanged {
+        if (it.hasFocus) {
+            state.key = key
+            state.atEdge = atEdge
+        } else if (state.key == key) {
+            state.key = null
+            state.atEdge = false
+        }
+    }
+
 @Composable
-private fun TrendingCard(item: MetadataResult, isSeries: Boolean, onClick: () -> Unit, onFocus: (() -> Unit)? = null) {
+private fun TrendingCard(item: MetadataResult, isSeries: Boolean, onClick: () -> Unit, onFocus: (() -> Unit)? = null, modifier: Modifier = Modifier) {
     var focused by remember(item.id) { mutableStateOf(false) }
     val scale by androidx.compose.animation.core.animateFloatAsState(if (focused) 1.025f else 1f, label = "trending-card-focus")
     Surface(
         onClick = onClick,
-        modifier = Modifier.width(156.dp).height(270.dp).graphicsLayer { scaleX = scale; scaleY = scale }
+        modifier = modifier.width(156.dp).height(270.dp).graphicsLayer { scaleX = scale; scaleY = scale }
             .onFocusChanged { focused = it.isFocused; if (it.isFocused || it.hasFocus) onFocus?.invoke() }
             .remoteFocusOutline(cornerRadius = 18.dp),
         color = Color.Transparent,
@@ -1422,6 +1507,9 @@ private fun CatalogScreen(
     var searchQuery by remember(scopeKey) { mutableStateOf("") }
     var trending by remember { mutableStateOf<List<MetadataResult>>(emptyList()) }
     var showTrendUnavailable by remember { mutableStateOf(false) }
+    // "Categorie TV": the collapsed rail opens with LEFT ONLY from a cover on the left edge (first card
+    // of a row / first grid column); everywhere else LEFT keeps navigating.
+    val leftEdgeCover = remember { LeftEdgeCoverFocus() }
     val listState = rememberLazyListState()
     val scrollScope = rememberCoroutineScope()
     val libSettings by vm.settings.collectAsStateWithLifecycle()
@@ -1555,7 +1643,11 @@ private fun CatalogScreen(
         }
         Column(
             Modifier.weight(1f).fillMaxHeight().onPreviewKeyEvent { event ->
-                if (tvCategoryMode && !categoryRailExpanded && event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft) {
+                if (tvCategoryMode && !categoryRailExpanded && event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft &&
+                    // Every element opens the rail with LEFT, except covers that are not on the left edge
+                    // (they navigate to the previous cover).
+                    !leftEdgeCover.blocksRail
+                ) {
                     categoryRailExpanded = true
                     true
                 } else false
@@ -1656,8 +1748,10 @@ private fun CatalogScreen(
                             item(key = "library-continue-$scopeKey") {
                                 Section("Continua a guardare", null) {
                                     LazyRow(modifier = Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                        items(continueItems.take(24), key = { it.id }) { item ->
-                                            MediaCard(item, vm.appFavorite(favorite, item), onClick = { selected = item }, onToggleFavorite = { vm.toggleFavorite(item) }, onFocus = { if (tvCategoryMode) categoryRailExpanded = false })
+                                        androidx.compose.foundation.lazy.itemsIndexed(continueItems.take(24), key = { _, item -> item.id }) { index, item ->
+                                            Box(Modifier.trackLeftEdgeCover(leftEdgeCover, "continue:${item.id}", index == 0)) {
+                                                MediaCard(item, vm.appFavorite(favorite, item), onClick = { selected = item }, onToggleFavorite = { vm.toggleFavorite(item) }, onFocus = { if (tvCategoryMode) categoryRailExpanded = false })
+                                            }
                                         }
                                     }
                                 }
@@ -1669,8 +1763,8 @@ private fun CatalogScreen(
                                     if (libSettings.tmdbApiKey.isBlank()) Text("Configura la chiave TMDB nelle impostazioni per vedere le tendenze.", color = glassForeground(.6f), fontSize = 12.sp)
                                     else if (trending.isEmpty()) Text("Tendenze non disponibili: controlla la rete e la chiave TMDB.", color = glassForeground(.6f), fontSize = 12.sp)
                                     else LazyRow(modifier = Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                        items(trending.take(16), key = { it.id }) { trend ->
-                                            TrendingCard(trend, false, onClick = {
+                                        androidx.compose.foundation.lazy.itemsIndexed(trending.take(16), key = { _, trend -> trend.id }) { index, trend ->
+                                            TrendingCard(trend, false, modifier = Modifier.trackLeftEdgeCover(leftEdgeCover, "trend:${trend.id}", index == 0), onClick = {
                                                 // Accurate lookup off the main thread; parental-locked titles excluded as in the grid.
                                                 trendLookup?.cancel()
                                                 trendLookup = trendScope.launch {
@@ -1700,16 +1794,18 @@ private fun CatalogScreen(
                             val firstIndex = rowIndex * gridColumns
                             for (index in firstIndex until minOf(filtered.size, firstIndex + gridColumns)) {
                                 val item = filtered[index]
-                                MediaCard(
-                                    item,
-                                    vm.appFavorite(favorite, item),
-                                    onClick = { if (detail) selected = item else onPlay(item) },
-                                    onToggleFavorite = { vm.toggleFavorite(item) },
-                                    widthOverride = cardWidth,
-                                    onFocus = { if (tvCategoryMode) categoryRailExpanded = false },
-                                    focusRequester = if (item.id == filtered.firstOrNull()?.id) firstMediaFocusRequester else null,
-                                    additionalFocusRequester = if (!tvCategoryMode && item.id == filtered.firstOrNull()?.id) entryFocusRequester else null,
-                                )
+                                Box(Modifier.trackLeftEdgeCover(leftEdgeCover, "grid:${item.id}", index == firstIndex)) {
+                                    MediaCard(
+                                        item,
+                                        vm.appFavorite(favorite, item),
+                                        onClick = { if (detail) selected = item else onPlay(item) },
+                                        onToggleFavorite = { vm.toggleFavorite(item) },
+                                        widthOverride = cardWidth,
+                                        onFocus = { if (tvCategoryMode) categoryRailExpanded = false },
+                                        focusRequester = if (item.id == filtered.firstOrNull()?.id) firstMediaFocusRequester else null,
+                                        additionalFocusRequester = if (!tvCategoryMode && item.id == filtered.firstOrNull()?.id) entryFocusRequester else null,
+                                    )
+                                }
                             }
                         }
                     }
@@ -1781,6 +1877,9 @@ private fun SeriesScreen(
     var searchQuery by remember { mutableStateOf("") }
     var trending by remember { mutableStateOf<List<MetadataResult>>(emptyList()) }
     var showTrendUnavailable by remember { mutableStateOf(false) }
+    // "Categorie TV": the collapsed rail opens with LEFT ONLY from a cover on the left edge (first card
+    // of a row / first grid column); everywhere else LEFT keeps navigating.
+    val leftEdgeCover = remember { LeftEdgeCoverFocus() }
     val listState = rememberLazyListState()
     val scrollScope = rememberCoroutineScope()
     val libSettings by vm.settings.collectAsStateWithLifecycle()
@@ -1922,7 +2021,11 @@ private fun SeriesScreen(
         }
         Column(
             Modifier.weight(1f).fillMaxHeight().onPreviewKeyEvent { event ->
-                if (tvCategoryMode && !categoryRailExpanded && event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft) {
+                if (tvCategoryMode && !categoryRailExpanded && event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft &&
+                    // Every element opens the rail with LEFT, except covers that are not on the left edge
+                    // (they navigate to the previous cover).
+                    !leftEdgeCover.blocksRail
+                ) {
                     categoryRailExpanded = true
                     true
                 } else false
@@ -2013,8 +2116,10 @@ private fun SeriesScreen(
                             item(key = "library-continue-series") {
                                 Section("Continua a guardare", null) {
                                     LazyRow(modifier = Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                        items(continueItems.take(24), key = { it.id }) { item ->
-                                            MediaCard(item, item.id in favorite.series, onClick = { selected = item }, onToggleFavorite = { vm.toggleFavorite(item) }, onFocus = { if (tvCategoryMode) categoryRailExpanded = false })
+                                        androidx.compose.foundation.lazy.itemsIndexed(continueItems.take(24), key = { _, item -> item.id }) { index, item ->
+                                            Box(Modifier.trackLeftEdgeCover(leftEdgeCover, "continue:${item.id}", index == 0)) {
+                                                MediaCard(item, item.id in favorite.series, onClick = { selected = item }, onToggleFavorite = { vm.toggleFavorite(item) }, onFocus = { if (tvCategoryMode) categoryRailExpanded = false })
+                                            }
                                         }
                                     }
                                 }
@@ -2026,8 +2131,8 @@ private fun SeriesScreen(
                                     if (libSettings.tmdbApiKey.isBlank()) Text("Configura la chiave TMDB nelle impostazioni per vedere le tendenze.", color = glassForeground(.6f), fontSize = 12.sp)
                                     else if (trending.isEmpty()) Text("Tendenze non disponibili: controlla la rete e la chiave TMDB.", color = glassForeground(.6f), fontSize = 12.sp)
                                     else LazyRow(modifier = Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                        items(trending.take(16), key = { it.id }) { trend ->
-                                            TrendingCard(trend, true, onClick = {
+                                        androidx.compose.foundation.lazy.itemsIndexed(trending.take(16), key = { _, trend -> trend.id }) { index, trend ->
+                                            TrendingCard(trend, true, modifier = Modifier.trackLeftEdgeCover(leftEdgeCover, "trend:${trend.id}", index == 0), onClick = {
                                                 // Accurate lookup off the main thread; parental-locked titles excluded as in the grid.
                                                 trendLookup?.cancel()
                                                 trendLookup = trendScope.launch {
@@ -2057,16 +2162,18 @@ private fun SeriesScreen(
                             val firstIndex = rowIndex * gridColumns
                             for (index in firstIndex until minOf(filtered.size, firstIndex + gridColumns)) {
                                 val item = filtered[index]
-                                MediaCard(
-                                    item,
-                                    item.id in favorite.series,
-                                    onClick = { selected = item },
-                                    onToggleFavorite = { vm.toggleFavorite(item) },
-                                    widthOverride = cardWidth,
-                                    onFocus = { if (tvCategoryMode) categoryRailExpanded = false },
-                                    focusRequester = if (item.id == filtered.firstOrNull()?.id) firstMediaFocusRequester else null,
-                                    additionalFocusRequester = if (!tvCategoryMode && item.id == filtered.firstOrNull()?.id) entryFocusRequester else null,
-                                )
+                                Box(Modifier.trackLeftEdgeCover(leftEdgeCover, "grid:${item.id}", index == firstIndex)) {
+                                    MediaCard(
+                                        item,
+                                        item.id in favorite.series,
+                                        onClick = { selected = item },
+                                        onToggleFavorite = { vm.toggleFavorite(item) },
+                                        widthOverride = cardWidth,
+                                        onFocus = { if (tvCategoryMode) categoryRailExpanded = false },
+                                        focusRequester = if (item.id == filtered.firstOrNull()?.id) firstMediaFocusRequester else null,
+                                        additionalFocusRequester = if (!tvCategoryMode && item.id == filtered.firstOrNull()?.id) entryFocusRequester else null,
+                                    )
+                                }
                             }
                         }
                     }

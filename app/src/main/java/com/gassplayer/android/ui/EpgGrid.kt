@@ -200,6 +200,9 @@ internal fun EpgGridScreen(
         if (tvCategoryMode && !playerActive) categoryRailExpanded = true
     }
     var previewChannelId by remember { mutableStateOf<String?>(null) }
+    // Channel row whose programme tiles hold DPAD focus: there LEFT moves tile by tile (and then to the
+    // channel banner); the Categorie TV rail opens with LEFT only from the channel banners.
+    var focusedTileRowId by remember { mutableStateOf<String?>(null) }
     val previewHttpFactory = remember(context) { DefaultHttpDataSource.Factory().setUserAgent(app.network.userAgent) }
     val previewPlayer = remember(context, tvCategoryMode) {
         if (!tvCategoryMode) null else ExoPlayer.Builder(context)
@@ -647,7 +650,9 @@ internal fun EpgGridScreen(
         }
         Column(
             Modifier.weight(1f).fillMaxHeight().onPreviewKeyEvent { event ->
-                if (tvCategoryMode && !categoryRailExpanded && event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft) {
+                if (tvCategoryMode && !categoryRailExpanded && event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft &&
+                    focusedTileRowId == null
+                ) {
                     categoryRailExpanded = true
                     true
                 } else false
@@ -856,7 +861,13 @@ internal fun EpgGridScreen(
                         focusRequester = if (visibleIndex == 0) firstChannelFocusRequester else null,
                     )
                     Box(
-                        Modifier.weight(1f).fillMaxHeight().offset(x = -bleed).clipToBounds().horizontalScroll(hScroll)
+                        Modifier.weight(1f).fillMaxHeight().offset(x = -bleed).clipToBounds()
+                            .onFocusChanged { state ->
+                                // Order-safe: a row clears the flag only if it still owns it.
+                                if (state.hasFocus) focusedTileRowId = ch.id
+                                else if (focusedTileRowId == ch.id) focusedTileRowId = null
+                            }
+                            .horizontalScroll(hScroll)
                     ) {
                         Box(Modifier.width(canvasW + bleed).fillMaxHeight()) {
                             val inWindow = programs.filter { it.endMs > windowStart && it.startMs < windowEnd }
@@ -912,7 +923,8 @@ internal fun EpgGridScreen(
                                         selected = tvCategoryMode && ch.id == previewChannel?.id && program.isCurrent(now),
                                         onClick = { selectedProgram = ch to program; if (tvCategoryMode) previewChannelId = ch.id },
                                         onFocus = { if (tvCategoryMode) { previewChannelId = ch.id; categoryRailExpanded = false } },
-                                        onExitLeft = { if (tvCategoryMode && !categoryRailExpanded) { categoryRailExpanded = true; true } else false }
+                                        // LEFT on a programme tile always navigates (previous tile, then banner).
+                                        onExitLeft = { false }
                                     )
                                 }
                             }

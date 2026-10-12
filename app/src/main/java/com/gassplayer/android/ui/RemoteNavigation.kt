@@ -105,6 +105,12 @@ internal class SectionEntryController {
 
 internal val LocalSectionEntryController = staticCompositionLocalOf { SectionEntryController() }
 
+/**
+ * Opens a main section from page content (Home links, trending titles) AND puts DPAD focus inside it,
+ * verified. Provided by the shell on TV; null elsewhere, where callers just change the route.
+ */
+internal val LocalOpenSection = staticCompositionLocalOf<((String) -> Unit)?> { null }
+
 /** Registers [handler] as the entry point of [route] while composed; a null route registers nothing. */
 @Composable
 internal fun RegisterSectionEntry(route: String?, handler: suspend () -> Boolean) {
