@@ -35,6 +35,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -1748,7 +1749,7 @@ private fun CatalogScreen(
                             item(key = "library-continue-$scopeKey") {
                                 Section("Continua a guardare", null) {
                                     LazyRow(modifier = Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                        androidx.compose.foundation.lazy.itemsIndexed(continueItems.take(24), key = { _, item -> item.id }) { index, item ->
+                                        itemsIndexed(continueItems.take(24), key = { _, item -> item.id }) { index, item ->
                                             Box(Modifier.trackLeftEdgeCover(leftEdgeCover, "continue:${item.id}", index == 0)) {
                                                 MediaCard(item, vm.appFavorite(favorite, item), onClick = { selected = item }, onToggleFavorite = { vm.toggleFavorite(item) }, onFocus = { if (tvCategoryMode) categoryRailExpanded = false })
                                             }
@@ -1763,7 +1764,7 @@ private fun CatalogScreen(
                                     if (libSettings.tmdbApiKey.isBlank()) Text("Configura la chiave TMDB nelle impostazioni per vedere le tendenze.", color = glassForeground(.6f), fontSize = 12.sp)
                                     else if (trending.isEmpty()) Text("Tendenze non disponibili: controlla la rete e la chiave TMDB.", color = glassForeground(.6f), fontSize = 12.sp)
                                     else LazyRow(modifier = Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                        androidx.compose.foundation.lazy.itemsIndexed(trending.take(16), key = { _, trend -> trend.id }) { index, trend ->
+                                        itemsIndexed(trending.take(16), key = { _, trend -> trend.id }) { index, trend ->
                                             TrendingCard(trend, false, modifier = Modifier.trackLeftEdgeCover(leftEdgeCover, "trend:${trend.id}", index == 0), onClick = {
                                                 // Accurate lookup off the main thread; parental-locked titles excluded as in the grid.
                                                 trendLookup?.cancel()
@@ -2116,7 +2117,7 @@ private fun SeriesScreen(
                             item(key = "library-continue-series") {
                                 Section("Continua a guardare", null) {
                                     LazyRow(modifier = Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                        androidx.compose.foundation.lazy.itemsIndexed(continueItems.take(24), key = { _, item -> item.id }) { index, item ->
+                                        itemsIndexed(continueItems.take(24), key = { _, item -> item.id }) { index, item ->
                                             Box(Modifier.trackLeftEdgeCover(leftEdgeCover, "continue:${item.id}", index == 0)) {
                                                 MediaCard(item, item.id in favorite.series, onClick = { selected = item }, onToggleFavorite = { vm.toggleFavorite(item) }, onFocus = { if (tvCategoryMode) categoryRailExpanded = false })
                                             }
@@ -2131,7 +2132,7 @@ private fun SeriesScreen(
                                     if (libSettings.tmdbApiKey.isBlank()) Text("Configura la chiave TMDB nelle impostazioni per vedere le tendenze.", color = glassForeground(.6f), fontSize = 12.sp)
                                     else if (trending.isEmpty()) Text("Tendenze non disponibili: controlla la rete e la chiave TMDB.", color = glassForeground(.6f), fontSize = 12.sp)
                                     else LazyRow(modifier = Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                        androidx.compose.foundation.lazy.itemsIndexed(trending.take(16), key = { _, trend -> trend.id }) { index, trend ->
+                                        itemsIndexed(trending.take(16), key = { _, trend -> trend.id }) { index, trend ->
                                             TrendingCard(trend, true, modifier = Modifier.trackLeftEdgeCover(leftEdgeCover, "trend:${trend.id}", index == 0), onClick = {
                                                 // Accurate lookup off the main thread; parental-locked titles excluded as in the grid.
                                                 trendLookup?.cancel()
