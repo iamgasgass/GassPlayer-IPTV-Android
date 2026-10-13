@@ -1,5 +1,7 @@
 package com.gassplayer.android.ui
 
+import com.gassplayer.android.ui.theme.isGassLight
+import com.gassplayer.android.ui.theme.readable
 import androidx.activity.compose.BackHandler
 
 import androidx.compose.foundation.BorderStroke
@@ -57,9 +59,11 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private val SourcesMuted = Color(0xFFB5BBC9)
-private val SourcesBlue = Color(0xFF9ABEFF)
-private val SourcesGreen = Color(0xFF63D995)
+// Colori della pagina Sorgenti: sul tema Chiaro i grigi/pastello pensati per il fondo scuro diventano
+// leggibili (grigio ardesia e tinte scurite), sugli altri temi restano quelli del riferimento iOS.
+private val SourcesMuted: Color @Composable get() = if (isGassLight()) Color(0xFF5A6273) else Color(0xFFB5BBC9)
+private val SourcesBlue: Color @Composable get() = Color(0xFF9ABEFF).readable()
+private val SourcesGreen: Color @Composable get() = Color(0xFF63D995).readable()
 
 private data class SourceItemCounts(
     val live: Int = 0,
@@ -131,7 +135,7 @@ fun SourcesView(
             icon = Icons.Default.Tv,
             title = "Guarda tutte le liste insieme",
             subtitle = if (sources.count { it.type == SourceType.XTREAM && it.isEnabled } > 0) "Apri il catalogo Live TV delle sorgenti abilitate" else "Aggiungi e abilita una sorgente Xtream per unire i canali",
-            tint = Color(0xFFFF667C),
+            tint = Color(0xFFFF667C).readable(),
             enabled = sources.any { it.type == SourceType.XTREAM && it.isEnabled },
             onClick = { onRoute("live") }
         )
@@ -163,7 +167,7 @@ fun SourcesView(
             Icons.Default.Add, "Aggiungi playlist", "Collega una playlist M3U o un account Xtream", Color(0xFF73A7FF),
             focusRequester = entryFocusRequester,
         ) { showAdd = true }
-        SourceActionRow(Icons.Default.Settings, "Gestisci sorgenti", "Modifica dettagli, contenuto ed EPG di ogni sorgente", Color(0xFF9E9BFF), enabled = sources.isNotEmpty()) { onRoute("source-manager") }
+        SourceActionRow(Icons.Default.Settings, "Gestisci sorgenti", "Modifica dettagli, contenuto ed EPG di ogni sorgente", Color(0xFF9E9BFF).readable(), enabled = sources.isNotEmpty()) { onRoute("source-manager") }
 
         if (displayedSources.isEmpty()) {
             SourceEmptyState(if (sources.isEmpty()) "Nessuna sorgente configurata" else "Nessun risultato", if (sources.isEmpty()) "Tocca Aggiungi playlist per iniziare." else "Prova con un altro nome, host o tipo.")
@@ -172,18 +176,18 @@ fun SourcesView(
                 Column(Modifier.fillMaxWidth().padding(13.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         Box(Modifier.size(42.dp).clip(RoundedCornerShape(14.dp)).background(sourceTint(source).copy(.2f)), contentAlignment = Alignment.Center) {
-                            Icon(Icons.Default.SettingsInputAntenna, null, tint = sourceTint(source), modifier = Modifier.size(21.dp))
+                            Icon(Icons.Default.SettingsInputAntenna, null, tint = sourceTint(source).readable(), modifier = Modifier.size(21.dp))
                         }
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                                if (source.isPinned) Icon(Icons.Default.PushPin, null, tint = Color(0xFFFFB45E), modifier = Modifier.size(13.dp))
+                                if (source.isPinned) Icon(Icons.Default.PushPin, null, tint = Color(0xFFFFB45E).readable(), modifier = Modifier.size(13.dp))
                                 Text(source.name, color = glassForeground(), fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                             Text(source.host, color = SourcesMuted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Text(source.type.name, color = glassForeground(.55f), fontSize = 10.sp)
                                 Text("•", color = glassForeground(.4f), fontSize = 10.sp)
-                                Text(if (source.lastVerificationSucceeded) "Verificata · ${source.lastKnownChannelCount} elementi" else if (source.lastVerifiedAt != null) "Verifica non riuscita" else "Non verificata", color = if (source.lastVerificationSucceeded) SourcesGreen else Color(0xFFFFBD70), fontSize = 10.sp)
+                                Text(if (source.lastVerificationSucceeded) "Verificata · ${source.lastKnownChannelCount} elementi" else if (source.lastVerifiedAt != null) "Verifica non riuscita" else "Non verificata", color = if (source.lastVerificationSucceeded) SourcesGreen else Color(0xFFFFBD70).readable(), fontSize = 10.sp)
                             }
                         }
                         if (activeId == source.id) Icon(Icons.Default.CheckCircle, "Sorgente attiva", tint = SourcesGreen, modifier = Modifier.size(20.dp))
@@ -196,7 +200,7 @@ fun SourcesView(
                                 DropdownMenuItem(text = { Text("Duplica") }, leadingIcon = { Icon(Icons.Default.ContentCopy, null) }, onClick = { sourceMenuTarget = null; scope.launch { app.sources.duplicate(source.id); vm.refresh(false) } }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true))
                                 DropdownMenuItem(text = { Text("Verifica connessione") }, leadingIcon = { Icon(Icons.Default.Shield, null) }, onClick = { sourceMenuTarget = null; verifyingId = source.id; scope.launch { val result = app.sources.verify(source); vm.refresh(false); feedback = result.fold({ "${source.name}: connessione riuscita (${it} elementi)." }, { "${source.name}: ${it.message ?: "verifica non riuscita"}" }); verifyingId = null } }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true))
                                 DropdownMenuItem(text = { Text("Gestisci…") }, leadingIcon = { Icon(Icons.Default.Settings, null) }, onClick = { sourceMenuTarget = null; onManage(source) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true))
-                                DropdownMenuItem(text = { Text("Elimina") }, leadingIcon = { Icon(Icons.Default.Delete, null, tint = Color(0xFFFF8791)) }, onClick = { deleteTarget = source; sourceMenuTarget = null }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true))
+                                DropdownMenuItem(text = { Text("Elimina") }, leadingIcon = { Icon(Icons.Default.Delete, null, tint = Color(0xFFFF8791).readable()) }, onClick = { deleteTarget = source; sourceMenuTarget = null }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true))
                             }
                         }
                     }
@@ -218,7 +222,7 @@ fun SourcesView(
                         }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp, includeDescendants = true))
                         TextButton(onClick = { vm.setActive(source.id) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp)) { Text(if (activeId == source.id) "Attiva" else "Usa", color = if (activeId == source.id) SourcesGreen else SourcesBlue) }
                     }
-                    if (verifyingId == source.id) LinearProgressIndicator(Modifier.fillMaxWidth(), color = SourcesBlue, trackColor = Color.White.copy(.1f))
+                    if (verifyingId == source.id) LinearProgressIndicator(Modifier.fillMaxWidth(), color = SourcesBlue, trackColor = glassForeground().copy(.1f))
                 }
             }
         }
@@ -228,23 +232,23 @@ fun SourcesView(
         merged.sortedBy { it.sortOrder }.forEach { list ->
             LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius = 16.dp, contentPadding = 12.dp) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Icon(Icons.Default.SettingsInputAntenna, null, tint = Color(0xFFB59AFF))
+                    Icon(Icons.Default.SettingsInputAntenna, null, tint = Color(0xFFB59AFF).readable())
                     Column(Modifier.weight(1f)) {
                         Text(list.name, color = glassForeground(), fontWeight = FontWeight.SemiBold)
                         Text("${list.memberSourceIds.size} sorgenti unite", color = SourcesMuted, fontSize = 12.sp)
                     }
-                    IconButton(onClick = { scope.launch { app.mergedPlaylists.remove(list.id) } }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp)) { Icon(Icons.Default.Delete, "Elimina playlist unita", tint = Color(0xFFFF8791)) }
+                    IconButton(onClick = { scope.launch { app.mergedPlaylists.remove(list.id) } }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp)) { Icon(Icons.Default.Delete, "Elimina playlist unita", tint = Color(0xFFFF8791).readable()) }
                 }
             }
         }
-        SourceActionRow(Icons.Default.Add, "Crea playlist unita", "Seleziona almeno due sorgenti", Color(0xFFB59AFF), enabled = sources.size >= 2) { selectedMergeIds = emptySet(); mergedName = ""; mergeDialog = true }
+        SourceActionRow(Icons.Default.Add, "Crea playlist unita", "Seleziona almeno due sorgenti", Color(0xFFB59AFF).readable(), enabled = sources.size >= 2) { selectedMergeIds = emptySet(); mergedName = ""; mergeDialog = true }
 
         SourceSectionHeader("Preferiti", "I contenuti salvati")
         if (favouriteItems.isEmpty()) Text("I contenuti preferiti appariranno qui dopo il caricamento del catalogo.", color = SourcesMuted, fontSize = 13.sp)
         else favouriteItems.forEach { item ->
             LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius = 14.dp, contentPadding = 10.dp) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Icon(Icons.Default.Favorite, null, tint = Color(0xFFFF8AA6), modifier = Modifier.size(18.dp))
+                    Icon(Icons.Default.Favorite, null, tint = Color(0xFFFF8AA6).readable(), modifier = Modifier.size(18.dp))
                     Column(Modifier.weight(1f)) {
                         Text(item.title, color = glassForeground(), maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
                         Text("${item.kind.name} · ${item.sourceId}", color = SourcesMuted, fontSize = 11.sp)
@@ -254,10 +258,10 @@ fun SourcesView(
         }
 
         SourceSectionHeader("Backup", "Esporta o importa sorgenti")
-        SourceActionRow(Icons.Default.FileDownload, "Esporta sorgenti (JSON)", "Il file contiene le impostazioni delle sorgenti e può includere credenziali", Color(0xFF73A7FF)) {
+        SourceActionRow(Icons.Default.FileDownload, "Esporta sorgenti (JSON)", "Il file contiene le impostazioni delle sorgenti e può includere credenziali", Color(0xFF73A7FF).readable()) {
             scope.launch { exportJson = runCatching { app.backup.exportSources() }.getOrElse { "Errore: ${it.message}" } }
         }
-        SourceActionRow(Icons.Default.FileUpload, "Importa sorgenti (JSON)", "Importa un backup GassPlayer compatibile", Color(0xFF73A7FF)) { importJson = ""; importDialog = true }
+        SourceActionRow(Icons.Default.FileUpload, "Importa sorgenti (JSON)", "Importa un backup GassPlayer compatibile", Color(0xFF73A7FF).readable()) { importJson = ""; importDialog = true }
         SourceActionRow(Icons.Default.Shield, "Verifica tutte le sorgenti Xtream", if (verifyingAll) "Verifica in corso…" else "Controlla connessione e catalogo", SourcesGreen, enabled = !verifyingAll && sources.any { it.type == SourceType.XTREAM }) {
             scope.launch {
                 verifyingAll = true
@@ -288,7 +292,7 @@ fun SourcesView(
             onDismissRequest = { deleteTarget = null },
             title = { Text("Eliminare ${target.name}?") },
             text = { Text("La sorgente e le sue credenziali verranno rimosse. I preferiti salvati non vengono cancellati automaticamente.") },
-            confirmButton = { TextButton(onClick = { vm.deleteSource(target.id); deleteTarget = null }) { Text("Elimina", color = Color(0xFFFF8791)) } },
+            confirmButton = { TextButton(onClick = { vm.deleteSource(target.id); deleteTarget = null }) { Text("Elimina", color = Color(0xFFFF8791).readable()) } },
             dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("Annulla") } }
         )
     }
@@ -398,11 +402,11 @@ fun SourceManagerView(
                     modifier = Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 19.dp),
                     color = Color.Transparent,
                     shape = RoundedCornerShape(19.dp),
-                    border = BorderStroke(.7.dp, Color.White.copy(.14f))
+                    border = BorderStroke(.7.dp, glassForeground().copy(.14f))
                 ) {
                     LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius = 19.dp, contentPadding = 14.dp) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Box(Modifier.size(44.dp).clip(RoundedCornerShape(15.dp)).background(sourceTint(source).copy(.20f)), contentAlignment = Alignment.Center) { Icon(Icons.Default.SettingsInputAntenna, null, tint = sourceTint(source)) }
+                            Box(Modifier.size(44.dp).clip(RoundedCornerShape(15.dp)).background(sourceTint(source).copy(.20f)), contentAlignment = Alignment.Center) { Icon(Icons.Default.SettingsInputAntenna, null, tint = sourceTint(source).readable()) }
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                                 Text(source.name, color = glassForeground(), fontWeight = FontWeight.SemiBold)
                                 Text(source.host, color = SourcesMuted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -516,10 +520,10 @@ private fun SourceManageView(
             SourceSectionHeader("Informazioni sul server", "Account Xtream")
             LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius = 20.dp, contentPadding = 14.dp) {
                 Column(verticalArrangement = Arrangement.spacedBy(13.dp)) {
-                    SourceInfoRow(Icons.Default.Wifi, "Stato", if (accountLoading) "Verifica…" else account?.status?.uppercase(Locale.ROOT) ?: if (accountError != null) "SCONOSCIUTO" else "—", if (account?.status.equals("active", true)) SourcesGreen else if (accountError != null) Color(0xFFFF8C94) else glassForeground())
+                    SourceInfoRow(Icons.Default.Wifi, "Stato", if (accountLoading) "Verifica…" else account?.status?.uppercase(Locale.ROOT) ?: if (accountError != null) "SCONOSCIUTO" else "—", if (account?.status.equals("active", true)) SourcesGreen else if (accountError != null) Color(0xFFFF8C94).readable() else glassForeground())
                     SourceInfoRow(Icons.Default.Tv, "Connessioni", if (account == null) "—" else "${account?.activeConnections ?: 0} / ${account?.maxConnections ?: 0}")
                     SourceInfoRow(Icons.Default.Shield, "Scadenza", expirationText)
-                    if (!accountError.isNullOrBlank()) Text(accountError!!, color = Color(0xFFFF9A9A), fontSize = 12.sp)
+                    if (!accountError.isNullOrBlank()) Text(accountError!!, color = Color(0xFFFF9A9A).readable(), fontSize = 12.sp)
                     if (accountLoading) LinearProgressIndicator(Modifier.fillMaxWidth(), color = SourcesBlue)
                 }
             }
@@ -536,10 +540,10 @@ private fun SourceManageView(
                 reloadLoading = false
             }
         }
-        SourceActionRow(Icons.Default.Edit, "Modifica dettagli", "Nome, server e credenziali", Color(0xFF9DABFF)) { editDialog = true }
-        SourceActionRow(Icons.Default.Settings, "Gestisci contenuto", "${sourceItemCounts.total} elementi nel catalogo · Live TV, film, serie ed episodi", Color(0xFF9DABFF)) { contentDialog = true }
-        SourceActionRow(Icons.Default.Tv, "Gestisci EPG", "Configura e verifica la guida TV", Color(0xFFB59AFF)) { onRoute("epg-manage") }
-        SourceActionRow(Icons.Default.Delete, "Cancella", "Rimuove la sorgente e le credenziali salvate", Color(0xFFFF8791)) { deleteDialog = true }
+        SourceActionRow(Icons.Default.Edit, "Modifica dettagli", "Nome, server e credenziali", Color(0xFF9DABFF).readable()) { editDialog = true }
+        SourceActionRow(Icons.Default.Settings, "Gestisci contenuto", "${sourceItemCounts.total} elementi nel catalogo · Live TV, film, serie ed episodi", Color(0xFF9DABFF).readable()) { contentDialog = true }
+        SourceActionRow(Icons.Default.Tv, "Gestisci EPG", "Configura e verifica la guida TV", Color(0xFFB59AFF).readable()) { onRoute("epg-manage") }
+        SourceActionRow(Icons.Default.Delete, "Cancella", "Rimuove la sorgente e le credenziali salvate", Color(0xFFFF8791).readable()) { deleteDialog = true }
         Spacer(Modifier.height(12.dp))
     }
 
@@ -561,7 +565,7 @@ private fun SourceManageView(
                     SourceInfoRow(Icons.Default.SettingsInputAntenna, "Film", movies.toString())
                     SourceInfoRow(Icons.Default.Tv, "Serie TV", series.toString())
                     SourceInfoRow(Icons.Default.Tv, "Episodi", episodes.toString())
-                    HorizontalDivider(color = Color.White.copy(.12f))
+                    HorizontalDivider(color = glassForeground().copy(.12f))
                     Text("Preferiti di questa sorgente", color = glassForeground(), fontWeight = FontWeight.SemiBold)
                     SourceInfoRow(Icons.Default.Tv, "Live TV", liveFavorites.toString())
                     SourceInfoRow(Icons.Default.SettingsInputAntenna, "VOD", movieFavorites.toString())
@@ -570,7 +574,7 @@ private fun SourceManageView(
                     SourceActionRow(Icons.Default.ContentCopy, "Duplica sorgente", "Crea una copia delle impostazioni", SourcesBlue) {
                         scope.launch { app.sources.duplicate(current.id); vm.refresh(false); contentDialog = false; feedback = "Sorgente duplicata." }
                     }
-                    SourceActionRow(Icons.Default.SettingsInputAntenna, "Unisci con un'altra sorgente", "Crea una playlist aggregata", Color(0xFFB59AFF), enabled = sources.size > 1) {
+                    SourceActionRow(Icons.Default.SettingsInputAntenna, "Unisci con un'altra sorgente", "Crea una playlist aggregata", Color(0xFFB59AFF).readable(), enabled = sources.size > 1) {
                         selectedMergeSources = setOf(current.id)
                         mergedSourceName = "${current.name} + altra sorgente"
                         mergeSourceDialog = true
@@ -612,7 +616,7 @@ private fun SourceManageView(
         onDismissRequest = { deleteDialog = false },
         title = { Text("Eliminare ${current.name}?") },
         text = { Text("La sorgente e le credenziali verranno rimosse. I preferiti già salvati restano nelle preferenze.") },
-        confirmButton = { TextButton(onClick = { vm.deleteSource(current.id); deleteDialog = false; onBack() }) { Text("Elimina", color = Color(0xFFFF8791)) } },
+        confirmButton = { TextButton(onClick = { vm.deleteSource(current.id); deleteDialog = false; onBack() }) { Text("Elimina", color = Color(0xFFFF8791).readable()) } },
         dismissButton = { TextButton(onClick = { deleteDialog = false }) { Text("Annulla") } }
     )
     feedback?.let { msg -> AlertDialog(onDismissRequest = { feedback = null }, title = { Text("Sorgente") }, text = { Text(msg) }, confirmButton = { TextButton(onClick = { feedback = null }) { Text("OK") } }) }
@@ -662,11 +666,11 @@ private fun SourceActionRow(
             .remoteFocusOutline(cornerRadius = 17.dp),
         shape = RoundedCornerShape(17.dp),
         color = Color.Transparent,
-        border = BorderStroke(.65.dp, Color.White.copy(if (enabled) .14f else .06f))
+        border = BorderStroke(.65.dp, glassForeground().copy(if (enabled) .14f else .06f))
     ) {
         LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius = 17.dp, contentPadding = 12.dp) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Box(Modifier.size(38.dp).clip(RoundedCornerShape(13.dp)).background(tint.copy(.17f)), contentAlignment = Alignment.Center) { Icon(icon, null, tint = tint.copy(alpha = if (enabled) 1f else .4f), modifier = Modifier.size(19.dp)) }
+                Box(Modifier.size(38.dp).clip(RoundedCornerShape(13.dp)).background(tint.copy(.17f)), contentAlignment = Alignment.Center) { Icon(icon, null, tint = tint.readable().copy(alpha = if (enabled) 1f else .4f), modifier = Modifier.size(19.dp)) }
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Text(title, color = glassForeground(if (enabled) 1f else .45f), fontWeight = FontWeight.Medium, fontSize = 14.sp)
                     Text(subtitle, color = glassForeground(if (enabled) .62f else .3f), fontSize = 11.sp, lineHeight = 15.sp)

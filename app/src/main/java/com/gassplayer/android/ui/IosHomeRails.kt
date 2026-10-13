@@ -347,7 +347,7 @@ private fun ContinueWatchingCardView(
         }
         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
             DropdownMenuItem(
-                text = { Text("Rimuovi", color = IosDestructive) },
+                text = { Text("Rimuovi", color = IosDestructive.readable()) },
                 leadingIcon = { Icon(Icons.Default.Delete, null, tint = IosDestructive) },
                 onClick = { menuOpen = false; onRemove() },
                 modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true)
@@ -534,12 +534,12 @@ private fun RailArtwork(
             .background(IosSecondaryFill)
             .border(
                 width = if (focused) 2.5.dp else 0.7.dp,
-                color = if (focused) RailFocusAccent else Color.White.copy(alpha = .18f),
+                color = if (focused) RailFocusAccent else glassForeground(.18f),
                 shape = shape
             ),
         contentAlignment = Alignment.Center
     ) {
-        if (!loaded) Icon(placeholder, contentDescription = null, tint = Color.White.copy(alpha = .45f), modifier = Modifier.size(30.dp))
+        if (!loaded) Icon(placeholder, contentDescription = null, tint = glassForeground(.45f), modifier = Modifier.size(30.dp))
         if (!url.isNullOrBlank()) {
             AsyncImage(
                 model = url,

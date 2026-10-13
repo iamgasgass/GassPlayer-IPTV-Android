@@ -249,7 +249,7 @@ private fun PlaylistGroupGlassPill(label: String, selected: Boolean, onClick: ()
         LiquidGlassPill(selected = selected || focused) {
             Text(
                 label,
-                color = if (selected) Color.White else glassForeground().copy(.86f),
+                color = if (selected) glassForeground() else glassForeground().copy(.86f),
                 fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
                 fontSize = 13.sp,
                 maxLines = 1,

@@ -1,5 +1,6 @@
 package com.gassplayer.android.ui
 
+import com.gassplayer.android.ui.theme.readable
 import com.gassplayer.android.data.categoryCounts
 import com.gassplayer.android.data.countIds
 import kotlinx.coroutines.Dispatchers
@@ -217,7 +218,7 @@ internal fun TvCategoryRail(
                                         Icon(
                                             item.icon ?: Icons.Default.FolderOpen,
                                             contentDescription = null,
-                                            tint = if (selected) Color(0xFFBBD0FF) else glassForeground(.67f),
+                                            tint = if (selected) Color(0xFFBBD0FF).readable() else glassForeground(.67f),
                                             modifier = Modifier.size(18.dp),
                                         )
                                         Text(

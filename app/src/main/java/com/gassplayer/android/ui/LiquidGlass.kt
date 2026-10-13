@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -63,6 +64,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
+import com.gassplayer.android.ui.theme.GassThemeStyle
+import com.gassplayer.android.ui.theme.LocalGassThemeStyle
+import com.gassplayer.android.ui.theme.readable
 import kotlinx.coroutines.launch
 
 /**
@@ -73,6 +77,10 @@ import kotlinx.coroutines.launch
  */
 @Composable
 fun LiquidGlassBackdrop(modifier: Modifier = Modifier, content: @Composable BoxScope.() -> Unit = {}) {
+    if (LocalGassThemeStyle.current == GassThemeStyle.MEDIUM) {
+        MediumBackdrop(modifier, content)
+        return
+    }
     val light = MaterialTheme.colorScheme.background.luminance() > .5f
     val base = if (light) Color(0xFFE9EFF8) else Color.Black
     Box(modifier.background(base)) {
@@ -106,6 +114,43 @@ fun LiquidGlassBackdrop(modifier: Modifier = Modifier, content: @Composable BoxS
     }
 }
 
+/**
+ * Sfondo del tema "Medio", campionato dalle foto di riferimento: quasi nero in alto (#0B0C15), alone blu notte
+ * nella fascia centrale-alta (#182030 → #1A2434, più acceso a sinistra), di nuovo quasi nero in basso (#06080C).
+ */
+@Composable
+private fun MediumBackdrop(modifier: Modifier, content: @Composable BoxScope.() -> Unit) {
+    Box(
+        modifier.background(
+            Brush.verticalGradient(
+                // Profilo verticale misurato sulla foto di riferimento (colonna del contenuto).
+                0f to Color(0xFF080A13),
+                .125f to Color(0xFF0F131D),
+                .25f to Color(0xFF161C2A),
+                .375f to Color(0xFF1A2232),
+                .44f to Color(0xFF1D2435),
+                .50f to Color(0xFF182030),
+                .625f to Color(0xFF101622),
+                .75f to Color(0xFF080C14),
+                .875f to Color(0xFF04090C),
+                1f to Color(0xFF04060A)
+            )
+        )
+    ) {
+        // Alone blu più intenso sul lato sinistro, a metà schermo (come nelle foto).
+        // Centro dell'alone a ~45% della larghezza e ~40% dell'altezza (riquadro 90%×80% allineato in alto a sinistra).
+        Box(
+            Modifier.align(Alignment.TopStart).fillMaxWidth(.9f).fillMaxHeight(.8f).background(
+                Brush.radialGradient(
+                    colors = listOf(Color(0xFF1C2840).copy(alpha = .55f), Color(0xFF16203A).copy(alpha = .18f), Color.Transparent),
+                    radius = 1300f
+                )
+            )
+        )
+        content()
+    }
+}
+
 /** Layered glass card inspired by Views/LiquidGlass/GlassCard.swift. */
 @Composable
 fun LiquidGlassSurface(
@@ -118,9 +163,18 @@ fun LiquidGlassSurface(
 ) {
     val shape = RoundedCornerShape(cornerRadius)
     val light = MaterialTheme.colorScheme.background.luminance() > .5f
+    val medium = LocalGassThemeStyle.current == GassThemeStyle.MEDIUM
     val borderAlpha = if (highlighted) .42f else .20f
-    val glassStops = if (light) listOf(Color.White.copy(alpha = if (highlighted) .94f else .82f), Color(0xFFF5F8FD).copy(alpha = .88f), Color(0xFFDDE6F3).copy(alpha = .78f))
-        else listOf(Color.White.copy(alpha = if (highlighted) .17f else .115f), Color(0xFF171717).copy(alpha = .76f), Color(0xFF050505).copy(alpha = .94f))
+    val glassStops = when {
+        light -> listOf(Color.White.copy(alpha = if (highlighted) .94f else .82f), Color(0xFFF5F8FD).copy(alpha = .88f), Color(0xFFDDE6F3).copy(alpha = .78f))
+        // "Medio": grafite-blu delle foto (#2B303C in alto → #1B202C → #10141E in basso).
+        medium -> listOf(
+            Color(0xFF2E3441).copy(alpha = if (highlighted) .98f else .92f),
+            Color(0xFF1B202C).copy(alpha = .94f),
+            Color(0xFF10141E).copy(alpha = .96f)
+        )
+        else -> listOf(Color.White.copy(alpha = if (highlighted) .17f else .115f), Color(0xFF171717).copy(alpha = .76f), Color(0xFF050505).copy(alpha = .94f))
+    }
     Box(
         modifier = modifier
             .clip(shape)
@@ -181,8 +235,17 @@ fun LiquidGlassPill(modifier: Modifier = Modifier, selected: Boolean = false, co
     Box(
         modifier = modifier.clip(shape)
             .background(
-                if (selected) Brush.verticalGradient(listOf(Color(0xFF8CB7FF).copy(.30f), Color(0xFF3478F6).copy(.17f)))
-                else Brush.verticalGradient(if (light) listOf(Color.White.copy(.92f), Color(0xFFE8EEF7).copy(.70f)) else listOf(Color.White.copy(.105f), Color.White.copy(.035f)))
+                if (selected) Brush.verticalGradient(
+                    if (light) listOf(Color(0xFF245DC7).copy(.22f), Color(0xFF245DC7).copy(.12f))
+                    else listOf(Color(0xFF8CB7FF).copy(.30f), Color(0xFF3478F6).copy(.17f))
+                )
+                else Brush.verticalGradient(
+                    when {
+                        light -> listOf(Color.White.copy(.92f), Color(0xFFE8EEF7).copy(.70f))
+                        LocalGassThemeStyle.current == GassThemeStyle.MEDIUM -> listOf(Color(0xFF2A303D).copy(.92f), Color(0xFF181D29).copy(.92f))
+                        else -> listOf(Color.White.copy(.105f), Color.White.copy(.035f))
+                    }
+                )
             )
             .border(
                 BorderStroke(.75.dp, Brush.verticalGradient(if (light) listOf(Color(0xFF596B86).copy(if (selected) .30f else .18f), Color.White.copy(.85f)) else listOf(Color.White.copy(if (selected) .38f else .22f), Color.White.copy(.07f)))) ,
@@ -273,11 +336,17 @@ fun EpgStyleSearchField(
                 }
             )
             .clip(RoundedCornerShape(50))
-            .background(if (containerFocused) Color(0xFF8CB7FF).copy(.14f) else Color.White.copy(.09f))
+            .background(
+                when {
+                    containerFocused -> Color(0xFF8CB7FF).copy(.14f)
+                    LocalGassThemeStyle.current == GassThemeStyle.MEDIUM -> Color(0xFF121724).copy(.94f)
+                    else -> glassForeground(.075f)
+                }
+            )
             .border(
                 BorderStroke(
                     if (containerFocused) 1.8.dp else 1.dp,
-                    if (containerFocused) Color(0xFF8CB7FF) else Color.White.copy(.12f)
+                    if (containerFocused) Color(0xFF8CB7FF).readable() else glassForeground(.14f)
                 ),
                 RoundedCornerShape(50)
             )
@@ -310,7 +379,7 @@ fun EpgStyleSearchField(
             onValueChange = onValueChange,
             singleLine = true,
             textStyle = TextStyle(color = glassForeground(), fontSize = 16.sp, fontFamily = FontFamily.SansSerif),
-            cursorBrush = SolidColor(Color.White),
+            cursorBrush = SolidColor(glassForeground()),
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false, imeAction = if (onSubmit == null) ImeAction.Done else ImeAction.Search),
             keyboardActions = KeyboardActions(
                 onSearch = { onSubmit?.invoke(); finishEditing() },

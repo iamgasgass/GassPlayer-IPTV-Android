@@ -1,5 +1,9 @@
 package com.gassplayer.android.ui
 
+import com.gassplayer.android.ui.theme.gassPageBase
+import com.gassplayer.android.ui.theme.isGassLight
+import com.gassplayer.android.ui.theme.DarkContentTheme
+import com.gassplayer.android.ui.theme.readable
 import android.app.Activity
 import android.app.PendingIntent
 import android.content.Context
@@ -275,6 +279,8 @@ fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
                 // Assorbe i tocchi: niente click "attraverso" il player sulla libreria sottostante.
                 .pointerInput(Unit) {}
         ) {
+            // Il player resta scuro anche col tema Chiaro (testi chiari sul video), come su iOS.
+            DarkContentTheme {
             IosPlayerScreen(
                 app, current, settings, catalog,
                 onBack = { playerItem = null },
@@ -282,6 +288,7 @@ fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
                 onNavigateToItem = { playerItem = it },
                 onOpenSearch = { playerItem = null; route = "search" }
             )
+            }
         }
     }
     }
@@ -612,7 +619,7 @@ private fun AdaptiveShell(
                                 suppressTopHighlight = true
                             ) {
                                 Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                                    Icon(navIcon(id), null, tint = if (selectedTab == id) Color(0xFF9ABEFF) else glassForeground(.75f), modifier = Modifier.size(if (tv) 25.dp else 22.dp))
+                                    Icon(navIcon(id), null, tint = if (selectedTab == id) Color(0xFF9ABEFF).readable() else glassForeground(.75f), modifier = Modifier.size(if (tv) 25.dp else 22.dp))
                                     Text(label, color = if (selectedTab == id) glassForeground() else glassForeground(.72f), fontSize = if (tv) 12.sp else 10.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = androidx.compose.ui.text.style.TextAlign.Center, fontWeight = if (selectedTab == id) FontWeight.SemiBold else FontWeight.Normal)
                                 }
                             }
@@ -634,13 +641,13 @@ private fun AdaptiveShell(
                 }
                 val showStatusBanner = loading || (!message.isNullOrBlank() && route != "sources" && route != "settings")
                 if (loading) {
-                    Spacer(Modifier.height(8.dp)); LinearProgressIndicator(Modifier.fillMaxWidth(), color = Color(0xFF8CB7FF), trackColor = Color.White.copy(.08f))
+                    Spacer(Modifier.height(8.dp)); LinearProgressIndicator(Modifier.fillMaxWidth(), color = Color(0xFF8CB7FF).readable(), trackColor = glassForeground(.08f))
                     Text("Caricamento playlist…", color = glassForeground().copy(.6f), fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
                 } else if (!message.isNullOrBlank() && route != "sources" && route != "settings") {
                     LiquidGlassSurface(Modifier.fillMaxWidth().padding(top = 8.dp), cornerRadius = 15.dp, contentPadding = 10.dp) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Warning, null, tint = Color(0xFFFFB340)); Spacer(Modifier.width(8.dp))
-                            Text(message, color = Color(0xFFFFD08A), fontSize = 13.sp, modifier = Modifier.weight(1f), maxLines = 3, overflow = TextOverflow.Ellipsis)
+                            Icon(Icons.Default.Warning, null, tint = Color(0xFFFFB340).readable()); Spacer(Modifier.width(8.dp))
+                            Text(message, color = Color(0xFFFFD08A).readable(), fontSize = 13.sp, modifier = Modifier.weight(1f), maxLines = 3, overflow = TextOverflow.Ellipsis)
                             TextButton(onRetry) { Text("Riprova") }
                         }
                     }
@@ -896,7 +903,7 @@ private fun HomeScreen(
                 ) {
                     LiquidGlassPill(selected = true) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                            Icon(when (homeMode) { "live" -> Icons.Default.LiveTv; "movies" -> Icons.Default.Movie; "series" -> Icons.Default.Tv; else -> Icons.Default.Home }, null, tint = Color(0xFF9ABEFF), modifier = Modifier.size(17.dp))
+                            Icon(when (homeMode) { "live" -> Icons.Default.LiveTv; "movies" -> Icons.Default.Movie; "series" -> Icons.Default.Tv; else -> Icons.Default.Home }, null, tint = Color(0xFF9ABEFF).readable(), modifier = Modifier.size(17.dp))
                             Text(menuItems.first { it.first == homeMode }.second, color = glassForeground(), fontWeight = FontWeight.SemiBold, maxLines = 1)
                             Icon(Icons.Default.ExpandMore, null, tint = glassForeground().copy(.75f), modifier = Modifier.size(17.dp))
                         }
@@ -923,7 +930,7 @@ private fun HomeScreen(
             if (favoriteItems.isEmpty()) {
                 LiquidGlassSurface(Modifier.fillMaxWidth(), contentPadding = 22.dp) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Icon(Icons.Default.FavoriteBorder, null, tint = Color(0xFF9ABEFF), modifier = Modifier.size(30.dp))
+                        Icon(Icons.Default.FavoriteBorder, null, tint = Color(0xFF9ABEFF).readable(), modifier = Modifier.size(30.dp))
                         Text("Nessun preferito", color = glassForeground(), fontWeight = FontWeight.Bold, fontSize = 20.sp)
                         Text("Aggiungi contenuti ai preferiti per ritrovarli qui.", color = glassForeground().copy(.68f))
                     }
@@ -1010,7 +1017,7 @@ private fun HomeScreen(
                                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                                     Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
                                         Box(Modifier.size(46.dp).clip(RoundedCornerShape(15.dp)).background((if (activeName == null) Color(0xFF9ABEFF) else Color(0xFF54D6A0)).copy(.16f)), contentAlignment = Alignment.Center) {
-                                            Icon(if (activeName == null) Icons.Default.AutoAwesome else Icons.Default.CheckCircle, null, tint = if (activeName == null) Color(0xFF9ABEFF) else Color(0xFF54D6A0), modifier = Modifier.size(25.dp))
+                                            Icon(if (activeName == null) Icons.Default.AutoAwesome else Icons.Default.CheckCircle, null, tint = if (activeName == null) Color(0xFF9ABEFF).readable() else Color(0xFF54D6A0).readable(), modifier = Modifier.size(25.dp))
                                         }
                                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                                             Text(if (activeName == null) "Inizia quando vuoi" else "Sorgente pronta", color = glassForeground(), fontWeight = FontWeight.Bold, fontSize = 17.sp)
@@ -1049,7 +1056,7 @@ private fun HomeScreen(
                             Surface(onClick = { onRoute("sources") }, color = Color.Transparent, shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 20.dp)) {
                                 LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius = 20.dp, contentPadding = 16.dp) {
                                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                        Box(Modifier.size(42.dp).clip(RoundedCornerShape(13.dp)).background(Color(0xFF3478F6).copy(.15f)), contentAlignment = Alignment.Center) { Icon(Icons.Default.Layers, null, tint = Color(0xFF9ABEFF), modifier = Modifier.size(23.dp)) }
+                                        Box(Modifier.size(42.dp).clip(RoundedCornerShape(13.dp)).background(Color(0xFF3478F6).copy(.15f)), contentAlignment = Alignment.Center) { Icon(Icons.Default.Layers, null, tint = Color(0xFF9ABEFF).readable(), modifier = Modifier.size(23.dp)) }
                                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                                             Text("Sorgenti", color = glassForeground(), fontWeight = FontWeight.SemiBold)
                                             Text(if (sources.isEmpty()) "Nessuna sorgente configurata" else "${sources.size} sorgenti configurate", color = glassForeground().copy(.58f), fontSize = 12.sp)
@@ -1059,8 +1066,8 @@ private fun HomeScreen(
                                 }
                             }
                         }
-                        "liveTV" -> HomeDestinationCard("Live TV", if (activeSource == null) "Disponibile con una sorgente" else "${catalog?.live?.size ?: 0} canali disponibili", if (activeSource == null) "I canali appariranno qui" else "Canali in diretta dalla sorgente attiva", Icons.Default.LiveTv, Color(0xFFFF6961), "Apri Live TV") { onRoute("live") }
-                        "guidaTV" -> HomeDestinationCard("Guida TV", "EPG e promemoria locali", "Consulta la programmazione e vai al canale che vuoi guardare.", Icons.Default.CalendarMonth, Color(0xFF9ABEFF), "Apri guida") { onRoute("epg") }
+                        "liveTV" -> HomeDestinationCard("Live TV", if (activeSource == null) "Disponibile con una sorgente" else "${catalog?.live?.size ?: 0} canali disponibili", if (activeSource == null) "I canali appariranno qui" else "Canali in diretta dalla sorgente attiva", Icons.Default.LiveTv, Color(0xFFFF6961).readable(), "Apri Live TV") { onRoute("live") }
+                        "guidaTV" -> HomeDestinationCard("Guida TV", "EPG e promemoria locali", "Consulta la programmazione e vai al canale che vuoi guardare.", Icons.Default.CalendarMonth, Color(0xFF9ABEFF).readable(), "Apri guida") { onRoute("epg") }
                         "favoriteChannels" -> {
                             val list = catalog?.byIds(MediaKind.LIVE, fav.live).orEmpty()
                             if (list.isNotEmpty()) Section("Canali preferiti", { homeMode = "live" }) {
@@ -1081,8 +1088,8 @@ private fun HomeScreen(
                         }
                         "onDemand" -> Section("On demand", null) {
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                HomeCompactDestinationCard("VOD", if (activeSource == null) "Disponibile con una sorgente" else "Film e contenuti on demand", Icons.Default.Movie, Color(0xFFB19CFF), Modifier.weight(1f)) { onRoute("movies") }
-                                HomeCompactDestinationCard("Serie TV", if (activeSource == null) "Disponibile con una sorgente" else "Scopri le tue serie", Icons.Default.Tv, Color(0xFF8CB7FF), Modifier.weight(1f)) { onRoute("series") }
+                                HomeCompactDestinationCard("VOD", if (activeSource == null) "Disponibile con una sorgente" else "Film e contenuti on demand", Icons.Default.Movie, Color(0xFFB19CFF).readable(), Modifier.weight(1f)) { onRoute("movies") }
+                                HomeCompactDestinationCard("Serie TV", if (activeSource == null) "Disponibile con una sorgente" else "Scopri le tue serie", Icons.Default.Tv, Color(0xFF8CB7FF).readable(), Modifier.weight(1f)) { onRoute("series") }
                             }
                         }
                         "trendingSeries" -> HomeTrendingRail(
@@ -1122,7 +1129,7 @@ private fun HomeActionChip(label: String, icon: androidx.compose.ui.graphics.vec
     Surface(onClick = onClick, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp), shape = RoundedCornerShape(50), color = Color.Transparent) {
         LiquidGlassPill {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                Icon(icon, null, tint = Color(0xFF9ABEFF), modifier = Modifier.size(16.dp))
+                Icon(icon, null, tint = Color(0xFF9ABEFF).readable(), modifier = Modifier.size(16.dp))
                 Text(label, color = glassForeground(), fontSize = 13.sp)
             }
         }
@@ -1201,7 +1208,7 @@ private fun Modifier.trackLeftEdgeCover(state: LeftEdgeCoverFocus, key: String, 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text(title, color = glassForeground(), fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
-            if (onSeeAll != null) TextButton(onClick = onSeeAll, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp)) { Text("Vedi tutto", color = Color(0xFF9ABEFF)) }
+            if (onSeeAll != null) TextButton(onClick = onSeeAll, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp)) { Text("Vedi tutto", color = Color(0xFF9ABEFF).readable()) }
         }
         content()
     }
@@ -2202,7 +2209,7 @@ private fun ExternalEpgManageScreen(app: GassPlayerApplication, onBack: () -> Un
                         Column(Modifier.weight(1f)) {
                             Text(if(s.isPinned) "★ ${s.name}" else s.name, color = glassForeground(), fontWeight = FontWeight.Bold)
                             Text("${s.type} • ${s.host}", color = glassForeground().copy(.6f))
-                            Text(if (s.lastVerificationSucceeded) "Verificata • ${s.lastKnownChannelCount}" else "Non verificata", color = if (s.lastVerificationSucceeded) Color(0xFF6EDC82) else Color(0xFFFFB55E))
+                            Text(if (s.lastVerificationSucceeded) "Verificata • ${s.lastKnownChannelCount}" else "Non verificata", color = if (s.lastVerificationSucceeded) Color(0xFF6EDC82).readable() else Color(0xFFFFB55E).readable())
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Switch(checked = s.isEnabled, onCheckedChange = { value -> scope.launch { app.sources.toggle(s.id, value); vm.refresh(true) } }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp, includeDescendants = true))
@@ -2443,7 +2450,7 @@ fun AddSourceDialog(app: GassPlayerApplication, vm: MainViewModel, onDismiss: ()
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(info.outputData.getString("file") ?: info.id.toString(), color = glassForeground())
-                        LinearProgressIndicator(progress = { p / 100f }, modifier = Modifier.fillMaxWidth(), color = Color(0xFF8CB7FF), trackColor = Color.White.copy(.08f))
+                        LinearProgressIndicator(progress = { p / 100f }, modifier = Modifier.fillMaxWidth(), color = Color(0xFF8CB7FF).readable(), trackColor = glassForeground(.08f))
                         Text(info.state.name, color = glassForeground().copy(.6f))
                     }
                 }

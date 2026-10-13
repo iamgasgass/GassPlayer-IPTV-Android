@@ -1,5 +1,8 @@
 package com.gassplayer.android.ui
 
+import com.gassplayer.android.ui.theme.gassPageBase
+import com.gassplayer.android.ui.theme.isGassLight
+import com.gassplayer.android.ui.theme.readable
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
@@ -40,6 +43,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
@@ -598,7 +602,9 @@ internal fun EpgGridScreen(
     val hScroll = rememberScrollState()
     val density = LocalDensity.current
     val scrollOffsetDp = with(density) { hScroll.value.toDp() }
-    val bleed = if (cardStyleGrid || tvCategoryMode) 0.dp else bannerW / 2f
+    // "Scheda" (anche in Categorie TV, come EPGGridView): la tile scorre sotto il banner canale fino alla sua
+    // metà, cosi' i bordi destri arrotondati del banner sono circondati dalla tile e non dal nero.
+    val bleed = if (cardStyleGrid) 0.dp else bannerW / 2f
     val dayTitle = when (dayOffset) {
         0 -> "Oggi"
         1 -> "Domani"
@@ -778,9 +784,11 @@ internal fun EpgGridScreen(
             }
             // Like iOS, the day + time header is part of the vertical scroll content (not sticky).
             item(key = "epg-timeline-header") {
-                Row(Modifier.fillMaxWidth().background(Color.Black).height(headerH)) {
+                Row(Modifier.fillMaxWidth().background(gassPageBase()).height(headerH)) {
                     Box(
-                        Modifier.width(bannerColumnW).fillMaxHeight().background(Color.Black)
+                        // Sopra la parte di timeline che scorre sotto la colonna canale (zIndex 10 come iOS):
+                        // gli orari non coprono mai il titolo del giorno.
+                        Modifier.width(bannerColumnW).fillMaxHeight().zIndex(10f).background(gassPageBase())
                             .remoteFocusOutline(cornerRadius = 12.dp)
                             .combinedClickable(onClick = {
                                 dayOffset = (dayOffset - 1).coerceAtLeast(-7)
@@ -799,7 +807,7 @@ internal fun EpgGridScreen(
                         )
                     }
                     Box(
-                        Modifier.weight(1f).fillMaxHeight().offset(x = -bleed).clipToBounds().horizontalScroll(hScroll)
+                        Modifier.weight(1f).fillMaxHeight().bleedLeft(bleed).clipToBounds().horizontalScroll(hScroll)
                     ) {
                         Box(Modifier.width(canvasW + bleed).fillMaxHeight()) {
                             val fmt = remember { SimpleDateFormat("HH:mm", Locale.US) }
@@ -818,6 +826,7 @@ internal fun EpgGridScreen(
                             }
                             if (isToday) {
                                 val arrowSize = if (compact) 15.dp else 20.dp
+                                val arrowColor = glassForeground()
                                 Canvas(
                                     modifier = Modifier.offset(x = (liveAxisX - arrowSize / 2f).coerceAtLeast(0.dp))
                                         .align(Alignment.CenterStart).size(arrowSize)
@@ -828,7 +837,7 @@ internal fun EpgGridScreen(
                                         lineTo(size.width / 2f, size.height)
                                         close()
                                     }
-                                    drawPath(triangle, Color.White)
+                                    drawPath(triangle, arrowColor)
                                 }
                             }
                         }
@@ -861,7 +870,7 @@ internal fun EpgGridScreen(
                         focusRequester = if (visibleIndex == 0) firstChannelFocusRequester else null,
                     )
                     Box(
-                        Modifier.weight(1f).fillMaxHeight().offset(x = -bleed).clipToBounds()
+                        Modifier.weight(1f).fillMaxHeight().bleedLeft(bleed).clipToBounds()
                             .onFocusChanged { state ->
                                 // Order-safe: a row clears the flag only if it still owns it.
                                 if (state.hasFocus) focusedTileRowId = ch.id
@@ -881,7 +890,7 @@ internal fun EpgGridScreen(
                                     modifier = Modifier.offset(x = 4.dp).width((canvasW - 8.dp).coerceAtLeast(0.dp))
                                         .height(bannerH).align(Alignment.CenterStart)
                                         .clip(RoundedCornerShape(cornerRadius))
-                                        .background(if (darkTiles) DarkTileBase else Color(0.10f, 0.10f, 0.10f)),
+                                        .background(if (darkTiles) DarkTileBase.copy(alpha = if (isGassLight()) .14f else 1f) else if (isGassLight()) glassForeground(.06f) else Color(0.10f, 0.10f, 0.10f)),
                                     contentAlignment = Alignment.CenterStart
                                 ) {
                                     Text(label, color = glassForeground().copy(.65f), fontSize = if (compact) 14.sp else 15.sp,
@@ -1098,7 +1107,7 @@ private fun TvEpgPreviewPanel(
                 LinearProgressIndicator(
                     progress = { current.progress(now).toFloat().coerceIn(0f, 1f) },
                     modifier = Modifier.fillMaxWidth().height(4.dp),
-                    color = Color(0xFF89A8FF), trackColor = Color.White.copy(.18f),
+                    color = Color(0xFF89A8FF).readable(), trackColor = glassForeground(.18f),
                 )
                 Text(current.description?.takeIf { it.isNotBlank() } ?: "Descrizione del programma non disponibile.", color = glassForeground(.76f), fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
             } else {
@@ -1176,7 +1185,7 @@ private fun ChannelBanner(
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(displayNumber?.toString().orEmpty(), color = glassForeground(.68f), fontSize = 10.sp, maxLines = 1)
-                        Box(Modifier.size(23.dp).clip(RoundedCornerShape(5.dp)).background(Color.White.copy(.10f)), contentAlignment = Alignment.Center) {
+                        Box(Modifier.size(23.dp).clip(RoundedCornerShape(5.dp)).background(glassForeground(.10f)), contentAlignment = Alignment.Center) {
                             if (!ch.logoUrl.isNullOrBlank()) {
                                 AsyncImage(model = ch.logoUrl, contentDescription = ch.title, modifier = Modifier.fillMaxSize().padding(1.dp), contentScale = ContentScale.Fit)
                             } else Icon(Icons.Default.LiveTv, contentDescription = "Canale TV", tint = glassForeground(.8f), modifier = Modifier.size(15.dp))
@@ -1208,7 +1217,7 @@ private fun ChannelBanner(
                     Box(
                         Modifier.size(if (compact) 36.dp else 44.dp)
                             .clip(RoundedCornerShape(8.dp))
-                            .background(Color.White.copy(.10f)),
+                            .background(glassForeground(.10f)),
                         contentAlignment = Alignment.Center,
                     ) {
                         if (!ch.logoUrl.isNullOrBlank()) {
@@ -1265,7 +1274,7 @@ private fun ChannelBanner(
                 if (favorite) {
                     Box(Modifier.align(Alignment.TopEnd).padding(4.dp).size(if (compact) 18.dp else 20.dp)
                         .clip(RoundedCornerShape(50)).background(Color.Black.copy(.34f)), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Default.Star, null, tint = Color(0xFFFFD60A), modifier = Modifier.size(if (compact) 11.dp else 12.dp))
+                        Icon(Icons.Default.Star, null, tint = Color(0xFFFFD60A).readable(), modifier = Modifier.size(if (compact) 11.dp else 12.dp))
                     }
                 }
             }
@@ -1273,7 +1282,7 @@ private fun ChannelBanner(
         if (hasCatchup && !showChannelDetails) {
             Box(
                 Modifier.offset(x = cardLeft + bannerW - badgeSize / 2f + bannerW * .14f, y = (rowHeight - badgeSize) / 2f)
-                    .size(badgeSize).clip(RoundedCornerShape(50)).background(Color(0xFF4D4D4D)),
+                    .size(badgeSize).clip(RoundedCornerShape(50)).background(if (isGassLight()) Color(0xFFD9DEE7) else Color(0xFF4D4D4D)),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(Icons.Default.History, null, tint = glassForeground(), modifier = Modifier.size(if (compact) 14.dp else 16.dp))
@@ -1380,7 +1389,7 @@ private fun EpgProgramTile(
                 Modifier.fillMaxSize().background(
                     if (selected) Color(0xFF5265BA).copy(alpha = .48f)
                     else if (dark) DarkTileBase.copy(alpha = .26f)
-                    else color.copy(alpha = if (compact) .16f else .18f).compositeOver(Color(0.10f, 0.10f, 0.10f))
+                    else color.copy(alpha = if (compact) .16f else .18f).compositeOver(if (isGassLight()) Color(0xFFF1F4F9) else Color(0.10f, 0.10f, 0.10f))
                 )
             )
             if (brightWidth > 0.dp) {
@@ -1435,7 +1444,7 @@ private fun QualityBadge(text: String, compact: Boolean) {
         fontWeight = FontWeight.SemiBold,
         maxLines = 1,
         modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
-            .border(BorderStroke(1.dp, Color.White.copy(.45f)), RoundedCornerShape(5.dp))
+            .border(BorderStroke(1.dp, glassForeground(.45f)), RoundedCornerShape(5.dp))
     )
 }
 
@@ -1528,4 +1537,21 @@ private fun Modifier.combinedClickableSafe(onClick: () -> Unit): Modifier = this
 private fun Color.compositeOver(background: Color): Color {
     val a = this.alpha
     return Color(red * a + background.red * (1 - a), green * a + background.green * (1 - a), blue * a + background.blue * (1 - a), 1f)
+}
+
+
+/**
+ * Estende verso sinistra (sotto il banner canale) l'area della timeline di [bleed], come il `.padding(.leading,
+ * -tileBleedExtraWidth)` di EPGGridView.swift: a differenza di `offset`, il bordo destro resta attaccato al
+ * bordo dello schermo (nessuna fascia vuota a destra) e lo scorrimento orizzontale copre tutta l'area visibile.
+ */
+private fun Modifier.bleedLeft(bleed: Dp): Modifier = if (bleed <= 0.dp) this else layout { measurable, constraints ->
+    val extra = bleed.roundToPx()
+    val placeable = measurable.measure(
+        constraints.copy(
+            minWidth = constraints.minWidth + extra,
+            maxWidth = if (constraints.hasBoundedWidth) constraints.maxWidth + extra else constraints.maxWidth
+        )
+    )
+    layout((placeable.width - extra).coerceAtLeast(0), placeable.height) { placeable.place(-extra, 0) }
 }

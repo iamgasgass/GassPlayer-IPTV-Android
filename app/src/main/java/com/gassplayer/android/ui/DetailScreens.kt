@@ -1,5 +1,9 @@
 package com.gassplayer.android.ui
 
+import com.gassplayer.android.ui.theme.gassPageBase
+import com.gassplayer.android.ui.theme.DarkContentTheme
+import com.gassplayer.android.ui.theme.isGassLight
+import com.gassplayer.android.ui.theme.readable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -45,6 +49,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.takeOrElse
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -72,9 +77,11 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import kotlin.math.roundToInt
 
-private val DetailText = Color(0xFFF7F8FC)
-private val DetailMuted = Color(0xFFB5BBC9)
-private val DetailAccent = Color(0xFF9ABEFF)
+// Testi della scheda: chiari sui temi scuri, scuri sul tema Chiaro (prima erano sempre quasi bianchi e sulla
+// pagina chiara non si leggevano). Il layout TV è sempre scuro (DarkContentTheme) e usa le varianti chiare.
+private val DetailText: Color @Composable get() = if (isGassLight()) Color(0xFF111827) else Color(0xFFF7F8FC)
+private val DetailMuted: Color @Composable get() = if (isGassLight()) Color(0xFF555E6E) else Color(0xFFB5BBC9)
+private val DetailAccent: Color @Composable get() = Color(0xFF9ABEFF).readable()
 private val DetailHeroHeight = 380.dp
 
 /** Movie detail translated from MovieDetailView + MediaDetailComponents.swift. */
@@ -207,13 +214,13 @@ fun MovieDetailScreen(
                     icon = if (item.id in favorite.movies) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
                     label = if (item.id in favorite.movies) "Preferito" else "Preferiti",
                     onClick = toggleFavorite,
-                    tint = if (item.id in favorite.movies) Color(0xFFFF88A5) else DetailText
+                    tint = if (item.id in favorite.movies) Color(0xFFFF88A5) else Color.Unspecified
                 ),
                 TvDetailAction(
                     icon = if (downloadInfo?.state == WorkInfo.State.SUCCEEDED) Icons.Default.CheckCircle else Icons.Default.Download,
                     label = downloadLabel,
                     onClick = startDownload,
-                    tint = if (downloadInfo?.state == WorkInfo.State.SUCCEEDED) SourcesGreenForDetail else DetailText
+                    tint = if (downloadInfo?.state == WorkInfo.State.SUCCEEDED) SourcesGreenForDetail else Color.Unspecified
                 ),
                 TvDetailAction(Icons.Default.Search, "Altre fonti", onClick = { showAlternates = true }, enabled = canSearchAlternates),
             ),
@@ -276,7 +283,10 @@ fun MovieDetailScreen(
                             .focusRequester(playFocusRequester)
                             .remoteFocusOutline(cornerRadius = 28.dp),
                         shape = RoundedCornerShape(28.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(.95f), contentColor = Color(0xFF111111))
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (isGassLight()) Color(0xFF111827) else Color.White.copy(.95f),
+                            contentColor = if (isGassLight()) Color.White else Color(0xFF111111)
+                        )
                     ) {
                         Icon(Icons.Default.PlayArrow, null)
                         Spacer(Modifier.width(7.dp))
@@ -329,7 +339,7 @@ fun MovieDetailScreen(
                     if (!overview.isNullOrBlank()) {
                         Text(overview, color = DetailText.copy(.92f), fontSize = 14.sp, lineHeight = 21.sp)
                     } else if (isLoadingDetail) {
-                        LinearProgressIndicator(Modifier.fillMaxWidth(), color = DetailAccent, trackColor = Color.White.copy(.1f))
+                        LinearProgressIndicator(Modifier.fillMaxWidth(), color = DetailAccent, trackColor = glassForeground(.1f))
                     }
                 }
             }
@@ -549,7 +559,7 @@ fun SeriesDetailScreen(
                     icon = if (series.id in favorite.series) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
                     label = if (series.id in favorite.series) "Preferita" else "Preferiti",
                     onClick = { scope.launch { app.favorites.toggle(series) } },
-                    tint = if (series.id in favorite.series) Color(0xFFFF88A5) else DetailText
+                    tint = if (series.id in favorite.series) Color(0xFFFF88A5) else Color.Unspecified
                 ),
                 TvDetailAction(Icons.Default.Search, "Altre fonti", onClick = { showAlternates = true }, enabled = canSearchAlternates),
                 TvDetailAction(Icons.Default.Refresh, if (loadingEpisodes) "Aggiorno…" else "Aggiorna", onClick = { if (!loadingEpisodes) scope.launch { fetchEpisodes() } }),
@@ -652,7 +662,10 @@ fun SeriesDetailScreen(
                             .focusRequester(playFocusRequester)
                             .remoteFocusOutline(cornerRadius = 28.dp),
                         shape = RoundedCornerShape(28.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(.95f), contentColor = Color(0xFF111111))
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (isGassLight()) Color(0xFF111827) else Color.White.copy(.95f),
+                            contentColor = if (isGassLight()) Color.White else Color(0xFF111111)
+                        )
                     ) {
                         Icon(Icons.Default.PlayArrow, null)
                         Spacer(Modifier.width(7.dp))
@@ -736,7 +749,7 @@ fun SeriesDetailScreen(
                             Spacer(Modifier.width(4.dp)); Text("Aggiorna")
                         }
                     }
-                    loadError?.let { Text(it, color = Color(0xFFFF9E9E), fontSize = 12.sp, modifier = Modifier.padding(horizontal = 20.dp)) }
+                    loadError?.let { Text(it, color = Color(0xFFFF9E9E).readable(), fontSize = 12.sp, modifier = Modifier.padding(horizontal = 20.dp)) }
                 }
             }
             if (loadingEpisodes && sortedEpisodes.isEmpty()) {
@@ -787,18 +800,22 @@ fun SeriesDetailScreen(
 
 @Composable
 private fun MediaDetailHero(item: MediaItem, meta: MetadataResult?, height: androidx.compose.ui.unit.Dp = DetailHeroHeight) {
-    val screenBackground = Color.Black
-    Box(Modifier.fillMaxWidth().height(height).background(screenBackground)) {
+    // Il hero sfuma nel colore della pagina (nero, blu notte del tema Medio o chiaro). Col tema Chiaro una
+    // velatura scura sotto titolo/logo li tiene leggibili (sono bianchi, come i loghi TMDB).
+    val screenBackground = gassPageBase()
+    val light = isGassLight()
+    Box(Modifier.fillMaxWidth().height(height).background(Color.Black)) {
         val image = meta?.backdropUrl ?: item.backdropUrl ?: item.posterUrl
         if (!image.isNullOrBlank()) AsyncImage(image, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         // SwiftUI uses a short fade at the bottom of the edge-to-edge hero, not a full-image dark veil.
         Box(
             Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(160.dp).background(
-                Brush.verticalGradient(listOf(Color.Transparent, screenBackground.copy(.4f), screenBackground.copy(.9f), screenBackground))
+                if (light) Brush.verticalGradient(0f to Color.Transparent, .45f to Color.Black.copy(.55f), .70f to Color.Black.copy(.35f), 1f to screenBackground)
+                else Brush.verticalGradient(listOf(Color.Transparent, screenBackground.copy(.4f), screenBackground.copy(.9f), screenBackground))
             )
         )
         Column(
-            Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 14.dp),
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = if (light) 58.dp else 14.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
@@ -827,11 +844,11 @@ private fun MediaDetailMetaRow(rating: Double?, secondary: String?, genres: List
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
             rating?.takeIf { it > 0 }?.let {
                 Row(
-                    Modifier.clip(RoundedCornerShape(7.dp)).background(Color.White.copy(.13f)).padding(horizontal = 9.dp, vertical = 4.dp),
+                    Modifier.clip(RoundedCornerShape(7.dp)).background(glassForeground(.10f)).padding(horizontal = 9.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    Icon(Icons.Default.Star, null, tint = Color(0xFFFFD36D), modifier = Modifier.size(13.dp))
+                    Icon(Icons.Default.Star, null, tint = Color(0xFFFFD36D).readable(), modifier = Modifier.size(13.dp))
                     Text(String.format(Locale.ROOT, "%.1f", it), color = DetailText, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 }
             }
@@ -857,7 +874,7 @@ private fun DetailActionButton(
             enabled = enabled,
             shape = CircleShape,
             color = Color.Transparent,
-            border = BorderStroke(.7.dp, Color.White.copy(if (enabled) .18f else .07f)),
+            border = BorderStroke(.7.dp, glassForeground(if (enabled) .18f else .07f)),
             modifier = Modifier.size(48.dp).remoteFocusOutline(cornerRadius = 50.dp)
         ) {
             Box(contentAlignment = Alignment.Center) {
@@ -869,7 +886,7 @@ private fun DetailActionButton(
                                 progress = { progress.coerceIn(0f, 1f) },
                                 modifier = Modifier.fillMaxSize().padding(2.dp),
                                 color = DetailAccent,
-                                trackColor = Color.White.copy(.16f),
+                                trackColor = glassForeground(.16f),
                                 strokeWidth = 2.dp
                             )
                         }
@@ -978,7 +995,7 @@ private fun EpisodeDetailRow(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 7.dp).remoteFocusOutline(cornerRadius = 17.dp),
         shape = RoundedCornerShape(17.dp),
         color = Color.Transparent,
-        border = BorderStroke(.65.dp, Color.White.copy(.13f))
+        border = BorderStroke(.65.dp, glassForeground(.13f))
     ) {
         LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius = 17.dp, contentPadding = 0.dp) {
             Column(Modifier.fillMaxWidth()) {
@@ -1131,7 +1148,8 @@ private class TvDetailAction(
     val icon: androidx.compose.ui.graphics.vector.ImageVector,
     val label: String,
     val onClick: () -> Unit,
-    val tint: Color = DetailText,
+    /** Unspecified = colore testo della scheda. */
+    val tint: Color = Color.Unspecified,
     val enabled: Boolean = true,
 )
 
@@ -1144,6 +1162,29 @@ private fun isTvDetailLayout(): Boolean {
 
 @Composable
 private fun TvMediaDetailLayout(
+    item: MediaItem,
+    meta: MetadataResult?,
+    listState: androidx.compose.foundation.lazy.LazyListState,
+    rating: Double?,
+    secondary: String?,
+    genres: List<String>,
+    overview: String?,
+    loading: Boolean,
+    playLabel: String,
+    playProgress: Float?,
+    playFocusRequester: FocusRequester,
+    onPlay: () -> Unit,
+    actions: List<TvDetailAction>,
+    actionMessage: String?,
+    onClose: () -> Unit,
+    rows: androidx.compose.foundation.lazy.LazyListScope.() -> Unit,
+) {
+    // Scheda TV: sempre scura come il player (anche col tema Chiaro), così testi e pulsanti restano leggibili.
+    DarkContentTheme { TvMediaDetailLayoutContent(item, meta, listState, rating, secondary, genres, overview, loading, playLabel, playProgress, playFocusRequester, onPlay, actions, actionMessage, onClose, rows) }
+}
+
+@Composable
+private fun TvMediaDetailLayoutContent(
     item: MediaItem,
     meta: MetadataResult?,
     listState: androidx.compose.foundation.lazy.LazyListState,
@@ -1355,7 +1396,7 @@ private fun TvActionButton(action: TvDetailAction, modifier: Modifier = Modifier
         val color = when {
             focused -> Color(0xFF111111)
             !action.enabled -> DetailText.copy(.35f)
-            else -> action.tint
+            else -> action.tint.takeOrElse { DetailText }
         }
         Icon(action.icon, contentDescription = action.label, tint = color, modifier = Modifier.size(19.dp))
         Text(action.label, color = if (focused) Color(0xFF111111) else DetailText.copy(if (action.enabled) .95f else .35f), fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1)

@@ -1,5 +1,6 @@
 package com.gassplayer.android.ui
 
+import com.gassplayer.android.ui.theme.readable
 import androidx.activity.compose.BackHandler
 
 import androidx.compose.foundation.BorderStroke
@@ -124,7 +125,7 @@ internal fun SettingsHub(
                 .then(entryFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
                 .remoteFocusOutline(cornerRadius = 50.dp)
         ) { Icon(Icons.Default.ArrowBack, null); Spacer(Modifier.width(6.dp)); Text("Impostazioni") }
-        toast?.let { Text(it, color = Color(0xFF30D158), fontSize = 13.sp, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) }
+        toast?.let { Text(it, color = Color(0xFF30D158).readable(), fontSize = 13.sp, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 48.dp)) {
             when (page) {
                 "general" -> {
@@ -156,7 +157,7 @@ internal fun SettingsHub(
                 "ui" -> {
                     item { PageTitle("Impostazioni dell'interfaccia utente") }
                     item { HubSection("Aspetto", "Personalizza l’interfaccia", Icons.Default.Palette) {
-                        HubChoice("Tema", themeLabel(local.theme), listOf("Sistema", "Chiaro", "Scuro")) { save(local.copy(theme = when (it) { "Chiaro" -> "light"; "Scuro" -> "dark"; else -> "system" })) }
+                        HubChoice("Tema", themeLabel(local.theme), listOf("Sistema", "Chiaro", "Medio", "Scuro")) { save(local.copy(theme = when (it) { "Chiaro" -> "light"; "Medio" -> "medium"; "Scuro" -> "dark"; else -> "system" })) }
                         HubChoice("Lingua app", local.language, listOf("system", "it", "en", "es")) { save(local.copy(language = it)) }
                     } }
                     item { HubSection("Libreria", "Griglia di canali, film e serie", Icons.Default.GridView) {
@@ -271,7 +272,7 @@ internal fun SettingsHub(
     }
 }
 
-private fun themeLabel(v: String) = when (v) { "light" -> "Chiaro"; "dark" -> "Scuro"; else -> "Sistema" }
+private fun themeLabel(v: String) = when (v) { "light" -> "Chiaro"; "medium" -> "Medio"; "dark" -> "Scuro"; else -> "Sistema" }
 private fun dnsLabel(v: String) = when (v) { "1.1.1.1" -> "1.1.1.1 · Cloudflare"; "8.8.8.8" -> "8.8.8.8 · Google"; "system" -> "Automatico di sistema"; else -> v }
 private fun aspectLabel(v: String) = when (v) { "fill" -> "Riempi"; "stretch" -> "Stira"; "fit" -> "Adatta"; "original" -> "Adatta"; else -> v }
 private fun intervalLabel(id: String) = when (id) {
@@ -291,7 +292,7 @@ private fun HubSection(title: String, subtitle: String, icon: ImageVector, conte
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(38.dp).clip(RoundedCornerShape(13.dp)).background(Color(0xFF3478F6).copy(.17f)), contentAlignment = Alignment.Center) {
-                    Icon(icon, null, tint = Color(0xFF9ABEFF), modifier = Modifier.size(21.dp))
+                    Icon(icon, null, tint = Color(0xFF9ABEFF).readable(), modifier = Modifier.size(21.dp))
                 }
                 Spacer(Modifier.width(10.dp))
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
