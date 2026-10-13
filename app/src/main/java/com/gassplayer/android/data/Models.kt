@@ -80,7 +80,26 @@ data class EpgProgram(val id: String, val streamId: String, val title: String, v
 data class M3UPlaylistSnapshot(val sourceId: String, val channels: List<MediaItem> = emptyList(), val groups: Map<String, List<String>> = emptyMap(), val updatedAt: Long = System.currentTimeMillis())
 
 @Serializable
-data class WatchEntry(val contentId: String, val title: String, val kind: MediaKind, val url: String, val positionMs: Long = 0, val durationMs: Long = 0, val lastWatchedMs: Long = System.currentTimeMillis(), val season: Int? = null, val episode: Int? = null)
+data class WatchEntry(
+    val contentId: String,
+    val title: String,
+    val kind: MediaKind,
+    val url: String,
+    val positionMs: Long = 0,
+    val durationMs: Long = 0,
+    val lastWatchedMs: Long = System.currentTimeMillis(),
+    val season: Int? = null,
+    val episode: Int? = null,
+    /** Detail-sheet image (TMDB backdrop, else the provider's), like RecentlyWatchedItem.imageURLString on iOS. */
+    val imageUrl: String? = null,
+    /** Catalogue category shown under the "Continua a guardare" card (RecentlyWatchedItem.subtitle). */
+    val subtitle: String? = null,
+    /** Parent series of an episode: one "Continua a guardare" card per series, as on iOS. */
+    val seriesId: String? = null,
+    val sourceId: String? = null,
+    /** Removed from "Continua a guardare" ("Rimuovi"/"Svuota") while the resume position is kept. */
+    val dismissed: Boolean = false
+)
 
 @Serializable
 data class FavoriteState(val live: Set<String> = emptySet(), val movies: Set<String> = emptySet(), val series: Set<String> = emptySet())

@@ -34,6 +34,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.focusable
 import androidx.compose.ui.input.key.Key
@@ -204,6 +206,33 @@ fun IosPlayerScreen(
         catalog?.previousFor(item)
     }
 
+    // "Prossimo episodio" (come PlayerView.showNextEpisodeButton su iOS): visibilita' calcolata qui, cosi' il
+    // telecomando sa quando il pulsante e' a schermo. Al primo tasto premuto mentre compare, il focus va
+    // DIRETTAMENTE sul pulsante (un secondo OK lo attiva), invece di aprire i controlli del player.
+    val nextPromptVisible by remember(item.id, nextItem) {
+        derivedStateOf {
+            isSeriesEpisode && nextItem != null && localSettings.autoplayNextEpisode && !advancedToNext &&
+                nextEpisodePromptInWindow(snapshot.duration, progressState.value.position)
+        }
+    }
+    val nextPromptFocusRequester = remember(item.id) { FocusRequester() }
+    var nextPromptFocused by remember(item.id) { mutableStateOf(false) }
+    // Il primo tasto dopo la comparsa e' "consumato" per portare il focus sul pulsante: una volta per comparsa
+    // a controlli visibili (per non bloccare la navigazione nei controlli), sempre a controlli nascosti.
+    var nextPromptFocusGranted by remember(item.id) { mutableStateOf(false) }
+    var nextPromptHadFocus by remember(item.id) { mutableStateOf(false) }
+    LaunchedEffect(item.id, nextPromptVisible) {
+        if (!nextPromptVisible) {
+            nextPromptFocusGranted = false
+            // Il pulsante sparisce mentre ha il focus: il telecomando non deve restare senza un nodo focalizzato.
+            if (nextPromptHadFocus && remoteFirstDevice) {
+                nextPromptHadFocus = false
+                delay(60L)
+                playerFocusRequester.requestFocusWithRetry(attempts = 5, delayMillis = 45L)
+            }
+        }
+    }
+
     LaunchedEffect(item.id) {
         val savedEntries = app.watch.flow.first()
         val saved = savedEntries.firstOrNull { it.contentId == item.id }
@@ -349,7 +378,9 @@ fun IosPlayerScreen(
                         if (item.kind == MediaKind.LIVE) 0L else duration,
                         System.currentTimeMillis(),
                         item.seasonNumber,
-                        item.episodeNumber
+                        item.episodeNumber,
+                        seriesId = item.seriesId,
+                        sourceId = item.sourceId
                     )
                 )
             }
@@ -417,6 +448,18 @@ fun IosPlayerScreen(
                         }
                         else -> return@onPreviewKeyEvent false
                     }
+                } else if (
+                    remoteFirstDevice && nextPromptVisible && !nextPromptFocused &&
+                    (!showControls || !nextPromptFocusGranted) &&
+                    event.key in nextPromptFocusKeys
+                ) {
+                    // Primo tasto mentre "Prossimo episodio" e' visibile: focus sul pulsante, nient'altro.
+                    nextPromptFocusGranted = true
+                    runCatching { nextPromptFocusRequester.requestFocus() }
+                    true
+                } else if (nextPromptFocused && (event.key == Key.DirectionCenter || event.key == Key.Enter || event.key == Key.NumPadEnter)) {
+                    // OK sul pulsante focalizzato: lo attiva (non deve aprire i controlli).
+                    false
                 } else when (event.key) {
                     Key.MediaPlayPause, Key.MediaPlay, Key.MediaPause, Key.Spacebar -> {
                         app.playback.togglePlayPause()
@@ -789,10 +832,13 @@ fun IosPlayerScreen(
         }
 
         // Come iOS: solo serie TV, preferenza attiva, e solo nell'ultimo minuto dell'episodio.
-        if (isSeriesEpisode && nextItem != null && localSettings.autoplayNextEpisode && !advancedToNext) {
+        if (nextPromptVisible && nextItem != null) {
             NextEpisodePrompt(
-                duration = snapshot.duration,
-                progressState = progressState,
+                focusRequester = nextPromptFocusRequester,
+                onFocusChange = { focused ->
+                    nextPromptFocused = focused
+                    nextPromptHadFocus = focused
+                },
                 onClick = {
                     advancedToNext = true
                     app.playback.pause()
@@ -1357,29 +1403,50 @@ private fun PlayerControlsOverlay(
     }
 }
 
+/** Tasti del telecomando che, alla comparsa di "Prossimo episodio", portano il focus sul pulsante. */
+private val nextPromptFocusKeys = setOf(
+    Key.DirectionCenter, Key.Enter, Key.NumPadEnter,
+    Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight
+)
+
+/**
+ * Stessa logica di iOS (PlayerView.showNextEpisodeButton): durata > 60 s, riproduzione iniziata, e compare
+ * quando mancano esattamente 60 s (fino a 0,4 s dalla fine).
+ */
+private fun nextEpisodePromptInWindow(duration: Long, position: Long): Boolean {
+    if (duration <= 60_000L || position <= 0L) return false
+    val remaining = duration - position
+    return remaining in 401L..60_000L
+}
+
 @Composable
 private fun NextEpisodePrompt(
-    duration: Long,
-    progressState: State<PlaybackProgress>,
+    focusRequester: FocusRequester,
+    onFocusChange: (Boolean) -> Unit,
     onClick: () -> Unit
 ) {
-    // Stessa logica di iOS (PlayerView.showNextEpisodeButton): durata > 60 s, riproduzione
-    // iniziata, e compare quando mancano esattamente 60 s (fino a 0,4 s dalla fine).
-    val position = progressState.value.position
-    if (duration <= 60_000L || position <= 0L) return
-    val remaining = duration - position
-    if (remaining > 60_000L || remaining <= 400L) return
+    var focused by remember { mutableStateOf(false) }
+    val scale by androidx.compose.animation.core.animateFloatAsState(if (focused) 1.06f else 1f, label = "next-episode-focus")
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomEnd) {
         Surface(
             onClick = onClick,
-            modifier = Modifier.padding(end = 24.dp, bottom = 104.dp).remoteFocusOutline(cornerRadius = 18.dp),
-            color = Color.Black.copy(.75f),
+            modifier = Modifier
+                .padding(end = 24.dp, bottom = 104.dp)
+                .graphicsLayer { scaleX = scale; scaleY = scale }
+                .focusRequester(focusRequester)
+                .onFocusChanged {
+                    focused = it.isFocused
+                    onFocusChange(it.isFocused)
+                }
+                .remoteFocusOutline(cornerRadius = 18.dp),
+            // Focalizzato: pulsante chiaro con testo scuro, ben visibile sul video (come i pulsanti tvOS).
+            color = if (focused) Color.White else Color.Black.copy(.75f),
             shape = RoundedCornerShape(18.dp),
-            border = BorderStroke(1.dp, Color.White.copy(.14f))
+            border = BorderStroke(1.dp, Color.White.copy(if (focused) .9f else .14f))
         ) {
             Text(
                 "Prossimo episodio  ›",
-                color = glassForeground(),
+                color = if (focused) Color(0xFF111111) else glassForeground(),
                 modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp),
                 fontWeight = FontWeight.SemiBold
             )

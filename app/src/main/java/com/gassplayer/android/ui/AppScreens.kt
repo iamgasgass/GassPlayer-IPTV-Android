@@ -811,25 +811,18 @@ private fun HomeScreen(
     var debouncedQuery by remember { mutableStateOf("") }
     var sourceMenuOpen by remember { mutableStateOf(false) }
     var selectedDetail by remember { mutableStateOf<MediaItem?>(null) }
-    var trendingSeries by remember(settings.tmdbApiKey) { mutableStateOf<List<MetadataResult>>(emptyList()) }
-    var trendingMovies by remember(settings.tmdbApiKey) { mutableStateOf<List<MetadataResult>>(emptyList()) }
     var trendingUnavailable by remember { mutableStateOf<String?>(null) }
-    var continueMenuOpen by remember { mutableStateOf(false) }
+    // "Continua a guardare" identico a iOS (IosHomeRails.kt): card calcolate fuori dal main thread.
+    val continueCards = rememberContinueWatchingCards(
+        watch, catalog, settings.homeContinueKind,
+        enabled = "continueWatching" in visibleOrder
+    )
     val detailFocusScope = rememberCoroutineScope()
     val closeHomeDetail: () -> Unit = {
         selectedDetail = null
         if (remoteFirstDevice) detailFocusScope.launch {
             delay(90L)
             entryFocusRequester?.requestFocusWithRetry(attempts = 6, delayMillis = 45L)
-        }
-    }
-
-    LaunchedEffect(settings.tmdbApiKey, visibleOrder.contains("trendingSeries"), visibleOrder.contains("trendingMovies")) {
-        if (settings.tmdbApiKey.isBlank()) {
-            trendingSeries = emptyList(); trendingMovies = emptyList()
-        } else {
-            if (visibleOrder.contains("trendingSeries")) trendingSeries = runCatching { vm.app.tmdb.trending("tv", settings.tmdbApiKey) }.getOrDefault(emptyList())
-            if (visibleOrder.contains("trendingMovies")) trendingMovies = runCatching { vm.app.tmdb.trending("movie", settings.tmdbApiKey) }.getOrDefault(emptyList())
         }
     }
 
@@ -1000,33 +993,12 @@ private fun HomeScreen(
                                 }
                             }
                         }
-                        "continueWatching" -> {
-                            val entries = watch.filter { entry ->
-                                when (settings.homeContinueKind) {
-                                    "live" -> entry.kind == MediaKind.LIVE
-                                    "movie" -> entry.kind == MediaKind.MOVIE
-                                    "series" -> entry.kind == MediaKind.SERIES || entry.kind == MediaKind.EPISODE
-                                    else -> true
-                                }
-                            }.take(settings.historyLimit.coerceIn(1, 100))
-                            if (entries.isNotEmpty()) Section("Continua a guardare", null) {
-                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    Text("Filtro", color = glassForeground().copy(.55f), fontSize = 12.sp)
-                                    Box {
-                                        TextButton(onClick = { continueMenuOpen = true }) { Text(when (settings.homeContinueKind) { "live" -> "Live TV"; "movie" -> "Film"; "series" -> "Serie TV"; else -> "Tutti" }); Icon(Icons.Default.ExpandMore, null) }
-                                        DropdownMenu(continueMenuOpen, { continueMenuOpen = false }) {
-                                            listOf(null to "Tutti", "live" to "Live TV", "movie" to "Film", "series" to "Serie TV").forEach { (value, label) -> DropdownMenuItem(text = { Text(label) }, onClick = { vm.updateSettings(settings.copy(homeContinueKind = value)); continueMenuOpen = false }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true)) }
-                                        }
-                                    }
-                                }
-                                androidx.compose.foundation.lazy.LazyRow(modifier = Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    items(entries, key = { it.contentId }) { entry ->
-                                        val media = catalog?.findById(entry.contentId) ?: MediaItem(entry.contentId, "", entry.kind, entry.title, entry.url, metadataTag = "resume:${entry.positionMs}")
-                                        MediaCard(media, vm.appFavorite(fav, media), onClick = { onPlayWithPosition(onPlay, media, entry.positionMs) }, onToggleFavorite = { vm.toggleFavorite(media) })
-                                    }
-                                }
-                            }
-                        }
+                        "continueWatching" -> ContinueWatchingSection(
+                            app = vm.app,
+                            cards = continueCards,
+                            kindFilter = settings.homeContinueKind,
+                            onResume = { card -> onPlayWithPosition(onPlay, card.playItem, card.resumePositionMs) },
+                        )
                         "sourceCard" -> {
                             val activeName = sources.firstOrNull { it.id == activeSource }?.name
                             LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius = 22.dp, contentPadding = 18.dp) {
@@ -1108,20 +1080,20 @@ private fun HomeScreen(
                                 HomeCompactDestinationCard("Serie TV", if (activeSource == null) "Disponibile con una sorgente" else "Scopri le tue serie", Icons.Default.Tv, Color(0xFF8CB7FF), Modifier.weight(1f)) { onRoute("series") }
                             }
                         }
-                        "trendingSeries" -> Section("Serie di tendenza", { onRoute("series") }) {
-                            if (settings.tmdbApiKey.isBlank()) EmptyHint("Configura la chiave API TMDB in Impostazioni per caricare le tendenze.")
-                            else if (trendingSeries.isEmpty()) EmptyHint("Tendenze serie non disponibili: controlla la chiave TMDB e la rete.")
-                            else androidx.compose.foundation.lazy.LazyRow(modifier = Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                items(trendingSeries.take(16), key = { it.id }) { trend -> TrendingCard(trend, true, onClick = { openTrend(trend, isSeries = true) }) }
-                            }
-                        }
-                        "trendingMovies" -> Section("Film di tendenza", { onRoute("movies") }) {
-                            if (settings.tmdbApiKey.isBlank()) EmptyHint("Configura la chiave API TMDB in Impostazioni per caricare le tendenze.")
-                            else if (trendingMovies.isEmpty()) EmptyHint("Tendenze film non disponibili: controlla la chiave TMDB e la rete.")
-                            else androidx.compose.foundation.lazy.LazyRow(modifier = Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                items(trendingMovies.take(16), key = { it.id }) { trend -> TrendingCard(trend, false, onClick = { openTrend(trend, isSeries = false) }) }
-                            }
-                        }
+                        "trendingSeries" -> HomeTrendingRail(
+                            title = "Serie di tendenza",
+                            isSeries = true,
+                            apiKey = settings.tmdbApiKey,
+                            tmdb = vm.app.tmdb,
+                            onSelect = { trend -> openTrend(trend.toMetadata(), isSeries = true) },
+                        )
+                        "trendingMovies" -> HomeTrendingRail(
+                            title = "Film di tendenza",
+                            isSeries = false,
+                            apiKey = settings.tmdbApiKey,
+                            tmdb = vm.app.tmdb,
+                            onSelect = { trend -> openTrend(trend.toMetadata(), isSeries = false) },
+                        )
                     }
                     }
                 }
@@ -1129,13 +1101,13 @@ private fun HomeScreen(
         }
     }
 
-    trendingUnavailable?.let { title ->
+    trendingUnavailable?.let {
+        // Stesso avviso di HomeView.swift.
         AlertDialog(
             onDismissRequest = { trendingUnavailable = null },
-            title = { Text("Titolo non presente nella playlist") },
-            text = { Text("“$title” è tra le tendenze, ma non è stato trovato nella sorgente attiva.") },
-            confirmButton = { TextButton(onClick = { trendingUnavailable = null }) { Text("OK") } },
-            dismissButton = { TextButton(onClick = { trendingUnavailable = null; onRoute("sources") }) { Text("Gestisci sorgenti") } }
+            title = { Text("Non disponibile nella tua playlist") },
+            text = { Text("Questo titolo di tendenza non è presente nella sorgente attiva.") },
+            confirmButton = { TextButton(onClick = { trendingUnavailable = null }) { Text("OK") } }
         )
     }
 }
@@ -1219,40 +1191,6 @@ private fun Modifier.trackLeftEdgeCover(state: LeftEdgeCoverFocus, key: String, 
             state.atEdge = false
         }
     }
-
-@Composable
-private fun TrendingCard(item: MetadataResult, isSeries: Boolean, onClick: () -> Unit, onFocus: (() -> Unit)? = null, modifier: Modifier = Modifier) {
-    var focused by remember(item.id) { mutableStateOf(false) }
-    val scale by androidx.compose.animation.core.animateFloatAsState(if (focused) 1.025f else 1f, label = "trending-card-focus")
-    Surface(
-        onClick = onClick,
-        modifier = modifier.width(156.dp).height(270.dp).graphicsLayer { scaleX = scale; scaleY = scale }
-            .onFocusChanged { focused = it.isFocused; if (it.isFocused || it.hasFocus) onFocus?.invoke() }
-            .remoteFocusOutline(cornerRadius = 18.dp),
-        color = Color.Transparent,
-        shape = RoundedCornerShape(18.dp),
-        border = BorderStroke(if (focused) 1.8.dp else .55.dp, if (focused) Color(0xFF8CB7FF) else glassForeground(.15f)),
-    ) {
-        LiquidGlassSurface(modifier = Modifier.fillMaxSize(), cornerRadius = 18.dp, contentPadding = 0.dp, highlighted = focused) {
-            Column(Modifier.fillMaxSize()) {
-                Box(Modifier.fillMaxWidth().height(205.dp).background(Color(0xFF101010))) {
-                    val artwork = item.posterUrl ?: item.backdropUrl
-                    if (artwork != null) AsyncImage(artwork, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-                    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(.30f)))))
-                    item.rating?.let { rating ->
-                        LiquidGlassPill(Modifier.align(Alignment.TopEnd).padding(7.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) { Icon(Icons.Default.Star, null, tint = Color(0xFFFFD166), modifier = Modifier.size(12.dp)); Text(String.format(java.util.Locale.ROOT, "%.1f", rating), color = glassForeground(), fontSize = 11.sp) }
-                        }
-                    }
-                }
-                Column(Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(item.title, color = glassForeground(), maxLines = 2, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                    Text(if (isSeries) "Serie TV · Tendenza" else "Film · Tendenza", color = glassForeground().copy(.52f), fontSize = 11.sp, maxLines = 1)
-                }
-            }
-        }
-    }
-}
 
 @Composable private fun Section(title: String, onSeeAll: (() -> Unit)?, content: @Composable () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1506,7 +1444,6 @@ private fun CatalogScreen(
     var trendLookup by remember { mutableStateOf<Job?>(null) }
     var filter by remember { mutableStateOf<String?>(null) }
     var searchQuery by remember(scopeKey) { mutableStateOf("") }
-    var trending by remember { mutableStateOf<List<MetadataResult>>(emptyList()) }
     var showTrendUnavailable by remember { mutableStateOf(false) }
     // "Categorie TV": the collapsed rail opens with LEFT ONLY from a cover on the left edge (first card
     // of a row / first grid column); everywhere else LEFT keeps navigating.
@@ -1552,12 +1489,6 @@ private fun CatalogScreen(
     // Hiding/reordering that grid must not reset the currently selected group.
     LaunchedEffect(visibleSections.contains("search")) { if (!visibleSections.contains("search")) searchQuery = "" }
 
-    LaunchedEffect(libSettings.tmdbApiKey, visibleSections.contains("trendingMovies"), scopeKey) {
-        trending = if (detail && visibleSections.contains("trendingMovies") && libSettings.tmdbApiKey.isNotBlank()) {
-            runCatching { vm.app.tmdb.trending("movie", libSettings.tmdbApiKey) }.getOrDefault(emptyList())
-        } else emptyList()
-    }
-
     val categoryEntries by produceState(
         initialValue = emptyList<LibraryCategoryEntry>(), categories, items, visibleSections.contains("categories"),
     ) {
@@ -1579,19 +1510,15 @@ private fun CatalogScreen(
             base.withoutIds(parental.lockedIds).matchingText(searchQuery).also { it.size }
         }
     }
-    val watchedIds = remember(watch) { watch.filter { it.kind == MediaKind.MOVIE }.associateBy { it.contentId } }
-    val continueItems by produceState<List<MediaItem>>(
-        initialValue = emptyList(), items, watchedIds, detail,
-    ) {
-        value = withContext(Dispatchers.IO) {
-            if (!detail) emptyList() else items.onlyIds(watchedIds.keys)
-                .sortedByDescending { watchedIds[it.id]?.lastWatchedMs ?: 0L }
-        }
-    }
+    // "Continua a guardare" di VOD: solo film (kindFilter "movie"), identico a ChannelGridView.swift.
+    val continueCards = rememberContinueWatchingCards(
+        watch, vm.catalog.collectAsStateWithLifecycle().value, "movie",
+        enabled = detail && "continueWatching" in visibleSections
+    )
     val firstMediaFocusRequester = remember(scopeKey) { FocusRequester() }
     val libraryFallbackFocusRequester = remember(scopeKey) { FocusRequester() }
     val libraryMenuFocusRequester = remember(scopeKey) { FocusRequester() }
-    val showContinue = detail && searchQuery.isBlank() && continueItems.isNotEmpty()
+    val showContinue = detail && searchQuery.isBlank() && continueCards.isNotEmpty()
     val showTrending = detail && searchQuery.isBlank()
     val visibleContentSections = if (searchQuery.isNotBlank()) visibleSections.filter { it == "search" } else visibleSections
     val groupAfterSearch = libSettings.groupUIStyle == "scorrevole" && visibleSections.firstOrNull() == "search" && !tvCategoryMode
@@ -1747,35 +1674,35 @@ private fun CatalogScreen(
                         }
                         "continueWatching" -> if (showContinue) {
                             item(key = "library-continue-$scopeKey") {
-                                Section("Continua a guardare", null) {
-                                    LazyRow(modifier = Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                        itemsIndexed(continueItems.take(24), key = { _, item -> item.id }) { index, item ->
-                                            Box(Modifier.trackLeftEdgeCover(leftEdgeCover, "continue:${item.id}", index == 0)) {
-                                                MediaCard(item, vm.appFavorite(favorite, item), onClick = { selected = item }, onToggleFavorite = { vm.toggleFavorite(item) }, onFocus = { if (tvCategoryMode) categoryRailExpanded = false })
-                                            }
-                                        }
-                                    }
-                                }
+                                ContinueWatchingSection(
+                                    app = vm.app,
+                                    cards = continueCards,
+                                    kindFilter = "movie",
+                                    onResume = { card -> onPlayWithPosition(onPlay, card.playItem, card.resumePositionMs) },
+                                    itemModifier = { index, key -> Modifier.trackLeftEdgeCover(leftEdgeCover, key, index == 0) },
+                                    onItemFocus = { if (tvCategoryMode) categoryRailExpanded = false },
+                                )
                             }
                         }
                         "trendingMovies" -> if (showTrending) {
                             item(key = "library-trending-$scopeKey") {
-                                Section("Film di tendenza", null) {
-                                    if (libSettings.tmdbApiKey.isBlank()) Text("Configura la chiave TMDB nelle impostazioni per vedere le tendenze.", color = glassForeground(.6f), fontSize = 12.sp)
-                                    else if (trending.isEmpty()) Text("Tendenze non disponibili: controlla la rete e la chiave TMDB.", color = glassForeground(.6f), fontSize = 12.sp)
-                                    else LazyRow(modifier = Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                        itemsIndexed(trending.take(16), key = { _, trend -> trend.id }) { index, trend ->
-                                            TrendingCard(trend, false, modifier = Modifier.trackLeftEdgeCover(leftEdgeCover, "trend:${trend.id}", index == 0), onClick = {
-                                                // Accurate lookup off the main thread; parental-locked titles excluded as in the grid.
-                                                trendLookup?.cancel()
-                                                trendLookup = trendScope.launch {
-                                                    val match = findTrendInCatalogue(items.withoutIds(parental.lockedIds), trend, MediaKind.MOVIE)
-                                                    if (match != null) { openedMeta = match.id to trend; selected = match } else showTrendUnavailable = true
-                                                }
-                                            }, onFocus = { if (tvCategoryMode) categoryRailExpanded = false })
+                                HomeTrendingRail(
+                                    title = "Film di tendenza",
+                                    isSeries = false,
+                                    apiKey = libSettings.tmdbApiKey,
+                                    tmdb = vm.app.tmdb,
+                                    onSelect = { trend ->
+                                        // Ricerca accurata fuori dal main thread; esclusi i titoli bloccati, come nella griglia.
+                                        trendLookup?.cancel()
+                                        trendLookup = trendScope.launch {
+                                            val trendMeta = trend.toMetadata()
+                                            val match = findTrendInCatalogue(items.withoutIds(parental.lockedIds), trendMeta, MediaKind.MOVIE)
+                                            if (match != null) { openedMeta = match.id to trendMeta; selected = match } else showTrendUnavailable = true
                                         }
-                                    }
-                                }
+                                    },
+                                    itemModifier = { index, key -> Modifier.trackLeftEdgeCover(leftEdgeCover, key, index == 0) },
+                                    onItemFocus = { if (tvCategoryMode) categoryRailExpanded = false },
+                                )
                             }
                         }
                     }
@@ -1838,8 +1765,8 @@ private fun CatalogScreen(
     if (showTrendUnavailable) AlertDialog(
         onDismissRequest = { showTrendUnavailable = false },
         confirmButton = { TextButton(onClick = { showTrendUnavailable = false }) { Text("OK") } },
-        title = { Text("Non disponibile nella sorgente") },
-        text = { Text("Questo titolo di tendenza non è presente nella playlist attiva.") }
+        title = { Text("Non disponibile nella tua playlist") },
+        text = { Text("Questo titolo di tendenza non è presente nella sorgente attiva.") }
     )
 }
 
@@ -1876,7 +1803,6 @@ private fun SeriesScreen(
     var trendLookup by remember { mutableStateOf<Job?>(null) }
     var filter by remember { mutableStateOf<String?>(null) }
     var searchQuery by remember { mutableStateOf("") }
-    var trending by remember { mutableStateOf<List<MetadataResult>>(emptyList()) }
     var showTrendUnavailable by remember { mutableStateOf(false) }
     // "Categorie TV": the collapsed rail opens with LEFT ONLY from a cover on the left edge (first card
     // of a row / first grid column); everywhere else LEFT keeps navigating.
@@ -1922,12 +1848,6 @@ private fun SeriesScreen(
     // even when the standalone "Categorie" grid is hidden.
     LaunchedEffect(visibleSections.contains("search")) { if (!visibleSections.contains("search")) searchQuery = "" }
 
-    LaunchedEffect(libSettings.tmdbApiKey, visibleSections.contains("trendingSeries")) {
-        trending = if (visibleSections.contains("trendingSeries") && libSettings.tmdbApiKey.isNotBlank()) {
-            runCatching { vm.app.tmdb.trending("tv", libSettings.tmdbApiKey) }.getOrDefault(emptyList())
-        } else emptyList()
-    }
-
     val categoryEntries by produceState(
         initialValue = emptyList<LibraryCategoryEntry>(), categories, series, visibleSections.contains("categories"),
     ) {
@@ -1948,26 +1868,12 @@ private fun SeriesScreen(
             base.withoutIds(parental.lockedIds).matchingText(searchQuery).also { it.size }
         }
     }
-    val watchedById = remember(watch) { watch.filter { it.kind == MediaKind.EPISODE || it.kind == MediaKind.SERIES }.associateBy { it.contentId } }
-    val continueSectionVisible = "continueWatching" in visibleSections
-    val watchedSeriesIds by produceState<Set<String>>(
-        initialValue = emptySet(), watch, episodes, continueSectionVisible,
-    ) {
-        value = withContext(Dispatchers.IO) {
-            if (!continueSectionVisible) emptySet()
-            else episodes.seriesItemIdsForEpisodeIds(watch.filter { it.kind == MediaKind.EPISODE }.mapTo(HashSet()) { it.contentId })
-        }
-    }
-    val continueItems by produceState<List<MediaItem>>(
-        initialValue = emptyList(), series, watchedById, watchedSeriesIds, continueSectionVisible,
-    ) {
-        value = withContext(Dispatchers.IO) {
-            if (!continueSectionVisible) emptyList()
-            else series.onlyIds(watchedById.keys + watchedSeriesIds)
-                .sortedByDescending { watchedById[it.id]?.lastWatchedMs ?: 0L }
-        }
-    }
-    val showContinue = searchQuery.isBlank() && continueItems.isNotEmpty()
+    // "Continua a guardare" di Serie TV: una card per serie (kindFilter "series"), identico a iOS.
+    val continueCards = rememberContinueWatchingCards(
+        watch, vm.catalog.collectAsStateWithLifecycle().value, "series",
+        enabled = "continueWatching" in visibleSections
+    )
+    val showContinue = searchQuery.isBlank() && continueCards.isNotEmpty()
     val showTrending = searchQuery.isBlank()
     val visibleContentSections = if (searchQuery.isNotBlank()) visibleSections.filter { it == "search" } else visibleSections
     val groupAfterSearch = libSettings.groupUIStyle == "scorrevole" && visibleSections.firstOrNull() == "search" && !tvCategoryMode
@@ -2115,35 +2021,35 @@ private fun SeriesScreen(
                         }
                         "continueWatching" -> if (showContinue) {
                             item(key = "library-continue-series") {
-                                Section("Continua a guardare", null) {
-                                    LazyRow(modifier = Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                        itemsIndexed(continueItems.take(24), key = { _, item -> item.id }) { index, item ->
-                                            Box(Modifier.trackLeftEdgeCover(leftEdgeCover, "continue:${item.id}", index == 0)) {
-                                                MediaCard(item, item.id in favorite.series, onClick = { selected = item }, onToggleFavorite = { vm.toggleFavorite(item) }, onFocus = { if (tvCategoryMode) categoryRailExpanded = false })
-                                            }
-                                        }
-                                    }
-                                }
+                                ContinueWatchingSection(
+                                    app = vm.app,
+                                    cards = continueCards,
+                                    kindFilter = "series",
+                                    onResume = { card -> onPlayWithPosition(onPlay, card.playItem, card.resumePositionMs) },
+                                    itemModifier = { index, key -> Modifier.trackLeftEdgeCover(leftEdgeCover, key, index == 0) },
+                                    onItemFocus = { if (tvCategoryMode) categoryRailExpanded = false },
+                                )
                             }
                         }
                         "trendingSeries" -> if (showTrending) {
                             item(key = "library-trending-series") {
-                                Section("Serie di tendenza", null) {
-                                    if (libSettings.tmdbApiKey.isBlank()) Text("Configura la chiave TMDB nelle impostazioni per vedere le tendenze.", color = glassForeground(.6f), fontSize = 12.sp)
-                                    else if (trending.isEmpty()) Text("Tendenze non disponibili: controlla la rete e la chiave TMDB.", color = glassForeground(.6f), fontSize = 12.sp)
-                                    else LazyRow(modifier = Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                        itemsIndexed(trending.take(16), key = { _, trend -> trend.id }) { index, trend ->
-                                            TrendingCard(trend, true, modifier = Modifier.trackLeftEdgeCover(leftEdgeCover, "trend:${trend.id}", index == 0), onClick = {
-                                                // Accurate lookup off the main thread; parental-locked titles excluded as in the grid.
-                                                trendLookup?.cancel()
-                                                trendLookup = trendScope.launch {
-                                                    val match = findTrendInCatalogue(series.withoutIds(parental.lockedIds), trend, MediaKind.SERIES)
-                                                    if (match != null) { openedMeta = match.id to trend; selected = match } else showTrendUnavailable = true
-                                                }
-                                            }, onFocus = { if (tvCategoryMode) categoryRailExpanded = false })
+                                HomeTrendingRail(
+                                    title = "Serie di tendenza",
+                                    isSeries = true,
+                                    apiKey = libSettings.tmdbApiKey,
+                                    tmdb = vm.app.tmdb,
+                                    onSelect = { trend ->
+                                        // Ricerca accurata fuori dal main thread; esclusi i titoli bloccati, come nella griglia.
+                                        trendLookup?.cancel()
+                                        trendLookup = trendScope.launch {
+                                            val trendMeta = trend.toMetadata()
+                                            val match = findTrendInCatalogue(series.withoutIds(parental.lockedIds), trendMeta, MediaKind.SERIES)
+                                            if (match != null) { openedMeta = match.id to trendMeta; selected = match } else showTrendUnavailable = true
                                         }
-                                    }
-                                }
+                                    },
+                                    itemModifier = { index, key -> Modifier.trackLeftEdgeCover(leftEdgeCover, key, index == 0) },
+                                    onItemFocus = { if (tvCategoryMode) categoryRailExpanded = false },
+                                )
                             }
                         }
                     }

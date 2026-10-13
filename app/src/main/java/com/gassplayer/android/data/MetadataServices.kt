@@ -15,6 +15,71 @@ class TmdbService(private val api: NetworkApi) {
         val root = api.getJson("https://api.themoviedb.org/3/trending/$path/$period?api_key=${enc(apiKey)}&language=it-IT")
         root.jsonObject["results"]?.jsonArray?.mapNotNull { it.jsonObject.toMeta() } ?: emptyList()
     }
+    private val trendingRailCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, List<TmdbTrendingItem>>>()
+    private val genreNamesCache = java.util.concurrent.ConcurrentHashMap<String, Map<Int, String>>()
+
+    /**
+     * TMDBService.trending(isSeries:limit:) on iOS: the week's 20 most trending titles, pages 1-2 until the
+     * limit, only titles with a backdrop (16:9 card), first genre in Italian, cached for 30 minutes.
+     * Throws when nothing could be loaded, so the rail can show "Impossibile caricare…".
+     */
+    suspend fun trendingRail(isSeries: Boolean, apiKey: String, limit: Int = 20): List<TmdbTrendingItem> = withContext(Dispatchers.IO) {
+        require(apiKey.isNotBlank()) { "Chiave API TMDB mancante" }
+        val key = if (isSeries) "tv" else "movie"
+        val cacheKey = "$key|$apiKey"
+        trendingRailCache[cacheKey]?.let { (date, items) ->
+            if (System.currentTimeMillis() - date < 1_800_000L) return@withContext items.take(limit)
+        }
+        val genres = genreNames(key, apiKey)
+        val items = ArrayList<TmdbTrendingItem>()
+        val seen = HashSet<String>()
+        var lastError: Throwable? = null
+        for (page in 1..2) {
+            if (items.size >= limit) break
+            val root = try {
+                api.getJson("https://api.themoviedb.org/3/trending/$key/week?api_key=${enc(apiKey)}&language=it-IT&page=$page")
+            } catch (error: Throwable) {
+                lastError = error
+                break
+            }
+            root.jsonObject["results"]?.jsonArray?.forEach { element ->
+                val raw = element.jsonObject
+                val id = raw.stringOrNull("id") ?: return@forEach
+                val backdrop = raw.stringOrNull("backdrop_path")?.takeIf { it.isNotBlank() } ?: return@forEach
+                val title = (raw.stringOrNull("title") ?: raw.stringOrNull("name"))?.trim()?.takeIf { it.isNotEmpty() } ?: return@forEach
+                if (!seen.add(id)) return@forEach
+                val date = raw.stringOrNull("release_date") ?: raw.stringOrNull("first_air_date")
+                items += TmdbTrendingItem(
+                    id = id,
+                    title = title,
+                    originalTitle = raw.stringOrNull("original_title") ?: raw.stringOrNull("original_name"),
+                    genre = raw["genre_ids"]?.jsonArray?.firstNotNullOfOrNull { element -> element.jsonPrimitive.intOrNull?.let { genres[it] } },
+                    backdropUrl = "https://image.tmdb.org/t/p/w780$backdrop",
+                    year = date?.takeIf { it.length >= 4 }?.take(4),
+                    isSeries = isSeries
+                )
+            }
+        }
+        if (items.isEmpty()) throw (lastError ?: IllegalStateException("Nessun titolo di tendenza"))
+        trendingRailCache[cacheKey] = System.currentTimeMillis() to items
+        items.take(limit)
+    }
+
+    private suspend fun genreNames(key: String, apiKey: String): Map<Int, String> {
+        genreNamesCache[key]?.let { return it }
+        val map = runCatching {
+            api.getJson("https://api.themoviedb.org/3/genre/$key/list?api_key=${enc(apiKey)}&language=it-IT")
+                .jsonObject["genres"]?.jsonArray?.mapNotNull { element ->
+                    val genre = element.jsonObject
+                    val id = genre["id"]?.jsonPrimitive?.intOrNull ?: return@mapNotNull null
+                    val name = genre["name"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+                    id to name
+                }?.toMap().orEmpty()
+        }.getOrDefault(emptyMap())
+        if (map.isNotEmpty()) genreNamesCache[key] = map
+        return map
+    }
+
     /** Type-specific title search used by detail screens to avoid selecting a same-title film/series/person. */
     suspend fun searchMovies(query: String, apiKey: String): List<MetadataResult> = searchByType(query, apiKey, "movie")
     suspend fun searchSeries(query: String, apiKey: String): List<MetadataResult> = searchByType(query, apiKey, "tv")
@@ -116,6 +181,29 @@ data class MetadataResult(
     /** Release / first-air year from TMDB, used to match trending titles to the playlist accurately. */
     val year: String? = null
 )
+
+/** TMDBTrendingItem on iOS: one card of "Film/Serie di tendenza". */
+data class TmdbTrendingItem(
+    val id: String,
+    val title: String,
+    val originalTitle: String?,
+    /** First genre (Italian), shown under the title. */
+    val genre: String?,
+    /** Horizontal 16:9 image for the card. */
+    val backdropUrl: String?,
+    val year: String?,
+    val isSeries: Boolean
+) {
+    /** Metadata handed to the catalogue matcher and shown at once by the detail sheet. */
+    fun toMetadata(): MetadataResult = MetadataResult(
+        id = id,
+        title = title,
+        backdropUrl = backdropUrl,
+        genres = listOfNotNull(genre),
+        originalTitle = originalTitle,
+        year = year
+    )
+}
 
 @kotlinx.serialization.Serializable
 data class MetadataCastMember(

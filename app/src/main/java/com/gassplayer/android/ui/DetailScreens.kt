@@ -3,6 +3,8 @@ package com.gassplayer.android.ui
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
@@ -32,6 +34,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -123,6 +126,14 @@ fun MovieDetailScreen(
         sourceConfigs.any { it.isEnabled && it.type == SourceType.XTREAM && it.id != item.sourceId }
     }
     val topProgress = detailTopProgress(scrollState)
+    val tvLayout = isTvDetailLayout()
+
+    // Immagine di "Continua a guardare" allineata a quella della scheda (MovieDetailView.swift: updateImage).
+    val detailImage = meta?.backdropUrl ?: item.backdropUrl
+    LaunchedEffect(detailImage, currentWatch?.imageUrl) {
+        val url = detailImage?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
+        if (currentWatch != null && currentWatch.imageUrl != url) app.watch.updateImage(url) { it.contentId == item.id }
+    }
 
     // Every detail page has a deterministic first DPAD target, even when posters/metadata load later.
     LaunchedEffect(item.id, playFocusRequester, remoteFirstDevice) {
@@ -154,7 +165,89 @@ fun MovieDetailScreen(
         }
     }
 
-    Box(Modifier.fillMaxSize()) {
+    val toggleFavorite: () -> Unit = { scope.launch { app.favorites.toggle(item) } }
+    val toggleTrailerAudio: () -> Unit = { scope.launch { app.prefs.saveSettings(settings.copy(detailTrailerMuted = !settings.detailTrailerMuted)) } }
+    val startDownload: () -> Unit = {
+        if (downloadInfo?.state in setOf(WorkInfo.State.ENQUEUED, WorkInfo.State.RUNNING, WorkInfo.State.BLOCKED)) {
+            actionMessage = "Il download è già in coda o in corso."
+        } else {
+            downloadWorkId = runCatching { app.downloads.enqueue(item, settings.downloadWifiOnly) }.getOrNull()
+            actionMessage = if (downloadWorkId != null) "Download aggiunto alla coda." else "Impossibile avviare il download."
+        }
+    }
+    val downloadLabel = when (downloadInfo?.state) {
+        WorkInfo.State.RUNNING -> "${((downloadInfo?.progress?.getFloat("progress", 0f) ?: 0f) * 100).roundToInt()}%"
+        WorkInfo.State.SUCCEEDED -> "Scaricato"
+        WorkInfo.State.ENQUEUED, WorkInfo.State.BLOCKED -> "In coda"
+        else -> "Scarica"
+    }
+
+    if (tvLayout) {
+        val position = currentWatch?.positionMs ?: 0L
+        val duration = currentWatch?.durationMs ?: 0L
+        TvMediaDetailLayout(
+            item = item,
+            meta = meta,
+            listState = scrollState,
+            rating = meta?.rating ?: item.rating,
+            secondary = listOfNotNull(meta?.year ?: item.year, item.durationSec?.takeIf { it > 0 }?.let(::formatRuntime)).joinToString(" · ").ifBlank { null },
+            genres = metadataGenres(meta, item),
+            overview = meta?.overview?.takeIf { it.isNotBlank() } ?: item.plot?.takeIf { it.isNotBlank() },
+            loading = isLoadingDetail,
+            playLabel = if (position > 0L) "Riprendi" else "Riproduci",
+            playProgress = if (position > 0L && duration > 0L) position.toFloat() / duration.toFloat() else null,
+            playFocusRequester = playFocusRequester,
+            onPlay = { onPlay(item, position) },
+            actions = listOf(
+                TvDetailAction(
+                    icon = if (item.id in favorite.movies) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                    label = if (item.id in favorite.movies) "Preferito" else "Preferiti",
+                    onClick = toggleFavorite,
+                    tint = if (item.id in favorite.movies) Color(0xFFFF88A5) else DetailText
+                ),
+                TvDetailAction(
+                    icon = if (downloadInfo?.state == WorkInfo.State.SUCCEEDED) Icons.Default.CheckCircle else Icons.Default.Download,
+                    label = downloadLabel,
+                    onClick = startDownload,
+                    tint = if (downloadInfo?.state == WorkInfo.State.SUCCEEDED) SourcesGreenForDetail else DetailText
+                ),
+                TvDetailAction(Icons.Default.Search, "Altre fonti", onClick = { showAlternates = true }, enabled = canSearchAlternates),
+            ),
+            actionMessage = actionMessage,
+            onClose = onBack,
+        ) {
+            if (alternates.isNotEmpty()) {
+                item(key = "tv-alternates-${item.id}") {
+                    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        TvRowHeader("SORGENTI ALTERNATIVE")
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(horizontal = TvRowInset)) {
+                            items(alternates, key = { it.id }) { alt ->
+                                LiquidGlassFocusableSurface(
+                                    modifier = Modifier.width(260.dp),
+                                    cornerRadius = 16.dp,
+                                    contentPadding = 12.dp,
+                                    onClick = { onPlay(alt, 0L) }
+                                ) {
+                                    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                                        Text(alt.title, color = glassForeground(), fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text(alt.sourceId, color = glassForeground(.6f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text("Riproduci da questa sorgente", color = DetailAccent, fontSize = 12.sp)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            item(key = "tv-cast-${item.id}") {
+                TvCastRow(
+                    names = meta?.cast?.takeIf { it.isNotEmpty() } ?: item.cast?.split(',', ';')?.map { it.trim() }?.filter { it.isNotBlank() }.orEmpty(),
+                    people = meta?.castMembers.orEmpty()
+                )
+            }
+            item(key = "tv-ratings-${item.id}") { TvRatingsBlock(meta?.rating ?: item.rating, ratings, traktRating) }
+        }
+    } else Box(Modifier.fillMaxSize()) {
         LazyColumn(
             state = scrollState,
             modifier = Modifier.fillMaxSize(),
@@ -340,6 +433,7 @@ fun SeriesDetailScreen(
     var season by remember(series.id) { mutableStateOf(0) }
     val seriesKey = series.id.substringAfterLast(':')
     val topProgress = detailTopProgress(scrollState)
+    val tvLayout = isTvDetailLayout()
     LaunchedEffect(series.id, playFocusRequester, remoteFirstDevice) {
         if (remoteFirstDevice) {
             delay(90L)
@@ -387,9 +481,138 @@ fun SeriesDetailScreen(
     }
     val visibleEpisodes = seasons[season].orEmpty()
     val allWatch = remember(watch, sortedEpisodes) { sortedEpisodes.mapNotNull { ep -> watch.firstOrNull { it.contentId == ep.id }?.let { ep.id to it } }.toMap() }
-    val resumeEpisode = remember(sortedEpisodes, allWatch) { sortedEpisodes.firstOrNull { (allWatch[it.id]?.positionMs ?: 0L) > 0L } }
+    // Episodio da riprendere: quello guardato PIÙ DI RECENTE (prima era il primo in ordine con una posizione).
+    val resumeEpisode = remember(sortedEpisodes, allWatch) {
+        sortedEpisodes.filter { (allWatch[it.id]?.positionMs ?: 0L) > 0L }.maxByOrNull { allWatch[it.id]?.lastWatchedMs ?: 0L }
+    }
+    // La scheda si apre sulla stagione dell'episodio da riprendere.
+    var seasonFollowsResume by remember(series.id) { mutableStateOf(true) }
+    LaunchedEffect(resumeEpisode?.id, seasons.keys) {
+        val resumeSeason = resumeEpisode?.let { it.seasonNumber ?: 1 }
+        if (seasonFollowsResume && resumeSeason != null && resumeSeason in seasons.keys) season = resumeSeason
+    }
 
-    Box(Modifier.fillMaxSize()) {
+    // Immagine di "Continua a guardare" allineata a quella della scheda (SeriesEpisodesView.swift: updateImage).
+    val detailImage = meta?.backdropUrl ?: series.backdropUrl
+    LaunchedEffect(detailImage, watch, sortedEpisodes) {
+        val url = detailImage?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
+        val episodeIds = sortedEpisodes.mapTo(HashSet()) { it.id }
+        val matches: (WatchEntry) -> Boolean = { entry ->
+            entry.contentId in episodeIds || (entry.seriesId == seriesKey && entry.sourceId == series.sourceId)
+        }
+        if (watch.any { matches(it) && it.imageUrl != url }) app.watch.updateImage(url, matches)
+    }
+
+    if (tvLayout) {
+        val resumeState = resumeEpisode?.let { allWatch[it.id] }
+        val playTarget = resumeEpisode ?: sortedEpisodes.firstOrNull()
+        val episodesRowState = androidx.compose.foundation.lazy.rememberLazyListState()
+        // Riga episodi già posizionata sull'episodio da riprendere.
+        LaunchedEffect(season, visibleEpisodes.size, resumeEpisode?.id) {
+            val index = visibleEpisodes.indexOfFirst { it.id == resumeEpisode?.id }
+            runCatching { episodesRowState.scrollToItem(index.coerceAtLeast(0)) }
+        }
+        TvMediaDetailLayout(
+            item = series,
+            meta = meta,
+            listState = scrollState,
+            rating = meta?.rating ?: series.rating,
+            secondary = listOfNotNull(meta?.year ?: series.year, seasons.size.takeIf { it > 0 }?.let { if (it == 1) "1 stagione" else "$it stagioni" }).joinToString(" · ").ifBlank { null },
+            genres = metadataGenres(meta, series),
+            overview = meta?.overview?.takeIf { it.isNotBlank() } ?: series.plot?.takeIf { it.isNotBlank() },
+            loading = meta == null && loadingEpisodes,
+            playLabel = when {
+                resumeEpisode != null -> "Riprendi S${resumeEpisode.seasonNumber ?: 1} E${resumeEpisode.episodeNumber ?: 1}"
+                else -> "Riproduci S${playTarget?.seasonNumber ?: 1} E${playTarget?.episodeNumber ?: 1}"
+            },
+            playProgress = resumeState?.let { if (it.durationMs > 0L) it.positionMs.toFloat() / it.durationMs.toFloat() else null },
+            playFocusRequester = playFocusRequester,
+            onPlay = {
+                if (playTarget != null) onPlay(playTarget, allWatch[playTarget.id]?.positionMs ?: 0L)
+                else actionMessage = "Nessun episodio disponibile per questa serie."
+            },
+            actions = listOf(
+                TvDetailAction(
+                    icon = if (series.id in favorite.series) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                    label = if (series.id in favorite.series) "Preferita" else "Preferiti",
+                    onClick = { scope.launch { app.favorites.toggle(series) } },
+                    tint = if (series.id in favorite.series) Color(0xFFFF88A5) else DetailText
+                ),
+                TvDetailAction(Icons.Default.Search, "Altre fonti", onClick = { showAlternates = true }, enabled = canSearchAlternates),
+                TvDetailAction(Icons.Default.Refresh, if (loadingEpisodes) "Aggiorno…" else "Aggiorna", onClick = { if (!loadingEpisodes) scope.launch { fetchEpisodes() } }),
+            ),
+            actionMessage = actionMessage ?: loadError,
+            onClose = onBack,
+        ) {
+            if (seasons.size > 1) {
+                item(key = "tv-seasons-${series.id}") {
+                    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        TvRowHeader("STAGIONI")
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(horizontal = TvRowInset)) {
+                            items(seasons.keys.toList(), key = { it }) { number ->
+                                TvSeasonChip(
+                                    label = if (number == 0) "Speciali" else "Stagione $number",
+                                    selected = number == season,
+                                    onClick = { seasonFollowsResume = false; season = number }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            item(key = "tv-episodes-${series.id}") {
+                Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    TvRowHeader(
+                        if (visibleEpisodes.isEmpty()) "EPISODI"
+                        else "${if (season == 0) "SPECIALI" else "STAGIONE $season"} · ${visibleEpisodes.size} EPISODI"
+                    )
+                    when {
+                        loadingEpisodes && sortedEpisodes.isEmpty() -> Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.CenterStart) {
+                            CircularProgressIndicator(color = DetailAccent)
+                        }
+                        visibleEpisodes.isEmpty() -> Text(
+                            "Nessun episodio disponibile. Controlla la connessione alla sorgente e premi Aggiorna.",
+                            color = DetailMuted,
+                            modifier = Modifier.padding(horizontal = TvRowInset)
+                        )
+                        else -> LazyRow(
+                            state = episodesRowState,
+                            horizontalArrangement = Arrangement.spacedBy(16.dp),
+                            contentPadding = PaddingValues(horizontal = TvRowInset, vertical = 8.dp)
+                        ) {
+                            items(visibleEpisodes, key = { it.id }) { ep ->
+                                val state = allWatch[ep.id]
+                                val fraction = if ((state?.durationMs ?: 0L) > 0L) (state!!.positionMs.toFloat() / state.durationMs.toFloat()).coerceIn(0f, 1f) else 0f
+                                val tmdbFallback = tmdbEpisodesBySeason[season]?.get(ep.episodeNumber ?: 0)
+                                TvEpisodeCard(
+                                    episode = ep.copy(
+                                        posterUrl = ep.posterUrl ?: tmdbFallback?.stillUrl,
+                                        plot = ep.plot?.takeIf { it.isNotBlank() } ?: tmdbFallback?.overview,
+                                        year = ep.year?.takeIf { it.isNotBlank() } ?: tmdbFallback?.airDate
+                                    ),
+                                    progress = fraction,
+                                    isResume = ep.id == resumeEpisode?.id,
+                                    tmdbEpisode = tmdbFallback,
+                                    onPlay = { onPlay(ep, state?.positionMs ?: 0L) },
+                                    onDownload = {
+                                        val id = runCatching { app.downloads.enqueue(ep, settings.downloadWifiOnly) }.getOrNull()
+                                        actionMessage = if (id != null) "Download di ${ep.title} aggiunto alla coda." else "Impossibile avviare il download."
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            item(key = "tv-series-cast-${series.id}") {
+                TvCastRow(
+                    names = meta?.cast?.takeIf { it.isNotEmpty() } ?: series.cast?.split(',', ';')?.map { it.trim() }?.filter { it.isNotBlank() }.orEmpty(),
+                    people = meta?.castMembers.orEmpty()
+                )
+            }
+            item(key = "tv-series-ratings-${series.id}") { TvRatingsBlock(meta?.rating ?: series.rating, null, null) }
+        }
+    } else Box(Modifier.fillMaxSize()) {
         LazyColumn(
             state = scrollState,
             modifier = Modifier.fillMaxSize(),
@@ -878,3 +1101,420 @@ private fun formatRuntime(seconds: Long): String {
 }
 
 private fun String.normalizedMediaTitle(): String = lowercase(Locale.ROOT).replace(Regex("[^\\p{L}\\p{N}]"), "")
+
+// MARK: - Layout TV (Android TV / Fire TV)
+//
+// Su TV la scheda mobile (hero 16:9 ritagliato a tutta larghezza, pulsante "Riproduci" a tutta larghezza,
+// episodi in colonna a tutta larghezza) nascondeva gran parte del poster e obbligava a lunghe discese col
+// telecomando. Qui: sfondo backdrop a schermo intero, poster 2:3 SEMPRE intero a sinistra, informazioni e
+// azioni su UNA riga orizzontale (DPAD sinistra/destra), stagioni ed episodi in righe orizzontali, ogni riga
+// raggiungibile con un solo DPAD giù. Il tasto Indietro chiude la scheda.
+
+/** Margine orizzontale delle righe TV (le sezioni condivise Valutazioni/Cast hanno già 20 dp interni). */
+private val TvListPadding = 28.dp
+private val TvRowInset = 20.dp
+private val TvFocusAccent = Color(0xFF8CB7FF)
+
+/** Un'azione della riga principale della scheda TV. */
+private class TvDetailAction(
+    val icon: androidx.compose.ui.graphics.vector.ImageVector,
+    val label: String,
+    val onClick: () -> Unit,
+    val tint: Color = DetailText,
+    val enabled: Boolean = true,
+)
+
+@Composable
+private fun isTvDetailLayout(): Boolean {
+    val context = LocalContext.current
+    val widthDp = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp
+    return remember(context, widthDp) { context.isTvOrFireTvDevice() || widthDp >= 900 }
+}
+
+@Composable
+private fun TvMediaDetailLayout(
+    item: MediaItem,
+    meta: MetadataResult?,
+    listState: androidx.compose.foundation.lazy.LazyListState,
+    rating: Double?,
+    secondary: String?,
+    genres: List<String>,
+    overview: String?,
+    loading: Boolean,
+    playLabel: String,
+    playProgress: Float?,
+    playFocusRequester: FocusRequester,
+    onPlay: () -> Unit,
+    actions: List<TvDetailAction>,
+    actionMessage: String?,
+    onClose: () -> Unit,
+    rows: androidx.compose.foundation.lazy.LazyListScope.() -> Unit,
+) {
+    androidx.activity.compose.BackHandler(onBack = onClose)
+    val scope = rememberCoroutineScope()
+    val backdrop = meta?.backdropUrl ?: item.backdropUrl
+    val poster = meta?.posterUrl ?: item.posterUrl
+    val title = meta?.title?.takeIf { it.isNotBlank() } ?: item.title
+
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+        if (!backdrop.isNullOrBlank()) {
+            AsyncImage(backdrop, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alpha = .62f)
+        }
+        // Velo a sinistra (testo leggibile) e in basso (righe di episodi/cast leggibili), immagine visibile a destra.
+        Box(
+            Modifier.fillMaxSize().background(
+                Brush.horizontalGradient(0f to Color.Black.copy(.94f), .42f to Color.Black.copy(.74f), 1f to Color.Black.copy(.18f))
+            )
+        )
+        Box(
+            Modifier.fillMaxSize().background(
+                Brush.verticalGradient(0f to Color.Transparent, .5f to Color.Black.copy(.25f), 1f to Color.Black.copy(.92f))
+            )
+        )
+
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = TvListPadding, end = TvListPadding, top = 30.dp, bottom = 56.dp),
+            verticalArrangement = Arrangement.spacedBy(26.dp)
+        ) {
+            item(key = "tv-header-${item.id}") {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = TvRowInset),
+                    horizontalArrangement = Arrangement.spacedBy(34.dp),
+                    verticalAlignment = Alignment.Top
+                ) {
+                    TvDetailPoster(poster = poster, fallback = backdrop, title = title)
+                    Column(Modifier.weight(1f).padding(top = 6.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        val logoUrl = meta?.logoUrl
+                        if (!logoUrl.isNullOrBlank()) {
+                            AsyncImage(
+                                logoUrl, contentDescription = title,
+                                modifier = Modifier.widthIn(max = 380.dp).heightIn(max = 92.dp),
+                                contentScale = ContentScale.Fit,
+                                alignment = Alignment.CenterStart
+                            )
+                        } else {
+                            Text(title, color = Color.White, fontSize = 34.sp, lineHeight = 38.sp, fontWeight = FontWeight.ExtraBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        }
+                        TvDetailMetaLine(rating = rating, secondary = secondary, genres = genres)
+                        if (!overview.isNullOrBlank()) {
+                            Text(overview, color = DetailText.copy(.9f), fontSize = 15.sp, lineHeight = 22.sp, maxLines = 5, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 640.dp))
+                        } else if (loading) {
+                            LinearProgressIndicator(Modifier.width(260.dp), color = DetailAccent, trackColor = Color.White.copy(.1f))
+                        }
+                        Spacer(Modifier.height(2.dp))
+                        // Riga azioni: tornandoci da una riga più in basso, la scheda torna in cima (poster intero).
+                        Row(
+                            Modifier.onFocusChanged { if (it.hasFocus) scope.launch { runCatching { listState.animateScrollToItem(0) } } },
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            TvPlayButton(playLabel, playProgress, playFocusRequester, onPlay)
+                            actions.forEach { action -> TvActionButton(action) }
+                        }
+                        actionMessage?.let { Text(it, color = DetailAccent, fontSize = 13.sp) }
+                    }
+                }
+            }
+            rows()
+        }
+
+        // Chiudi (anche il tasto Indietro chiude): GIÙ porta subito su "Riproduci".
+        TvCloseButton(
+            onClick = onClose,
+            onMoveDown = {
+                scope.launch {
+                    runCatching { listState.scrollToItem(0) }
+                    playFocusRequester.requestFocusWithRetry(attempts = 4, delayMillis = 30L)
+                }
+                true
+            },
+            modifier = Modifier.align(Alignment.TopEnd).padding(top = 22.dp, end = 26.dp)
+        )
+    }
+}
+
+@Composable
+private fun TvDetailPoster(poster: String?, fallback: String?, title: String) {
+    val shape = RoundedCornerShape(14.dp)
+    Box(
+        Modifier
+            .width(206.dp)
+            .aspectRatio(2f / 3f)
+            .clip(shape)
+            .background(Brush.linearGradient(listOf(Color(0xFF262626), Color(0xFF0C0C0C))))
+            .border(BorderStroke(.8.dp, Color.White.copy(.22f)), shape),
+        contentAlignment = Alignment.Center
+    ) {
+        when {
+            // Il poster è 2:3 come il riquadro: si vede intero.
+            !poster.isNullOrBlank() -> AsyncImage(poster, contentDescription = title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            // Solo un'immagine orizzontale: intera (Fit), mai ritagliata.
+            !fallback.isNullOrBlank() -> AsyncImage(fallback, contentDescription = title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+            else -> Text(title.take(1).uppercase(), color = Color.White.copy(.7f), fontSize = 54.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun TvDetailMetaLine(rating: Double?, secondary: String?, genres: List<String>) {
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+        rating?.takeIf { it > 0 }?.let {
+            Row(
+                Modifier.clip(RoundedCornerShape(7.dp)).background(Color.White.copy(.14f)).padding(horizontal = 9.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Icon(Icons.Default.Star, null, tint = Color(0xFFFFD36D), modifier = Modifier.size(14.dp))
+                Text(String.format(Locale.ROOT, "%.1f", it), color = DetailText, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+        secondary?.takeIf { it.isNotBlank() }?.let { Text(it, color = DetailText.copy(.9f), fontSize = 14.sp) }
+        if (genres.isNotEmpty()) Text(genres.take(3).joinToString(" · "), color = DetailMuted, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+/** Stato di focus TV: chiaro con testo scuro quando focalizzato (stile tvOS), vetro scuro altrimenti. */
+@Composable
+private fun TvPillSurface(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    onLongClick: (() -> Unit)? = null,
+    content: @Composable RowScope.(focused: Boolean) -> Unit,
+) {
+    var focused by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(if (focused) 1.06f else 1f, label = "tv-pill-focus")
+    Row(
+        modifier
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .clip(RoundedCornerShape(50))
+            .background(if (focused) Color.White else Color.White.copy(if (enabled) .13f else .06f))
+            .border(BorderStroke(.8.dp, Color.White.copy(if (focused) 0f else .22f)), RoundedCornerShape(50))
+            .onFocusChanged { focused = it.isFocused }
+            .combinedClickableCompat(enabled = enabled, onClick = onClick, onLongClick = onLongClick)
+            .padding(horizontal = 20.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) { content(focused) }
+}
+
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+private fun Modifier.combinedClickableCompat(enabled: Boolean, onClick: () -> Unit, onLongClick: (() -> Unit)?): Modifier =
+    this.then(
+        Modifier.combinedClickable(
+            interactionSource = null,
+            indication = null,
+            enabled = enabled,
+            onLongClick = onLongClick,
+            onClick = onClick
+        )
+    )
+
+@Composable
+private fun TvPlayButton(label: String, progress: Float?, focusRequester: FocusRequester, onClick: () -> Unit) {
+    TvPillSurface(onClick = onClick, modifier = Modifier.focusRequester(focusRequester)) { focused ->
+        val color = if (focused) Color(0xFF111111) else Color.White
+        Icon(Icons.Default.PlayArrow, null, tint = color, modifier = Modifier.size(22.dp))
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(label, color = color, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+            if (progress != null && progress > 0f) {
+                Box(Modifier.width(110.dp).height(3.dp).clip(RoundedCornerShape(50)).background(color.copy(.25f))) {
+                    Box(Modifier.fillMaxHeight().fillMaxWidth(progress.coerceIn(0f, 1f)).background(color))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TvActionButton(action: TvDetailAction) {
+    TvPillSurface(onClick = action.onClick, enabled = action.enabled) { focused ->
+        val color = when {
+            focused -> Color(0xFF111111)
+            !action.enabled -> DetailText.copy(.35f)
+            else -> action.tint
+        }
+        Icon(action.icon, contentDescription = action.label, tint = color, modifier = Modifier.size(19.dp))
+        Text(action.label, color = if (focused) Color(0xFF111111) else DetailText.copy(if (action.enabled) .95f else .35f), fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+    }
+}
+
+@Composable
+private fun TvCloseButton(onClick: () -> Unit, onMoveDown: () -> Boolean, modifier: Modifier = Modifier) {
+    var focused by remember { mutableStateOf(false) }
+    Surface(
+        onClick = onClick,
+        modifier = modifier.size(44.dp)
+            .onFocusChanged { focused = it.isFocused }
+            .onPreviewKeyEvent { event -> event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown && onMoveDown() },
+        shape = CircleShape,
+        color = if (focused) Color.White else Color.White.copy(.10f),
+        border = BorderStroke(.7.dp, Color.White.copy(if (focused) 0f else .27f))
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(Icons.Default.Close, contentDescription = "Chiudi", tint = if (focused) Color(0xFF111111) else Color.White, modifier = Modifier.size(19.dp))
+        }
+    }
+}
+
+/** Intestazione di una riga TV (stesso stile delle sezioni della scheda). */
+@Composable
+private fun TvRowHeader(title: String, trailing: (@Composable RowScope.() -> Unit)? = null) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = TvRowInset), verticalAlignment = Alignment.CenterVertically) {
+        Text(title, color = DetailMuted, fontSize = 13.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+        trailing?.invoke(this)
+    }
+}
+
+@Composable
+private fun TvSeasonChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    TvPillSurface(onClick = onClick) { focused ->
+        Text(
+            label,
+            color = when {
+                focused -> Color(0xFF111111)
+                selected -> Color.White
+                else -> DetailText.copy(.72f)
+            },
+            fontSize = 15.sp,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            maxLines = 1
+        )
+        if (selected && !focused) Box(Modifier.size(6.dp).clip(CircleShape).background(DetailAccent))
+    }
+}
+
+/** Card episodio TV: 16:9 intera, poi S·E, titolo, trama (2 righe). Pressione lunga = scarica episodio. */
+@Composable
+private fun TvEpisodeCard(
+    episode: MediaItem,
+    progress: Float,
+    isResume: Boolean,
+    tmdbEpisode: TmdbEpisodeResult?,
+    onPlay: () -> Unit,
+    onDownload: () -> Unit,
+    focusRequester: FocusRequester? = null,
+) {
+    var focused by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(if (focused) 1.05f else 1f, label = "tv-episode-focus")
+    val shape = RoundedCornerShape(14.dp)
+    Column(
+        Modifier
+            .width(286.dp)
+            .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
+            .onFocusChanged { focused = it.isFocused }
+            .combinedClickableCompat(enabled = true, onClick = onPlay, onLongClick = onDownload),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .aspectRatio(16f / 9f)
+                .graphicsLayer { scaleX = scale; scaleY = scale }
+                .clip(shape)
+                .background(Brush.linearGradient(listOf(Color(0xFF222222), Color(0xFF080808))))
+                .border(BorderStroke(if (focused) 2.5.dp else .7.dp, if (focused) TvFocusAccent else Color.White.copy(.16f)), shape),
+            contentAlignment = Alignment.Center
+        ) {
+            val image = episode.backdropUrl ?: episode.posterUrl
+            if (!image.isNullOrBlank()) AsyncImage(image, contentDescription = episode.title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            else Icon(Icons.Default.PlayArrow, null, tint = Color.White.copy(.7f), modifier = Modifier.size(34.dp))
+            if (focused) {
+                Box(Modifier.fillMaxSize().background(Color.Black.copy(.18f)))
+                Icon(Icons.Default.PlayArrow, null, tint = Color.White, modifier = Modifier.size(38.dp))
+            }
+            if (isResume) {
+                Text(
+                    "RIPRENDI",
+                    color = Color(0xFF111111),
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    modifier = Modifier.align(Alignment.TopStart).padding(8.dp).clip(RoundedCornerShape(5.dp)).background(Color.White).padding(horizontal = 6.dp, vertical = 2.dp)
+                )
+            }
+            if (progress > 0f) {
+                Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(4.dp).background(Color.White.copy(.26f))) {
+                    Box(Modifier.fillMaxHeight().fillMaxWidth(progress.coerceIn(0f, 1f)).background(Color.White))
+                }
+            }
+        }
+        Column(Modifier.padding(horizontal = 4.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(
+                "S${episode.seasonNumber ?: tmdbEpisode?.seasonNumber ?: 1} · E${episode.episodeNumber ?: tmdbEpisode?.episodeNumber ?: 0}",
+                color = if (focused) DetailAccent else DetailMuted,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(episode.title, color = DetailText, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val plot = episode.plot?.takeIf { it.isNotBlank() } ?: tmdbEpisode?.overview?.takeIf { it.isNotBlank() }
+            if (!plot.isNullOrBlank()) Text(plot, color = DetailMuted, fontSize = 13.sp, lineHeight = 18.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            val releaseDate = formatEpisodeDate(episode.year?.takeIf { it.isNotBlank() } ?: tmdbEpisode?.airDate)
+            if (!releaseDate.isNullOrBlank()) Text(releaseDate, color = DetailText.copy(.7f), fontSize = 12.sp)
+        }
+    }
+}
+
+/** Cast con elementi focalizzabili: la riga si scorre col telecomando (prima non era raggiungibile). */
+@Composable
+private fun TvCastRow(names: List<String>, people: List<MetadataCastMember>) {
+    val cast = remember(names, people) {
+        if (people.isNotEmpty()) people.distinctBy { it.name }.take(20)
+        else names.map { it.trim() }.filter { it.isNotBlank() }.distinct().take(20).map { MetadataCastMember(name = it) }
+    }
+    if (cast.isEmpty()) return
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        TvRowHeader("CAST")
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp), contentPadding = PaddingValues(horizontal = TvRowInset)) {
+            items(cast, key = { it.name }) { person ->
+                var focused by remember { mutableStateOf(false) }
+                Row(
+                    Modifier
+                        .width(230.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(if (focused) Color.White.copy(.16f) else Color.Transparent)
+                        .onFocusChanged { focused = it.isFocused }
+                        .focusable()
+                        .padding(end = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Box(
+                        Modifier.size(64.dp).clip(CircleShape)
+                            .background(Brush.linearGradient(listOf(Color(0xFF333333), Color(0xFF171717))))
+                            .border(BorderStroke(if (focused) 2.5.dp else 0.dp, if (focused) TvFocusAccent else Color.Transparent), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (!person.profileUrl.isNullOrBlank()) AsyncImage(person.profileUrl, contentDescription = person.name, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                        else Text(person.name.take(1).uppercase(), color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text(person.name, color = DetailText, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        person.character?.takeIf { it.isNotBlank() }?.let { Text(it, color = DetailMuted, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Valutazioni in un riquadro focalizzabile, così anche l'ultima riga della scheda si raggiunge col DPAD. */
+@Composable
+private fun TvRatingsBlock(tmdb: Double?, ratings: Ratings?, trakt: Double?) {
+    val hasAny = (tmdb ?: 0.0) > 0 || ratings?.rottenTomatoes?.isNotBlank() == true || trakt != null ||
+        (ratings?.imdb ?: 0.0) > 0 || ratings?.metacritic != null
+    if (!hasAny) return
+    var focused by remember { mutableStateOf(false) }
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (focused) Color.White.copy(.07f) else Color.Transparent)
+            .onFocusChanged { focused = it.isFocused }
+            .focusable()
+            .padding(vertical = 8.dp)
+    ) {
+        MediaDetailRatings(tmdb = tmdb, ratings = ratings, trakt = trakt)
+    }
+}
