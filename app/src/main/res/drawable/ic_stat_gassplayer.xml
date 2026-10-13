@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Silhouette del ciak (icona notifiche / icona monocromatica): sostituisce la vecchia icona blu. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <!-- Asta superiore inclinata con strisce -->
+    <path android:fillColor="#FFFFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M2.6,7.4 L20.4,3.2 L21.1,6.0 L3.3,10.2 Z M6.2,6.55 L7.9,8.9 L10.2,8.35 L8.5,6.0 Z M11.0,5.4 L12.7,7.75 L15.0,7.2 L13.3,4.85 Z M15.8,4.27 L17.5,6.62 L19.8,6.08 L18.1,3.72 Z" />
+    <!-- Asta inferiore -->
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M3,11 L21,11 L21,13.4 L3,13.4 Z" />
+    <!-- Corpo -->
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M3.6,14.2 L20.4,14.2 L20.4,20.2 Q20.4,21 19.6,21 L4.4,21 Q3.6,21 3.6,20.2 Z" />
+</vector>

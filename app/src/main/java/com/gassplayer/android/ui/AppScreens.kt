@@ -530,7 +530,11 @@ private fun AdaptiveShell(
             navFocusRequesters[navigationRailDestination(route)]?.requestFocusWithRetry(attempts = 6, delayMillis = 45L)
         }
     }
-    CompositionLocalProvider(LocalSectionEntryController provides sectionEntry, LocalOpenSection provides stableOpenSection) {
+    CompositionLocalProvider(
+        LocalSectionEntryController provides sectionEntry,
+        LocalOpenSection provides stableOpenSection,
+        LocalNavRailFocusRequester provides (if (tv) navFocusRequesters[selectedTab] ?: navFocusRequesters.getValue("settings") else null),
+    ) {
     LiquidGlassBackdrop(Modifier.fillMaxSize()) {
         Row(
             Modifier.fillMaxSize()
@@ -997,7 +1001,8 @@ private fun HomeScreen(
                             app = vm.app,
                             cards = continueCards,
                             kindFilter = settings.homeContinueKind,
-                            onResume = { card -> onPlayWithPosition(onPlay, card.playItem, card.resumePositionMs) },
+                            // Come iOS: il player chiede "Riprendi la visione?" con la posizione salvata.
+                                    onResume = { card -> onPlay(card.playItem) },
                         )
                         "sourceCard" -> {
                             val activeName = sources.firstOrNull { it.id == activeSource }?.name
@@ -1678,7 +1683,8 @@ private fun CatalogScreen(
                                     app = vm.app,
                                     cards = continueCards,
                                     kindFilter = "movie",
-                                    onResume = { card -> onPlayWithPosition(onPlay, card.playItem, card.resumePositionMs) },
+                                    // Come iOS: il player chiede "Riprendi la visione?" con la posizione salvata.
+                                    onResume = { card -> onPlay(card.playItem) },
                                     itemModifier = { index, key -> Modifier.trackLeftEdgeCover(leftEdgeCover, key, index == 0) },
                                     onItemFocus = { if (tvCategoryMode) categoryRailExpanded = false },
                                 )
@@ -2025,7 +2031,8 @@ private fun SeriesScreen(
                                     app = vm.app,
                                     cards = continueCards,
                                     kindFilter = "series",
-                                    onResume = { card -> onPlayWithPosition(onPlay, card.playItem, card.resumePositionMs) },
+                                    // Come iOS: il player chiede "Riprendi la visione?" con la posizione salvata.
+                                    onResume = { card -> onPlay(card.playItem) },
                                     itemModifier = { index, key -> Modifier.trackLeftEdgeCover(leftEdgeCover, key, index == 0) },
                                     onItemFocus = { if (tvCategoryMode) categoryRailExpanded = false },
                                 )

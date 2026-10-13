@@ -11,7 +11,8 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 class GassPlayerApplication : Application() {
-    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    /** Scope dell'app: sopravvive alle schermate (es. salvataggio della posizione alla chiusura del player). */
+    val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     lateinit var prefs: AppPreferences
     lateinit var network: NetworkApi

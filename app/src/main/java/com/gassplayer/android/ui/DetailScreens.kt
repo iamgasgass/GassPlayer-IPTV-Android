@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -35,6 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -183,8 +185,10 @@ fun MovieDetailScreen(
     }
 
     if (tvLayout) {
-        val position = currentWatch?.positionMs ?: 0L
+        // Come PlaybackPositionStore iOS: un film visto fino in fondo (ultimi 45 s) non si "riprende" dalla fine.
+        val position = currentWatch?.resumeFromMs() ?: 0L
         val duration = currentWatch?.durationMs ?: 0L
+        val watchedFraction = currentWatch?.watchedFraction()
         TvMediaDetailLayout(
             item = item,
             meta = meta,
@@ -195,7 +199,7 @@ fun MovieDetailScreen(
             overview = meta?.overview?.takeIf { it.isNotBlank() } ?: item.plot?.takeIf { it.isNotBlank() },
             loading = isLoadingDetail,
             playLabel = if (position > 0L) "Riprendi" else "Riproduci",
-            playProgress = if (position > 0L && duration > 0L) position.toFloat() / duration.toFloat() else null,
+            playProgress = watchedFraction,
             playFocusRequester = playFocusRequester,
             onPlay = { onPlay(item, position) },
             actions = listOf(
@@ -267,7 +271,7 @@ fun MovieDetailScreen(
                         genres = metadataGenres(meta, item)
                     )
                     Button(
-                        onClick = { onPlay(item, currentWatch?.positionMs ?: 0L) },
+                        onClick = { onPlay(item, currentWatch?.resumeFromMs() ?: 0L) },
                         modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp)
                             .focusRequester(playFocusRequester)
                             .remoteFocusOutline(cornerRadius = 28.dp),
@@ -276,7 +280,7 @@ fun MovieDetailScreen(
                     ) {
                         Icon(Icons.Default.PlayArrow, null)
                         Spacer(Modifier.width(7.dp))
-                        Text(if ((currentWatch?.positionMs ?: 0L) > 0L) "Riprendi" else "Riproduci il film", fontWeight = FontWeight.SemiBold)
+                        Text(if ((currentWatch?.resumeFromMs() ?: 0L) > 0L) "Riprendi" else "Riproduci il film", fontWeight = FontWeight.SemiBold)
                     }
                     Row(
                         Modifier.fillMaxWidth(),
@@ -480,10 +484,16 @@ fun SeriesDetailScreen(
         if (seasons.isNotEmpty() && season !in seasons.keys) season = seasons.keys.first()
     }
     val visibleEpisodes = seasons[season].orEmpty()
-    val allWatch = remember(watch, sortedEpisodes) { sortedEpisodes.mapNotNull { ep -> watch.firstOrNull { it.contentId == ep.id }?.let { ep.id to it } }.toMap() }
-    // Episodio da riprendere: quello guardato PIÙ DI RECENTE (prima era il primo in ordine con una posizione).
+    val allWatch = remember(watch, sortedEpisodes) {
+        val byId = watch.associateBy { it.contentId }
+        sortedEpisodes.mapNotNull { ep -> byId[ep.id]?.let { ep.id to it } }.toMap()
+    }
+    // Episodio da riprendere: l'ultimo aperto; se è stato visto fino in fondo si passa al successivo (iOS).
     val resumeEpisode = remember(sortedEpisodes, allWatch) {
-        sortedEpisodes.filter { (allWatch[it.id]?.positionMs ?: 0L) > 0L }.maxByOrNull { allWatch[it.id]?.lastWatchedMs ?: 0L }
+        val last = sortedEpisodes.filter { allWatch[it.id] != null }.maxByOrNull { allWatch[it.id]?.lastWatchedMs ?: 0L }
+        if (last != null && allWatch[last.id]?.isCompletedWatch() == true) {
+            sortedEpisodes.getOrNull(sortedEpisodes.indexOfFirst { it.id == last.id } + 1)
+        } else last
     }
     // La scheda si apre sulla stagione dell'episodio da riprendere.
     var seasonFollowsResume by remember(series.id) { mutableStateOf(true) }
@@ -507,6 +517,8 @@ fun SeriesDetailScreen(
         val resumeState = resumeEpisode?.let { allWatch[it.id] }
         val playTarget = resumeEpisode ?: sortedEpisodes.firstOrNull()
         val episodesRowState = androidx.compose.foundation.lazy.rememberLazyListState()
+        val seriesRail = LocalNavRailFocusRequester.current
+        val railLeftNav = Modifier.focusProperties { if (seriesRail != null) left = seriesRail }
         // Riga episodi già posizionata sull'episodio da riprendere.
         LaunchedEffect(season, visibleEpisodes.size, resumeEpisode?.id) {
             val index = visibleEpisodes.indexOfFirst { it.id == resumeEpisode?.id }
@@ -522,13 +534,14 @@ fun SeriesDetailScreen(
             overview = meta?.overview?.takeIf { it.isNotBlank() } ?: series.plot?.takeIf { it.isNotBlank() },
             loading = meta == null && loadingEpisodes,
             playLabel = when {
-                resumeEpisode != null -> "Riprendi S${resumeEpisode.seasonNumber ?: 1} E${resumeEpisode.episodeNumber ?: 1}"
+                resumeEpisode != null && (allWatch[resumeEpisode.id]?.resumeFromMs() ?: 0L) > 0L ->
+                    "Riprendi S${resumeEpisode.seasonNumber ?: 1} E${resumeEpisode.episodeNumber ?: 1}"
                 else -> "Riproduci S${playTarget?.seasonNumber ?: 1} E${playTarget?.episodeNumber ?: 1}"
             },
-            playProgress = resumeState?.let { if (it.durationMs > 0L) it.positionMs.toFloat() / it.durationMs.toFloat() else null },
+            playProgress = resumeState?.watchedFraction(),
             playFocusRequester = playFocusRequester,
             onPlay = {
-                if (playTarget != null) onPlay(playTarget, allWatch[playTarget.id]?.positionMs ?: 0L)
+                if (playTarget != null) onPlay(playTarget, allWatch[playTarget.id]?.resumeFromMs() ?: 0L)
                 else actionMessage = "Nessun episodio disponibile per questa serie."
             },
             actions = listOf(
@@ -549,11 +562,12 @@ fun SeriesDetailScreen(
                     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         TvRowHeader("STAGIONI")
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(horizontal = TvRowInset)) {
-                            items(seasons.keys.toList(), key = { it }) { number ->
+                            itemsIndexed(seasons.keys.toList(), key = { _, number -> number }) { index, number ->
                                 TvSeasonChip(
                                     label = if (number == 0) "Speciali" else "Stagione $number",
                                     selected = number == season,
-                                    onClick = { seasonFollowsResume = false; season = number }
+                                    onClick = { seasonFollowsResume = false; season = number },
+                                    modifier = if (index == 0) railLeftNav else Modifier
                                 )
                             }
                         }
@@ -580,9 +594,9 @@ fun SeriesDetailScreen(
                             horizontalArrangement = Arrangement.spacedBy(16.dp),
                             contentPadding = PaddingValues(horizontal = TvRowInset, vertical = 8.dp)
                         ) {
-                            items(visibleEpisodes, key = { it.id }) { ep ->
+                            itemsIndexed(visibleEpisodes, key = { _, ep -> ep.id }) { index, ep ->
                                 val state = allWatch[ep.id]
-                                val fraction = if ((state?.durationMs ?: 0L) > 0L) (state!!.positionMs.toFloat() / state.durationMs.toFloat()).coerceIn(0f, 1f) else 0f
+                                val fraction = state?.watchedFraction() ?: 0f
                                 val tmdbFallback = tmdbEpisodesBySeason[season]?.get(ep.episodeNumber ?: 0)
                                 TvEpisodeCard(
                                     episode = ep.copy(
@@ -592,8 +606,9 @@ fun SeriesDetailScreen(
                                     ),
                                     progress = fraction,
                                     isResume = ep.id == resumeEpisode?.id,
+                                    modifier = if (index == 0) railLeftNav else Modifier,
                                     tmdbEpisode = tmdbFallback,
-                                    onPlay = { onPlay(ep, state?.positionMs ?: 0L) },
+                                    onPlay = { onPlay(ep, state?.resumeFromMs() ?: 0L) },
                                     onDownload = {
                                         val id = runCatching { app.downloads.enqueue(ep, settings.downloadWifiOnly) }.getOrNull()
                                         actionMessage = if (id != null) "Download di ${ep.title} aggiunto alla coda." else "Impossibile avviare il download."
@@ -630,7 +645,7 @@ fun SeriesDetailScreen(
                     Button(
                         onClick = {
                             val ep = resumeEpisode ?: sortedEpisodes.firstOrNull()
-                            if (ep != null) onPlay(ep, allWatch[ep.id]?.positionMs ?: 0L)
+                            if (ep != null) onPlay(ep, allWatch[ep.id]?.resumeFromMs() ?: 0L)
                             else actionMessage = "Nessun episodio disponibile per questa serie."
                         },
                         modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp)
@@ -641,7 +656,7 @@ fun SeriesDetailScreen(
                     ) {
                         Icon(Icons.Default.PlayArrow, null)
                         Spacer(Modifier.width(7.dp))
-                        Text(if (resumeEpisode != null) "Riprendi episodio" else "Riproduci il primo episodio", fontWeight = FontWeight.SemiBold)
+                        Text(if ((resumeEpisode?.let { allWatch[it.id]?.resumeFromMs() } ?: 0L) > 0L) "Riprendi episodio" else if (resumeEpisode != null) "Riproduci episodio" else "Riproduci il primo episodio", fontWeight = FontWeight.SemiBold)
                     }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         DetailActionButton(
@@ -733,7 +748,7 @@ fun SeriesDetailScreen(
             } else {
                 items(visibleEpisodes, key = { it.id }) { ep ->
                     val state = allWatch[ep.id]
-                    val fraction = if ((state?.durationMs ?: 0L) > 0L) (state!!.positionMs.toFloat() / state.durationMs.toFloat()).coerceIn(0f, 1f) else 0f
+                    val fraction = state?.watchedFraction() ?: 0f
                     val tmdbFallback = tmdbEpisodesBySeason[season]?.get(ep.episodeNumber ?: 0)
                     val displayEpisode = ep.copy(
                         posterUrl = ep.posterUrl ?: tmdbFallback?.stillUrl,
@@ -744,7 +759,7 @@ fun SeriesDetailScreen(
                         episode = displayEpisode,
                         progress = fraction,
                         tmdbEpisode = tmdbFallback,
-                        onPlay = { onPlay(ep, state?.positionMs ?: 0L) },
+                        onPlay = { onPlay(ep, state?.resumeFromMs() ?: 0L) },
                         onDownload = {
                             val id = runCatching { app.downloads.enqueue(ep, settings.downloadWifiOnly) }.getOrNull()
                             actionMessage = if (id != null) "Download di ${ep.title} aggiunto alla coda." else "Impossibile avviare il download."
@@ -978,11 +993,7 @@ private fun EpisodeDetailRow(
                     }
                     Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(.08f), Color.Black.copy(.32f)))))
                     Icon(Icons.Default.PlayArrow, null, tint = Color.White, modifier = Modifier.align(Alignment.Center).size(32.dp))
-                    if (progress > 0f) {
-                        Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(5.dp).background(Color.White.copy(.26f))) {
-                            Box(Modifier.fillMaxHeight().fillMaxWidth(progress.coerceIn(0f, 1f)).background(Color.White))
-                        }
-                    }
+                    if (progress > 0f) IosEpisodeProgressBar(progress, Modifier.align(Alignment.BottomStart))
                 }
                 Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 11.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1152,6 +1163,15 @@ private fun TvMediaDetailLayout(
 ) {
     androidx.activity.compose.BackHandler(onBack = onClose)
     val scope = rememberCoroutineScope()
+    // Navigazione esplicita col telecomando: SU dai pulsanti principali = "X"; SINISTRA da "Riproduci" (e dal
+    // primo elemento delle righe sotto) = barra laterale. La ricerca spaziale sceglieva altro (righe episodi).
+    val closeFocusRequester = remember { FocusRequester() }
+    val railFocusRequester = LocalNavRailFocusRequester.current
+    val actionNav = Modifier.focusProperties { up = closeFocusRequester }
+    val playNav = Modifier.focusProperties {
+        up = closeFocusRequester
+        if (railFocusRequester != null) left = railFocusRequester
+    }
     val backdrop = meta?.backdropUrl ?: item.backdropUrl
     val poster = meta?.posterUrl ?: item.posterUrl
     val title = meta?.title?.takeIf { it.isNotBlank() } ?: item.title
@@ -1210,8 +1230,8 @@ private fun TvMediaDetailLayout(
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            TvPlayButton(playLabel, playProgress, playFocusRequester, onPlay)
-                            actions.forEach { action -> TvActionButton(action) }
+                            TvPlayButton(playLabel, playProgress, playFocusRequester, onPlay, modifier = playNav)
+                            actions.forEach { action -> TvActionButton(action, modifier = actionNav) }
                         }
                         actionMessage?.let { Text(it, color = DetailAccent, fontSize = 13.sp) }
                     }
@@ -1223,6 +1243,7 @@ private fun TvMediaDetailLayout(
         // Chiudi (anche il tasto Indietro chiude): GIÙ porta subito su "Riproduci".
         TvCloseButton(
             onClick = onClose,
+            focusRequester = closeFocusRequester,
             onMoveDown = {
                 scope.launch {
                     runCatching { listState.scrollToItem(0) }
@@ -1313,8 +1334,8 @@ private fun Modifier.combinedClickableCompat(enabled: Boolean, onClick: () -> Un
     )
 
 @Composable
-private fun TvPlayButton(label: String, progress: Float?, focusRequester: FocusRequester, onClick: () -> Unit) {
-    TvPillSurface(onClick = onClick, modifier = Modifier.focusRequester(focusRequester)) { focused ->
+private fun TvPlayButton(label: String, progress: Float?, focusRequester: FocusRequester, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    TvPillSurface(onClick = onClick, modifier = modifier.focusRequester(focusRequester)) { focused ->
         val color = if (focused) Color(0xFF111111) else Color.White
         Icon(Icons.Default.PlayArrow, null, tint = color, modifier = Modifier.size(22.dp))
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -1329,8 +1350,8 @@ private fun TvPlayButton(label: String, progress: Float?, focusRequester: FocusR
 }
 
 @Composable
-private fun TvActionButton(action: TvDetailAction) {
-    TvPillSurface(onClick = action.onClick, enabled = action.enabled) { focused ->
+private fun TvActionButton(action: TvDetailAction, modifier: Modifier = Modifier) {
+    TvPillSurface(onClick = action.onClick, enabled = action.enabled, modifier = modifier) { focused ->
         val color = when {
             focused -> Color(0xFF111111)
             !action.enabled -> DetailText.copy(.35f)
@@ -1342,11 +1363,12 @@ private fun TvActionButton(action: TvDetailAction) {
 }
 
 @Composable
-private fun TvCloseButton(onClick: () -> Unit, onMoveDown: () -> Boolean, modifier: Modifier = Modifier) {
+private fun TvCloseButton(onClick: () -> Unit, onMoveDown: () -> Boolean, modifier: Modifier = Modifier, focusRequester: FocusRequester? = null) {
     var focused by remember { mutableStateOf(false) }
     Surface(
         onClick = onClick,
         modifier = modifier.size(44.dp)
+            .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
             .onFocusChanged { focused = it.isFocused }
             .onPreviewKeyEvent { event -> event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown && onMoveDown() },
         shape = CircleShape,
@@ -1369,8 +1391,8 @@ private fun TvRowHeader(title: String, trailing: (@Composable RowScope.() -> Uni
 }
 
 @Composable
-private fun TvSeasonChip(label: String, selected: Boolean, onClick: () -> Unit) {
-    TvPillSurface(onClick = onClick) { focused ->
+private fun TvSeasonChip(label: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    TvPillSurface(onClick = onClick, modifier = modifier) { focused ->
         Text(
             label,
             color = when {
@@ -1396,12 +1418,13 @@ private fun TvEpisodeCard(
     onPlay: () -> Unit,
     onDownload: () -> Unit,
     focusRequester: FocusRequester? = null,
+    modifier: Modifier = Modifier,
 ) {
     var focused by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(if (focused) 1.05f else 1f, label = "tv-episode-focus")
     val shape = RoundedCornerShape(14.dp)
     Column(
-        Modifier
+        modifier
             .width(286.dp)
             .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
             .onFocusChanged { focused = it.isFocused }
@@ -1434,11 +1457,7 @@ private fun TvEpisodeCard(
                     modifier = Modifier.align(Alignment.TopStart).padding(8.dp).clip(RoundedCornerShape(5.dp)).background(Color.White).padding(horizontal = 6.dp, vertical = 2.dp)
                 )
             }
-            if (progress > 0f) {
-                Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(4.dp).background(Color.White.copy(.26f))) {
-                    Box(Modifier.fillMaxHeight().fillMaxWidth(progress.coerceIn(0f, 1f)).background(Color.White))
-                }
-            }
+            if (progress > 0f) IosEpisodeProgressBar(progress, Modifier.align(Alignment.BottomStart))
         }
         Column(Modifier.padding(horizontal = 4.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Text(
@@ -1517,4 +1536,32 @@ private fun TvRatingsBlock(tmdb: Double?, ratings: Ratings?, trakt: Double?) {
     ) {
         MediaDetailRatings(tmdb = tmdb, ratings = ratings, trakt = trakt)
     }
+}
+
+/**
+ * `episodeProgressBar` di SeriesEpisodesView.swift: capsula bianca alta 5, rientrata di 10 dai lati e dal
+ * fondo della miniatura, larga quanto il punto in cui ci si è fermati (minimo 3), piena se l'episodio è
+ * stato visto fino in fondo.
+ */
+@Composable
+private fun IosEpisodeProgressBar(fraction: Float, modifier: Modifier = Modifier) {
+    BoxWithConstraints(modifier.fillMaxWidth().padding(start = 10.dp, end = 10.dp, bottom = 10.dp)) {
+        val width = (maxWidth * fraction.coerceIn(0f, 1f)).coerceAtLeast(3.dp)
+        Box(Modifier.width(width).height(5.dp).clip(RoundedCornerShape(50)).background(Color.White))
+    }
+}
+
+/** Posizione da cui riprendere (PlaybackPositionStore.position iOS): 0 se < 5 s o se visto fino in fondo. */
+internal fun WatchEntry.resumeFromMs(): Long =
+    if (kind == MediaKind.LIVE || positionMs <= 5_000L || isCompletedWatch()) 0L else positionMs
+
+/** Visto fino in fondo (o fino agli ultimi ~45 s), come `isCompleted` di PlaybackPositionStore. */
+internal fun WatchEntry.isCompletedWatch(): Boolean = durationMs > 0L && positionMs >= durationMs - 45_000L
+
+/** Frazione vista 0…1 per le barre di avanzamento (1 se completato), null se mai iniziato. */
+internal fun WatchEntry.watchedFraction(): Float? = when {
+    durationMs <= 0L -> null
+    isCompletedWatch() -> 1f
+    positionMs <= 0L -> null
+    else -> (positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
 }

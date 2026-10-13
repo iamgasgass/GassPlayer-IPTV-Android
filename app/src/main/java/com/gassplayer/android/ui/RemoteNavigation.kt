@@ -89,6 +89,13 @@ internal fun isAmazonFireTvBuild(
 internal val LocalFocusScopeEnabled = compositionLocalOf { true }
 
 /**
+ * Tab della barra laterale che possiede la pagina corrente (solo TV): le pagine lo usano come destinazione
+ * esplicita del tasto SINISTRA quando la ricerca spaziale sceglierebbe un elemento sbagliato (es. le righe
+ * di episodi sotto il pulsante "Riproduci" nelle schede dettaglio).
+ */
+internal val LocalNavRailFocusRequester = compositionLocalOf<FocusRequester?> { null }
+
+/**
  * Deterministic "enter this section" hooks. A page that owns a preferred DPAD landing point (the
  * Categorie TV group rail of Live TV / Film / Serie TV) registers a handler for its route; the side
  * navigation calls it on OK / RIGHT instead of relying on spatial search or the last focused child.

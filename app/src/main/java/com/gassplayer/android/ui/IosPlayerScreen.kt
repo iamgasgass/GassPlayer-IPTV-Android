@@ -181,11 +181,12 @@ fun IosPlayerScreen(
     // (che copre tutto lo schermo): la ricerca spaziale non trovava pulsanti "oltre" i suoi bordi e
     // servivano piu' pressioni per entrare nei controlli.
     val controlsFocusRequester = remember(item.id) { FocusRequester() }
-    LaunchedEffect(item.id, showLiveCategoryRail, remoteFirstDevice, showControls, dialog, locked) {
+    LaunchedEffect(item.id, showLiveCategoryRail, remoteFirstDevice, showControls, dialog, locked, resumePosition != null) {
         // Touch-first phones retain their native touch flow; deterministic DPAD focus applies to TV.
         // Also runs when the controls fade out or a dialog closes: the focused node is removed from
         // the tree then, and without this the remote would stop reaching the key handler.
-        if (!remoteFirstDevice || showLiveCategoryRail || dialog != null) return@LaunchedEffect
+        // L'avviso "Riprendi la visione?" gestisce da se' il focus (su "Riprendi da…").
+        if (!remoteFirstDevice || showLiveCategoryRail || dialog != null || resumePosition != null) return@LaunchedEffect
         if (showControls && !locked) {
             // Primo frame dei controlli composto, poi focus su Play/Pausa (riprova finche' il nodo e' pronto).
             withFrameNanos { }
@@ -274,6 +275,32 @@ fun IosPlayerScreen(
             autoPlay = savedResume == null
         )
         if (savedResume != null) app.playback.pause()
+        // "Continua a guardare" come iOS (RecentlyWatchedStore.record all'apertura): il titolo compare SUBITO,
+        // anche se non si arriva alla fine. La posizione gia' salvata non viene toccata.
+        app.appScope.launch { recordWatchEntry(app, item) }
+    }
+
+    // Posizione salvata ogni 15 s durante la riproduzione (KSPlaybackController.persistPosition iOS): se l'app
+    // viene chiusa o il dispositivo si spegne, la scheda dettaglio e "Continua a guardare" sanno fin dove si e' visto.
+    LaunchedEffect(item.id) {
+        if (item.kind == MediaKind.LIVE) return@LaunchedEffect
+        while (true) {
+            delay(15_000L)
+            val p = app.playback.player
+            if (p.isPlaying) {
+                val position = p.currentPosition.coerceAtLeast(0L)
+                val duration = p.duration.coerceAtLeast(0L)
+                app.appScope.launch { recordWatchEntry(app, item, position, duration) }
+            }
+        }
+    }
+
+    // Fine naturale: segnato come visto fino in fondo (barra piena, niente "Riprendi"), come markCompleted iOS.
+    LaunchedEffect(item.id, snapshot.state) {
+        if (item.kind != MediaKind.LIVE && snapshot.state == Player.STATE_ENDED) {
+            val duration = app.playback.player.duration.coerceAtLeast(0L)
+            app.appScope.launch { recordWatchEntry(app, item, duration, duration, ended = true) }
+        }
     }
 
     LaunchedEffect(item.id, showControls, nextItem?.id, item.kind, localSettings.autoplayNextEpisode) {
@@ -380,23 +407,10 @@ fun IosPlayerScreen(
             val p = app.playback.player
             val position = p.currentPosition.coerceAtLeast(0L)
             val duration = p.duration.coerceAtLeast(0L)
-            scope.launch {
-                app.watch.upsert(
-                    WatchEntry(
-                        item.id,
-                        item.title,
-                        item.kind,
-                        item.streamUrl,
-                        if (item.kind == MediaKind.LIVE) 0L else position,
-                        if (item.kind == MediaKind.LIVE) 0L else duration,
-                        System.currentTimeMillis(),
-                        item.seasonNumber,
-                        item.episodeNumber,
-                        seriesId = item.seriesId,
-                        sourceId = item.sourceId
-                    )
-                )
-            }
+            // Scope dell'APP, non della schermata: alla chiusura del player lo scope della composizione e' gia'
+            // cancellato e il salvataggio andava perso (per questo "Continua a guardare" compariva solo a episodio
+            // finito, quando il player restava aperto passando al successivo).
+            app.appScope.launch { recordWatchEntry(app, item, position, duration) }
             // Brightness changes are window-scoped on Android; restore the value that
             // was active before playback so the gesture does not leak into other screens.
             context.findActivity()?.window?.let { window ->
@@ -451,6 +465,8 @@ fun IosPlayerScreen(
             .focusable()
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown || locked || dialog != null) return@onPreviewKeyEvent false
+                // Avviso di ripresa aperto: frecce e OK vanno ai suoi pulsanti.
+                if (resumePosition != null) return@onPreviewKeyEvent false
                 if (showControls) controlsActivity++
                 // When the channel browser is visible, let its focused lists consume the DPAD,
                 // but keep hardware/media play-pause available on remotes that expose those keys.
@@ -486,7 +502,9 @@ fun IosPlayerScreen(
                         } else false
                     }
                     Key.DirectionLeft, Key.MediaRewind -> {
-                        if (event.key == Key.DirectionLeft && item.kind == MediaKind.LIVE && liveChannels.isNotEmpty()) {
+                        // Live TV: SINISTRA apre il rail dei canali SOLO a controlli nascosti; con i tasti del player
+                        // visibili SINISTRA naviga fra i tasti.
+                        if (event.key == Key.DirectionLeft && item.kind == MediaKind.LIVE && liveChannels.isNotEmpty() && !showControls) {
                             val currentGroup = item.categoryId ?: item.group?.takeIf { it.isNotBlank() }
                             playerLiveGroupId = liveGroupOptions.firstOrNull { it.id == currentGroup }?.id ?: TV_CATEGORY_ALL
                             showLiveCategoryRail = true
@@ -838,6 +856,8 @@ fun IosPlayerScreen(
                     showControls = true
                 },
                 onRestart = {
+                    // "Ricomincia da capo": cancella la posizione salvata (PlaybackPositionStore.clear iOS).
+                    app.appScope.launch { recordWatchEntry(app, item, 0L, 0L, reset = true) }
                     resumePosition = null
                     explicitResume = false
                     app.playback.seekTo(0L)
@@ -1725,6 +1745,11 @@ private fun BadgeChip(text: String) {
 
 @Composable
 private fun ResumeOverlay(position: Long, title: String, onResume: () -> Unit, onRestart: () -> Unit) {
+    val resumeFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        withFrameNanos { }
+        resumeFocus.requestFocusWithRetry(attempts = 8, delayMillis = 30L)
+    }
     Box(
         Modifier
             .fillMaxSize()
@@ -1749,7 +1774,7 @@ private fun ResumeOverlay(position: Long, title: String, onResume: () -> Unit, o
                 )
                 Text(title, color = glassForeground().copy(.92f), fontSize = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    PlayerGlassButton(onClick = onResume, darkSurface = true) { Text("Riprendi da…") }
+                    PlayerGlassButton(onClick = onResume, darkSurface = true, modifier = Modifier.focusRequester(resumeFocus)) { Text("Riprendi da…") }
                     PlayerGlassButton(onClick = onRestart, darkSurface = true) { Text("Ricomincia da capo") }
                 }
             }
@@ -2344,4 +2369,56 @@ private fun formatTime(ms: Long): String {
     } else {
         "%02d:%02d".format(minutes, seconds)
     }
+}
+
+
+/**
+ * RecentlyWatchedStore.record + PlaybackPositionStore.record di iOS in un'unica scrittura:
+ * - registra/porta in cima il titolo (Continua a guardare), mantenendo immagine/categoria gia' note;
+ * - posizione salvata solo se ha senso (durata > 2 min, oltre i primi 15 s); negli ultimi 45 s, o a fine
+ *   riproduzione, il titolo e' segnato come completato (posizione = durata): barra piena e niente "Riprendi";
+ * - altrimenti resta la posizione precedente. [reset] la azzera ("Ricomincia da capo").
+ */
+private suspend fun recordWatchEntry(
+    app: GassPlayerApplication,
+    item: MediaItem,
+    position: Long? = null,
+    duration: Long? = null,
+    ended: Boolean = false,
+    reset: Boolean = false,
+) {
+    val live = item.kind == MediaKind.LIVE
+    val previous = app.watch.flow.first().firstOrNull { it.contentId == item.id }
+    var savedPosition = previous?.positionMs ?: 0L
+    var savedDuration = previous?.durationMs ?: 0L
+    if (reset) {
+        savedPosition = 0L
+    } else if (!live && position != null && duration != null && duration > 0L) {
+        when {
+            ended || (duration > 120_000L && position >= duration - 45_000L) -> {
+                savedPosition = duration
+                savedDuration = duration
+            }
+            duration > 120_000L && position > 15_000L -> {
+                savedPosition = position
+                savedDuration = duration
+            }
+            else -> if (savedDuration <= 0L) savedDuration = duration
+        }
+    }
+    app.watch.upsert(
+        WatchEntry(
+            contentId = item.id,
+            title = item.title,
+            kind = item.kind,
+            url = item.streamUrl,
+            positionMs = if (live) 0L else savedPosition,
+            durationMs = if (live) 0L else savedDuration,
+            lastWatchedMs = System.currentTimeMillis(),
+            season = item.seasonNumber,
+            episode = item.episodeNumber,
+            seriesId = item.seriesId,
+            sourceId = item.sourceId
+        )
+    )
 }

@@ -19,7 +19,7 @@ class GassPlayerMediaService : MediaSessionService() {
         session = MediaSession.Builder(this, controller.player).setId("GassPlayerServiceSession").build()
         val launch = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val notification: Notification = NotificationCompat.Builder(this, "gassplayer")
-            .setSmallIcon(com.gassplayer.android.R.drawable.ic_gassplayer)
+            .setSmallIcon(com.gassplayer.android.R.drawable.ic_stat_gassplayer)
             .setContentTitle("GassPlayer IPTV")
             .setContentText("Riproduzione multimediale attiva")
             .setContentIntent(launch)
