@@ -45,6 +45,7 @@ import com.gassplayer.android.data.MediaKind
 import com.gassplayer.android.data.TmdbService
 import com.gassplayer.android.data.TmdbTrendingItem
 import com.gassplayer.android.data.WatchEntry
+import com.gassplayer.android.ui.theme.readable
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch

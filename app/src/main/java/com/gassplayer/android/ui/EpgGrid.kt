@@ -1163,6 +1163,9 @@ private fun ChannelBanner(
                 .onPreviewKeyEvent { e -> e.type == KeyEventType.KeyDown && e.key == Key.DirectionLeft && onExitLeft() }
                 .combinedClickable(onClick = onClick, onLongClick = onLongClick)
         ) {
+            // Base OPACA (colore pagina): la tile che scorre sotto il banner (`bleedLeft`) si vede solo attorno ai
+            // bordi arrotondati, mai attraverso il banner (vetro e tinta sopra sono semitrasparenti).
+            Box(Modifier.fillMaxSize().background(gassPageBase()))
             LiquidGlassSurface(
                 modifier = Modifier.fillMaxSize(),
                 cornerRadius = if (compact) 14.dp else 16.dp,
