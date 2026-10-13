@@ -29,6 +29,12 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
+import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
@@ -170,15 +176,22 @@ fun IosPlayerScreen(
         }
     }
 
-    LaunchedEffect(item.id, showLiveCategoryRail, remoteFirstDevice, showControls, dialog) {
+    // Play/Pausa dei controlli: riceve il focus appena i controlli compaiono, cosi' UN solo tasto del
+    // telecomando sposta gia' il focus fra i pulsanti. Prima il focus restava sul contenitore del player
+    // (che copre tutto lo schermo): la ricerca spaziale non trovava pulsanti "oltre" i suoi bordi e
+    // servivano piu' pressioni per entrare nei controlli.
+    val controlsFocusRequester = remember(item.id) { FocusRequester() }
+    LaunchedEffect(item.id, showLiveCategoryRail, remoteFirstDevice, showControls, dialog, locked) {
         // Touch-first phones retain their native touch flow; deterministic DPAD focus applies to TV.
         // Also runs when the controls fade out or a dialog closes: the focused node is removed from
-        // the tree then, and without this the remote would stop reaching the key handler. It cannot
-        // steal focus from a control, because controls are only visible after the root handled OK.
-        if (remoteFirstDevice && !showLiveCategoryRail && dialog == null) {
-            delay(60L)
-            playerFocusRequester.requestFocusWithRetry(attempts = 5, delayMillis = 45L)
+        // the tree then, and without this the remote would stop reaching the key handler.
+        if (!remoteFirstDevice || showLiveCategoryRail || dialog != null) return@LaunchedEffect
+        if (showControls && !locked) {
+            // Primo frame dei controlli composto, poi focus su Play/Pausa (riprova finche' il nodo e' pronto).
+            withFrameNanos { }
+            if (controlsFocusRequester.requestFocusWithRetry(attempts = 8, delayMillis = 16L)) return@LaunchedEffect
         }
+        playerFocusRequester.requestFocusWithRetry(attempts = 5, delayMillis = 30L)
     }
 
     // Il tasto Indietro di sistema/telecomando chiude SOLO il player (prima non era gestito e
@@ -741,6 +754,9 @@ fun IosPlayerScreen(
                     onLock = { locked = true },
                     onSeek = { app.playback.seekTo(it) },
                     onPlayPause = { app.playback.togglePlayPause() },
+                    playPauseFocusRequester = controlsFocusRequester,
+                    isTelevision = remoteFirstDevice,
+                    onUserActivity = { controlsActivity++ },
                     onSkipBack = { app.playback.skipBack(15_000L) },
                     onSkipForward = { app.playback.skipForward(15_000L) },
                     onPrevious = {
@@ -1219,9 +1235,11 @@ private fun PlayerControlsOverlay(
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onCloseWithoutSave: () -> Unit,
-    onRequestDialog: (IosPlayerDialog) -> Unit
+    onRequestDialog: (IosPlayerDialog) -> Unit,
+    playPauseFocusRequester: FocusRequester? = null,
+    isTelevision: Boolean = false,
+    onUserActivity: () -> Unit = {},
 ) {
-    val progress = progressState.value
     Box(Modifier.fillMaxSize()) {
         Box(
             Modifier
@@ -1259,146 +1277,349 @@ private fun PlayerControlsOverlay(
             }
         }
 
-        Column(
-            Modifier
-                .align(Alignment.BottomStart)
-                .fillMaxWidth()
-                .padding(horizontal = 26.dp, vertical = 88.dp)
-        ) {
-            if (item.kind == MediaKind.LIVE && currentLiveProgram != null) {
-                item.logoUrl?.takeIf { it.isNotBlank() }?.let { logo ->
-                    AsyncImage(
-                        model = logo,
-                        contentDescription = null,
-                        modifier = Modifier
-                            .size(width = 83.dp, height = 46.dp)
-                            .padding(bottom = 4.dp),
-                        contentScale = ContentScale.Fit
-                    )
-                }
-            }
-
-            val smallLine = when {
-                item.kind == MediaKind.EPISODE -> {
-                    buildString {
-                        item.seasonNumber?.let { append("Stagione $it") }
-                        item.episodeNumber?.let {
-                            if (isNotEmpty()) append(" · ")
-                            append("Episodio $it")
-                        }
-                    }.takeIf { it.isNotBlank() }
-                }
-                item.kind == MediaKind.LIVE && currentLiveProgram != null -> item.title.uppercase()
-                else -> null
-            }
-
-            Text(
-                smallLine.orEmpty(),
-                color = glassForeground().copy(.9f),
-                fontSize = 15.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-
-            Text(
-                if (item.kind == MediaKind.LIVE && currentLiveProgram != null) currentLiveProgram.title else item.title,
-                color = glassForeground(),
-                fontSize = 29.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
-
-            if (item.kind == MediaKind.LIVE) {
-                currentLiveProgram?.description?.takeIf { it.isNotBlank() }?.let {
-                    Text(
-                        it,
-                        color = glassForeground().copy(.9f),
-                        fontSize = 13.sp,
-                        maxLines = 3,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-
-            val resolution = if (snapshot.videoWidth > 0 && snapshot.videoHeight > 0) {
-                if (item.kind == MediaKind.LIVE) {
-                    when {
-                        snapshot.videoHeight >= 2000 -> "UHD"
-                        snapshot.videoHeight >= 1000 -> "FHD"
-                        snapshot.videoHeight >= 700 -> "HD"
-                        else -> "SD"
-                    }
-                } else {
-                    "${snapshot.videoWidth}X${snapshot.videoHeight}"
-                }
-            } else null
-            val fps = snapshot.frameRate.takeIf { it > 0f }?.roundToInt()?.let { "${it} FPS" }
-            val audio = audioLabel(snapshot.audioChannels)
-            val badgeItems = buildList {
-                add("Media3")
-                (sourceName?.takeIf { it.isNotBlank() } ?: item.sourceId.takeIf { it.isNotBlank() })
-                    ?.let { add(it.take(18)) }
-                resolution?.let(::add)
-                fps?.let(::add)
-                audio?.let(::add)
-            }.distinct()
-
-            if (badgeItems.isNotEmpty()) {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    badgeItems.forEach { BadgeChip(it) }
-                }
-            }
-        }
-
+        // Info media + barra di avanzamento IMPILATE in un'unica colonna (come il VStack di PlayerView.swift:
+        // infoBlock sopra, progressBar sotto): non possono piu' sovrapporsi, qualunque sia l'altezza del titolo,
+        // della descrizione del programma o dei badge.
         Column(
             Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .background(
                     Brush.verticalGradient(
-                        listOf(Color.Transparent, Color.Black.copy(.88f))
+                        0f to Color.Transparent,
+                        .35f to Color.Black.copy(.38f),
+                        1f to Color.Black.copy(.78f)
                     )
                 )
-                .padding(horizontal = 20.dp, vertical = 16.dp)
+                .padding(top = 40.dp)
         ) {
-            if (snapshot.duration > 0L) {
-                Slider(
-                    value = progress.position.coerceIn(0L, snapshot.duration).toFloat(),
-                    onValueChange = { onSeek(it.toLong()) },
-                    valueRange = 0f..snapshot.duration.toFloat(),
-                    modifier = Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 50.dp, includeDescendants = true)
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 26.dp)
+                    .padding(bottom = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                if (item.kind == MediaKind.LIVE && currentLiveProgram != null) {
+                    item.logoUrl?.takeIf { it.isNotBlank() }?.let { logo ->
+                        AsyncImage(
+                            model = logo,
+                            contentDescription = null,
+                            modifier = Modifier
+                                .size(width = 83.dp, height = 46.dp)
+                                .padding(bottom = 4.dp),
+                            contentScale = ContentScale.Fit
+                        )
+                    }
+                }
+
+                val smallLine = when {
+                    item.kind == MediaKind.EPISODE -> {
+                        buildString {
+                            item.seasonNumber?.let { append("Stagione $it") }
+                            item.episodeNumber?.let {
+                                if (isNotEmpty()) append(" · ")
+                                append("Episodio $it")
+                            }
+                        }.takeIf { it.isNotBlank() }
+                    }
+                    item.kind == MediaKind.LIVE && currentLiveProgram != null -> item.title.uppercase()
+                    else -> null
+                }
+
+                smallLine?.let {
+                    Text(
+                        it,
+                        color = glassForeground().copy(.9f),
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                Text(
+                    if (item.kind == MediaKind.LIVE && currentLiveProgram != null) currentLiveProgram.title else item.title,
+                    color = glassForeground(),
+                    fontSize = 29.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
                 )
+
+                if (item.kind == MediaKind.LIVE) {
+                    currentLiveProgram?.description?.takeIf { it.isNotBlank() }?.let {
+                        Text(
+                            it,
+                            color = glassForeground().copy(.9f),
+                            fontSize = 13.sp,
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+
+                val resolution = if (snapshot.videoWidth > 0 && snapshot.videoHeight > 0) {
+                    if (item.kind == MediaKind.LIVE) {
+                        when {
+                            snapshot.videoHeight >= 2000 -> "UHD"
+                            snapshot.videoHeight >= 1000 -> "FHD"
+                            snapshot.videoHeight >= 700 -> "HD"
+                            else -> "SD"
+                        }
+                    } else {
+                        "${snapshot.videoWidth}X${snapshot.videoHeight}"
+                    }
+                } else null
+                val fps = snapshot.frameRate.takeIf { it > 0f }?.roundToInt()?.let { "${it} FPS" }
+                val audio = audioLabel(snapshot.audioChannels)
+                val badgeItems = buildList {
+                    add("Media3")
+                    (sourceName?.takeIf { it.isNotBlank() } ?: item.sourceId.takeIf { it.isNotBlank() })
+                        ?.let { add(it.take(18)) }
+                    resolution?.let(::add)
+                    fps?.let(::add)
+                    audio?.let(::add)
+                }.distinct()
+
+                if (badgeItems.isNotEmpty()) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        badgeItems.forEach { BadgeChip(it) }
+                    }
+                }
             }
 
-            Row(Modifier.focusGroup(), verticalAlignment = Alignment.CenterVertically) {
-                PlayerGlassButton(Icons.Default.SkipPrevious, "Precedente", enabled = previousItem != null, onClick = onPrevious)
-                PlayerGlassButton(Icons.Default.Replay10, "-15s", onClick = onSkipBack)
+            IosPlayerProgressSection(
+                item = item,
+                snapshot = snapshot,
+                progressState = progressState,
+                previousItem = previousItem,
+                nextItem = nextItem,
+                isTelevision = isTelevision,
+                playPauseFocusRequester = playPauseFocusRequester,
+                onSeek = onSeek,
+                onPlayPause = onPlayPause,
+                onSkipBack = onSkipBack,
+                onSkipForward = onSkipForward,
+                onPrevious = onPrevious,
+                onNext = onNext,
+                onUserActivity = onUserActivity,
+            )
+        }
+    }
+}
+
+/**
+ * `progressBar` di PlayerView.swift: VStack(spacing 8) con lo Slider bianco, la riga di trasporto centrata
+ * (HStack spacing 22: precedente 30, -15 34, play/pausa 44, +15 34, successivo 30, in proporzione su TV) e
+ * il tempo "m:ss / m:ss" centrato (o "Live"); padding orizzontale 16 e inferiore 8.
+ */
+@Composable
+private fun IosPlayerProgressSection(
+    item: MediaItem,
+    snapshot: PlayerSnapshot,
+    progressState: State<PlaybackProgress>,
+    previousItem: MediaItem?,
+    nextItem: MediaItem?,
+    isTelevision: Boolean,
+    playPauseFocusRequester: FocusRequester?,
+    onSeek: (Long) -> Unit,
+    onPlayPause: () -> Unit,
+    onSkipBack: () -> Unit,
+    onSkipForward: () -> Unit,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onUserActivity: () -> Unit,
+) {
+    val duration = snapshot.duration
+    // Posizione mostrata durante lo scrubbing col telecomando (anteprima), null = posizione reale.
+    var scrubPosition by remember(item.id) { mutableStateOf<Long?>(null) }
+    val position = scrubPosition ?: progressState.value.position
+    // Proporzioni iOS (30/34/44) portate alla scala TV, con il minimo di 48 dp dei pulsanti del player.
+    val scale = if (isTelevision) 1.45f else 1.2f
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .padding(bottom = if (isTelevision) 18.dp else 8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        if (duration > 0L) {
+            IosPlayerSlider(
+                position = position.coerceIn(0L, duration),
+                duration = duration,
+                isTelevision = isTelevision,
+                onScrub = { scrubPosition = it; onUserActivity() },
+                onCommit = { target ->
+                    onSeek(target)
+                    scrubPosition = null
+                },
+            )
+        }
+
+        Row(
+            Modifier.focusGroup(),
+            horizontalArrangement = Arrangement.spacedBy(22.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Come iOS: Precedente/Successivo solo se esistono, -15/+15 solo con una durata (non live).
+            if (previousItem != null) PlayerGlassButton(Icons.Default.SkipPrevious, "Precedente", size = (30 * scale).dp, onClick = onPrevious)
+            if (duration > 0L) PlayerGlassButton(Icons.Default.Replay10, "-15s", size = (34 * scale).dp, onClick = onSkipBack)
+            Box(playPauseFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier) {
                 PlayerGlassButton(
                     if (snapshot.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                     if (snapshot.isPlaying) "Pausa" else "Riproduci",
-                    size = 58.dp,
+                    size = (44 * scale).dp,
                     onClick = onPlayPause
                 )
-                PlayerGlassButton(Icons.Default.Forward10, "+15s", onClick = onSkipForward)
-                PlayerGlassButton(Icons.Default.SkipNext, "Successivo", enabled = nextItem != null, onClick = onNext)
-                Spacer(Modifier.weight(1f))
-                Text(
-                    if (snapshot.duration > 0L) {
-                        "${formatTime(progress.position)} / ${formatTime(snapshot.duration)}"
-                    } else {
-                        "LIVE"
-                    },
-                    color = glassForeground().copy(.88f),
-                    fontSize = 13.sp
-                )
             }
+            if (duration > 0L) PlayerGlassButton(Icons.Default.Forward10, "+15s", size = (34 * scale).dp, onClick = onSkipForward)
+            if (nextItem != null) PlayerGlassButton(Icons.Default.SkipNext, "Successivo", size = (30 * scale).dp, onClick = onNext)
+        }
+
+        Text(
+            if (duration > 0L) "${iosPlayerTime(position)} / ${iosPlayerTime(duration)}" else "Live",
+            color = Color.White,
+            fontSize = 12.sp,
+            fontWeight = if (duration > 0L) FontWeight.Normal else FontWeight.SemiBold,
+            fontFamily = if (duration > 0L) androidx.compose.ui.text.font.FontFamily.Monospace else null,
+            maxLines = 1
+        )
+    }
+}
+
+/** `formatted(_:)` di PlayerView.swift: "h:mm:ss" oltre l'ora, altrimenti "m:ss". */
+private fun iosPlayerTime(ms: Long): String {
+    val total = (ms / 1000L).coerceAtLeast(0L)
+    val h = total / 3600
+    val m = (total % 3600) / 60
+    val sec = total % 60
+    return if (h > 0) "%d:%02d:%02d".format(h, m, sec) else "%d:%02d".format(m, sec)
+}
+
+/**
+ * Lo `Slider` bianco di iOS (`.tint(.white)`): traccia sottile arrotondata, parte trascorsa bianca, resto grigio
+ * traslucido, pallino bianco con ombra. Tocco/trascinamento per cercare (telefono). Col telecomando: il
+ * focus ingrandisce pallino e traccia; SINISTRA/DESTRA spostano un'anteprima di 10 s (piu' veloce tenendo
+ * premuto) e la ricerca parte una sola volta, a tasto rilasciato o con OK, invece di una seek per ogni pressione.
+ */
+@Composable
+private fun IosPlayerSlider(
+    position: Long,
+    duration: Long,
+    isTelevision: Boolean,
+    onScrub: (Long) -> Unit,
+    onCommit: (Long) -> Unit,
+) {
+    var focused by remember { mutableStateOf(false) }
+    var pending by remember { mutableStateOf<Long?>(null) }
+    var widthPx by remember { mutableFloatStateOf(1f) }
+    val latestPosition by rememberUpdatedState(position)
+    val latestDuration by rememberUpdatedState(duration)
+    val scope = rememberCoroutineScope()
+    var commitJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    val fraction = if (duration > 0L) (position.toFloat() / duration.toFloat()).coerceIn(0f, 1f) else 0f
+    val trackHeight = if (focused) 6.dp else 4.dp
+    val thumbSize = if (focused) 30.dp else if (isTelevision) 22.dp else 28.dp
+
+    fun scheduleCommit(target: Long) {
+        commitJob?.cancel()
+        commitJob = scope.launch {
+            delay(650L)
+            pending = null
+            onCommit(target)
+        }
+    }
+
+    fun positionAt(x: Float): Long =
+        ((x / widthPx).coerceIn(0f, 1f) * latestDuration).toLong()
+
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(34.dp)
+            .onFocusChanged { state ->
+                focused = state.isFocused
+                // Uscendo dalla barra con un'anteprima in sospeso, la ricerca parte subito.
+                if (!state.isFocused) pending?.let { target -> commitJob?.cancel(); pending = null; onCommit(target) }
+            }
+            .onKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
+                when (event.key) {
+                    Key.DirectionLeft, Key.DirectionRight, Key.MediaRewind, Key.MediaFastForward -> {
+                        val forward = event.key == Key.DirectionRight || event.key == Key.MediaFastForward
+                        // Tenendo premuto il passo cresce: 10 s, poi 30 s, poi 60 s.
+                        val repeat = event.nativeKeyEvent.repeatCount
+                        val step = when {
+                            repeat >= 20 -> 60_000L
+                            repeat >= 6 -> 30_000L
+                            else -> 10_000L
+                        }
+                        val base = pending ?: latestPosition
+                        val target = (base + if (forward) step else -step).coerceIn(0L, latestDuration)
+                        pending = target
+                        onScrub(target)
+                        scheduleCommit(target)
+                        true
+                    }
+                    Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
+                        val target = pending ?: return@onKeyEvent false
+                        commitJob?.cancel()
+                        pending = null
+                        onCommit(target)
+                        true
+                    }
+                    else -> false
+                }
+            }
+            .pageFocusGuard()
+            .focusable()
+            .pointerInput(duration) {
+                detectTapGestures { offset -> onCommit(positionAt(offset.x)) }
+            }
+            .pointerInput(duration) {
+                detectHorizontalDragGestures(
+                    onDragEnd = { pending?.let { target -> pending = null; onCommit(target) } },
+                    onDragCancel = { pending?.let { target -> pending = null; onCommit(target) } },
+                ) { change, _ ->
+                    val target = positionAt(change.position.x)
+                    pending = target
+                    onScrub(target)
+                }
+            }
+            .onSizeChanged { widthPx = it.width.toFloat().coerceAtLeast(1f) },
+        contentAlignment = Alignment.CenterStart
+    ) {
+        // Traccia: trascorso bianco, restante grigio traslucido (maximumTrackTint di sistema su video).
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(trackHeight)
+                .clip(RoundedCornerShape(50))
+                .background(Color.White.copy(alpha = .30f))
+        ) {
+            Box(Modifier.fillMaxHeight().fillMaxWidth(fraction).background(Color.White))
+        }
+        // Pallino bianco con ombra; col focus del telecomando anello d'accento.
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val offset = (maxWidth - thumbSize) * fraction
+            Box(
+                Modifier
+                    .offset(x = offset)
+                    .size(thumbSize)
+                    .shadow(if (focused) 6.dp else 3.dp, CircleShape)
+                    .clip(CircleShape)
+                    .background(Color.White)
+                    .then(
+                        if (focused) Modifier.border(3.dp, Color(0xFF8CB7FF), CircleShape) else Modifier
+                    )
+            )
         }
     }
 }
