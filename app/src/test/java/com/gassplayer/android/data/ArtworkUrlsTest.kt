@@ -84,4 +84,11 @@ class ArtworkUrlsTest {
         assertEquals(data.replace("\n", ""), ArtworkUrls.clean(data))
         assertNull(ArtworkUrls.clean("data:text/html;base64,PGh0bWw+"))
     }
+
+    @Test
+    fun templatePlaceholdersAreFilled() {
+        val raw = "https://thumb.example.pro/http/unsafe/%7BresolutionXY%7D/filters:quality(%7BimageQualityPercentage%7D)/img.example.it/a/T_1.jpg"
+        assertEquals("https://thumb.example.pro/http/unsafe/600x0/filters:quality(80)/img.example.it/a/T_1.jpg", ArtworkUrls.clean(raw))
+        assertEquals("https://h.com/600x0/a.jpg", ArtworkUrls.clean("https://h.com/{resolutionXY}/a.jpg"))
+    }
 }

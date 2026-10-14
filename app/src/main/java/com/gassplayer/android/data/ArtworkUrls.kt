@@ -85,6 +85,9 @@ object ArtworkUrls {
         if (raw == null) return null
         var text = raw.trim().trim('"', '\'').trim()
         if (text.isEmpty() || text.lowercase(Locale.ROOT) in placeholders) return null
+        // Indirizzi "modello" lasciati dal provider con i segnaposto non compilati (es. ridimensionatori thumbor:
+        // `/unsafe/{resolutionXY}/filters:quality({imageQualityPercentage})/...`): così il server risponde 404.
+        text = fillTemplatePlaceholders(text)
         // Poster incorporato dal provider (`data:image/jpeg;base64,...`): Coil lo decodifica senza rete.
         if (text.regionMatches(0, "data:image/", 0, 11, ignoreCase = true)) {
             return text.filterNot { it.isWhitespace() }.takeIf { it.contains(',') && it.length > 32 }
@@ -216,6 +219,20 @@ object ArtworkUrls {
             }
         }
         return origin + "/" + segments.joinToString("/") + if (path.endsWith("/")) "/" else ""
+    }
+
+    /** Segnaposto noti -> valori validi (poster ~600 px di larghezza, altezza proporzionale; qualità 80). */
+    private val templatePlaceholders = listOf(
+        "resolutionxy" to "600x0", "resolution" to "600x0", "size" to "600x0", "dimensions" to "600x0",
+        "width" to "600", "w" to "600", "height" to "0", "h" to "0",
+        "imagequalitypercentage" to "80", "quality" to "80", "imagequality" to "80",
+        "format" to "jpg", "imageformat" to "jpg",
+    ).toMap()
+    private val placeholderRegex = Regex("(?:\\{|%7[Bb])([A-Za-z_]+)(?:\\}|%7[Dd])")
+
+    private fun fillTemplatePlaceholders(text: String): String {
+        if ('{' !in text && !text.contains("%7B", ignoreCase = true)) return text
+        return placeholderRegex.replace(text) { m -> templatePlaceholders[m.groupValues[1].lowercase(Locale.ROOT)] ?: m.value }
     }
 
     private fun isAllowed(c: Char): Boolean =

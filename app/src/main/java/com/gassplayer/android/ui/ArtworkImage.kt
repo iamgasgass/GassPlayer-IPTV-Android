@@ -117,7 +117,19 @@ internal object ArtworkDiagnostics {
             append(" | valore provider=\"").append(raw.orEmpty().take(400)).append('"')
             if (url != null && url != raw) append(" | richiesto=").append(url.take(400))
         }
-        app.appScope.launch { runCatching { app.diagnostics.log("WARN", "ARTWORK", line) } }
+        app.appScope.launch {
+            // Errore di connessione: aggiunge gli indirizzi IP che QUESTO dispositivo ottiene dal DNS per il server,
+            // da confrontare con quelli di un altro dispositivo sulla stessa rete (DNS diverso / solo IPv4).
+            val dns = if (reason.contains("connect", ignoreCase = true) || reason.contains("UnknownHost", ignoreCase = true)) {
+                val host = runCatching { java.net.URI(url ?: raw.orEmpty()).host }.getOrNull()
+                host?.let { h ->
+                    val ips = runCatching { java.net.InetAddress.getAllByName(h).joinToString { it.hostAddress.orEmpty() } }
+                        .getOrElse { "risoluzione fallita: ${it.javaClass.simpleName}" }
+                    " | DNS dispositivo: $h -> $ips"
+                }.orEmpty()
+            } else ""
+            runCatching { app.diagnostics.log("WARN", "ARTWORK", line + dns) }
+        }
     }
 }
 
