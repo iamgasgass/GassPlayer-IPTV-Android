@@ -8,6 +8,7 @@ import coil3.memory.MemoryCache
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import coil3.svg.SvgDecoder
 import okhttp3.ConnectionSpec
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Dispatcher
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
@@ -111,7 +112,10 @@ object ArtworkImageLoader {
             val candidates = buildList {
                 add(original.url)
                 if (original.url.isHttps) add(original.url.newBuilder().scheme("http").build())
-            }
+                // Ridimensionatori "thumbor" (…/unsafe/<misura>/filters:…/<host>/<percorso>): se rifiutano la richiesta
+                // (misura non ammessa, 404) si scarica direttamente l'immagine originale contenuta nell'indirizzo.
+                addAll(thumborOriginals(original.url))
+            }.distinct()
             var lastError: IOException? = null
             var lastResponse: Response? = null
             for ((index, url) in candidates.withIndex()) {
@@ -139,6 +143,24 @@ object ArtworkImageLoader {
                 }
             }
             return lastResponse ?: throw (lastError ?: IOException("Immagine non disponibile: ${original.url}"))
+        }
+
+        private fun thumborOriginals(url: okhttp3.HttpUrl): List<okhttp3.HttpUrl> {
+            val segments = url.pathSegments
+            val unsafe = segments.indexOf("unsafe")
+            if (unsafe < 0) return emptyList()
+            // Dopo "unsafe": misura opzionale ("600x0", "fit-in", "smart"...), filtri opzionali, poi host/percorso.
+            var i = unsafe + 1
+            while (i < segments.size && (segments[i].matches(Regex("-?\\d*x-?\\d*")) || segments[i] in setOf("fit-in", "full-fit-in", "adaptive-fit-in", "smart", "trim") ||
+                    segments[i].startsWith("filters:") || segments[i].matches(Regex("\\d+x\\d+:\\d+x\\d+")))) i++
+            if (i >= segments.size - 1) return emptyList()
+            val host = segments[i]
+            if (!host.contains('.')) return emptyList()
+            val path = segments.subList(i + 1, segments.size).joinToString("/")
+            // "/http/unsafe/..." indica lo schema dell'originale; si prova comunque anche l'altro.
+            val preferHttp = unsafe > 0 && segments[unsafe - 1].equals("http", ignoreCase = true)
+            val schemes = if (preferHttp) listOf("http", "https") else listOf("https", "http")
+            return schemes.mapNotNull { "$it://$host/$path".toHttpUrlOrNull() }
         }
 
         // Same retryable statuses as iOS PosterDownloader (408, 425, 429, 5xx incl. 509/512/52x).
