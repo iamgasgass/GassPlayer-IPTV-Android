@@ -65,9 +65,12 @@ object ArtworkImageLoader {
         val ssl = SSLContext.getInstance("TLS").apply { init(null, arrayOf(trustAll), SecureRandom()) }
         OkHttpClient.Builder()
             .dispatcher(Dispatcher().apply { maxRequests = 32; maxRequestsPerHost = 6 })
-            .connectTimeout(15, TimeUnit.SECONDS)
+            // Timeouts PER TENTATIVO, come iOS (timeoutIntervalForRequest 30 s per richiesta). Prima un callTimeout
+            // globale di 90 s copriva TUTTI i tentativi: su un server https lento la chiamata veniva chiusa
+            // ("InterruptedIOException: timeout <- Socket closed") prima di arrivare al ripiego http.
+            .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
-            .callTimeout(90, TimeUnit.SECONDS)
+            .writeTimeout(15, TimeUnit.SECONDS)
             .followRedirects(true)
             .followSslRedirects(true)
             .sslSocketFactory(ssl.socketFactory, trustAll)
@@ -90,7 +93,12 @@ object ArtworkImageLoader {
         }
     }
 
-    /** Up to 3 attempts per URL for transient failures, then the same resource over plain http. */
+    /**
+     * iOS PosterDownloader.fetch: up to 3 attempts per URL for transient failures, then the same resource over
+     * plain http. Difference: when https does not even answer in time (connect/handshake timeout, connection
+     * refused/reset) the same https address is NOT retried — that server is not serving https — and the http
+     * fallback runs immediately instead of after ~1 minute of identical failed attempts.
+     */
     private object RetryAndFallbackInterceptor : Interceptor {
         override fun intercept(chain: Interceptor.Chain): Response {
             val original = chain.request()
@@ -100,10 +108,11 @@ object ArtworkImageLoader {
             }
             var lastError: IOException? = null
             var lastResponse: Response? = null
-            for (url in candidates) {
+            for ((index, url) in candidates.withIndex()) {
+                val hasFallback = index < candidates.lastIndex
                 var attempt = 0
                 while (true) {
-                    if (chain.call().isCanceled()) throw IOException("Canceled")
+                    if (chain.call().isCanceled()) throw lastError ?: IOException("Canceled")
                     lastResponse?.close()
                     lastResponse = null
                     try {
@@ -117,6 +126,7 @@ object ArtworkImageLoader {
                     } catch (e: IOException) {
                         if (chain.call().isCanceled()) throw e
                         lastError = e
+                        if (hasFallback && e.isConnectionLevel()) break // straight to http
                         if (e.isTransient() && attempt < 2) { backoff(attempt++); continue }
                     }
                     break
@@ -129,13 +139,20 @@ object ArtworkImageLoader {
         private fun Int.isTransient() = this == 408 || this == 425 || this == 429 || this in 500..599
 
         // Like iOS (timedOut, networkConnectionLost, cannotConnectToHost, dnsLookupFailed, cannotFindHost): retried.
-        // TLS errors are not retried on the same URL (the http fallback still runs).
+        // "Socket closed" is a cancellation, never retried.
         private fun IOException.isTransient() =
             this is SocketTimeoutException || this is java.net.ConnectException ||
                 this is java.net.UnknownHostException || this is java.net.NoRouteToHostException ||
-                this is java.net.SocketException ||
                 (this is InterruptedIOException && message?.contains("timeout", true) == true) ||
-                message?.contains("unexpected end of stream", true) == true
+                message?.contains("unexpected end of stream", true) == true ||
+                message?.contains("connection reset", true) == true
+
+        /** The https endpoint itself is not usable (no answer / refused / TLS failure): try http right away. */
+        private fun IOException.isConnectionLevel() =
+            this is java.net.ConnectException || this is java.net.NoRouteToHostException ||
+                this is javax.net.ssl.SSLException ||
+                (this is SocketTimeoutException && (message?.contains("connect", true) == true || message?.contains("handshake", true) == true)) ||
+                message?.contains("connection reset", true) == true
 
         private fun backoff(attempt: Int) {
             try { Thread.sleep(300L shl attempt) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
