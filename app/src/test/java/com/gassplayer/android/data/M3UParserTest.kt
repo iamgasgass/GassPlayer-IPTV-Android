@@ -193,6 +193,20 @@ class M3UParserTest {
         assertEquals("application/vnd.apple.mpegurl", item.streamMimeType)
     }
 
+
+    @Test
+    fun logoUrlsAreKeptExactlyAsWritten() {
+        val text = """
+            #EXTM3U
+            #EXTINF:-1 tvg-logo="http://img.example/logo%3Fv%3D2/Rete%E8.png" group-title="News",Uno
+            http://host/live/1.ts
+            #EXTINF:-1 logo="http://img.example/due.png" group-title="News",Due
+            http://host/live/2.ts
+        """.trimIndent()
+
+        val parsed = M3UParser.parse("source", text, "http://host/list.m3u")
+
+        assertEquals("http://img.example/logo%3Fv%3D2/Rete%E8.png", parsed[0].logoUrl)
+        assertEquals("http://img.example/due.png", parsed[1].logoUrl)
+    }
 }
-
-

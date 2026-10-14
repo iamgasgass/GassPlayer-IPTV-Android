@@ -58,4 +58,11 @@ class ArtworkUrlsTest {
         val clean = MediaItem("c", "s", MediaKind.LIVE, "Rai 2", "http://h/2.ts", logoUrl = "http://h/rai2.png")
         assertSame(clean, ArtworkUrls.normalize(clean))
     }
+
+    @Test
+    fun firstValidSkipsUnusableValues() {
+        assertEquals("http://h/cover.jpg", ArtworkUrls.firstValid(null, "none", "", "0", "http://h/cover.jpg", "http://h/other.jpg"))
+        assertEquals("http://panel.example.com:8080/img/a.png", ArtworkUrls.firstValid(xtream, null, "/img/a.png"))
+        assertNull(ArtworkUrls.firstValid(null, null, "null", "images/x.png"))
+    }
 }

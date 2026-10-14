@@ -36,6 +36,15 @@ object ArtworkUrls {
     fun baseFor(sourceId: String): String? = bases[sourceId]
 
     /**
+     * First candidate that is a usable image URL (cleaned). Unlike `a ?: b ?: c`, a non-empty but unusable
+     * value (`"none"`, `"0"`, a broken path) does not hide a valid fallback field.
+     */
+    fun firstValid(base: String?, vararg candidates: String?): String? {
+        for (candidate in candidates) clean(candidate, base)?.let { return it }
+        return null
+    }
+
+    /**
      * Cleans the artwork of a catalog item and fills the field each view reads:
      *  - LIVE views read `logoUrl` -> falls back to the poster when the provider only sent that;
      *  - VOD/series/episode views read `posterUrl` -> falls back to `logoUrl` (M3U `tvg-logo`, which the

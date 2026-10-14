@@ -116,6 +116,11 @@ fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
     var managerSourceId by remember { mutableStateOf<String?>(null) }
     var epgManageReturnRoute by remember { mutableStateOf("settings") }
     val catalog by vm.catalog.collectAsStateWithLifecycle()
+    // "Guarda tutte le liste insieme" (Sorgenti): canali di tutte le sorgenti abilitate, con una sessione EPG
+    // propria cosi' non disturba la guida della sorgente attiva.
+    val allSourcesLive by vm.allSourcesLive.collectAsStateWithLifecycle()
+    val allSourcesEpgSession = remember(app) { EpgGridSession() }
+    LaunchedEffect(route) { if (route != "live-all") vm.closeAllSourcesLive() }
     val settings by vm.settings.collectAsStateWithLifecycle()
     val favorite by vm.favorites.collectAsStateWithLifecycle()
     val watch by vm.watch.collectAsStateWithLifecycle()
@@ -180,6 +185,7 @@ fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
         "backup" -> "Backup e migrazione"
         "epg-manage" -> "Fonti EPG"
         "merged" -> "Playlist unificate"
+        "live-all" -> "Tutte le liste"
         else -> "GassPlayer"
     }
     Box(Modifier.fillMaxSize()) {
@@ -236,6 +242,14 @@ fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
                     onOpenRequestHandled = { pendingSectionDetail = null; pendingSectionMeta = null })
                 "epg" -> EpgGridScreen(app, vm, epgSession, catalog?.live.orEmpty(), catalog?.liveCategories.orEmpty(), favorite, settings,
                     onPlay = { playerItem = it }, playerActive = playerActive, screenActive = activeRoute == contentRoute,
+                    entryFocusRequester = entryFocusRequester)
+                "live-all" -> if (settings.groupUIStyle == "categorie_tv") {
+                    EpgGridScreen(app, vm, allSourcesEpgSession, allSourcesLive?.live.orEmpty(), allSourcesLive?.liveCategories.orEmpty(), favorite, settings,
+                        onPlay = { playerItem = it }, tvCategoryMode = true, playerActive = playerActive,
+                        screenActive = activeRoute == contentRoute, entryFocusRequester = entryFocusRequester)
+                } else CatalogScreen("Tutte le liste", allSourcesLive?.live.orEmpty(), allSourcesLive?.liveCategories.orEmpty(), favorite, parental, vm,
+                    onPlay = { playerItem = it }, showNumbers = settings.showChannelNumbers, scopeKey = "live",
+                    onCustomize = { route = "live-customize" }, isTelevision = tv, screenActive = activeRoute == contentRoute,
                     entryFocusRequester = entryFocusRequester)
                 "epg-manage" -> ExternalEpgManageScreen(app, onBack = { route = epgManageReturnRoute }, entryFocusRequester = entryFocusRequester)
                 "merged" -> MergedPlaylistScreen(app, entryFocusRequester = entryFocusRequester)

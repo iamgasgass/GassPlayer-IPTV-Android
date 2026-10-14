@@ -1,5 +1,7 @@
 package com.gassplayer.android.ui
 
+import com.gassplayer.android.data.ArtworkUrls
+
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -137,6 +139,8 @@ internal fun buildContinueWatchingCards(
         if (cards.size >= CONTINUE_MAX_ITEMS) continue
 
         val series = if (isSeriesEntry) seriesKey?.let(::find) else null
+        // Immagine salvata o dal catalogo: la prima davvero utilizzabile, con i percorsi relativi del provider risolti.
+        val artBase = sourceId?.takeIf { it.isNotBlank() }?.let(ArtworkUrls::baseFor)
         val title: String
         val image: String?
         val subtitle: String?
@@ -145,17 +149,17 @@ internal fun buildContinueWatchingCards(
                 // Per le serie la card mostra solo il nome della serie, come nel riferimento.
                 title = series?.title?.takeIf { it.isNotBlank() }
                     ?: entry.title.substringBefore(" · ").trim().ifBlank { entry.title }
-                image = entry.imageUrl ?: series?.backdropUrl ?: series?.posterUrl ?: item?.backdropUrl ?: item?.posterUrl
+                image = ArtworkUrls.firstValid(artBase, entry.imageUrl, series?.backdropUrl, series?.posterUrl, item?.backdropUrl, item?.posterUrl)
                 subtitle = entry.subtitle ?: series?.group ?: item?.group
             }
             entry.kind == MediaKind.LIVE -> {
                 title = item?.title?.takeIf { it.isNotBlank() } ?: entry.title
-                image = entry.imageUrl ?: item?.logoUrl
+                image = ArtworkUrls.firstValid(artBase, entry.imageUrl, item?.logoUrl, item?.posterUrl)
                 subtitle = entry.subtitle ?: item?.group
             }
             else -> {
                 title = item?.title?.takeIf { it.isNotBlank() } ?: entry.title
-                image = entry.imageUrl ?: item?.backdropUrl ?: item?.posterUrl
+                image = ArtworkUrls.firstValid(artBase, entry.imageUrl, item?.backdropUrl, item?.posterUrl, item?.logoUrl)
                 subtitle = entry.subtitle ?: item?.group
             }
         }

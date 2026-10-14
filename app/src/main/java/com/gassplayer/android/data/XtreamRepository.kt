@@ -378,7 +378,8 @@ class XtreamRepository(private val api: NetworkApi) {
             "${source.id}:live:$sid", source.id, MediaKind.LIVE,
             stringOrNull("name") ?: stringOrNull("title").orEmpty(),
             streamUrl(creds, sid, MediaKind.LIVE, ext),
-            logoUrl = stringOrNull("stream_icon") ?: stringOrNull("icon"),
+            // iOS XtreamStream: stream_icon, poi movie_image, cover, icon (alcuni pannelli non valorizzano stream_icon).
+            logoUrl = artwork(source, stringOrNull("stream_icon"), stringOrNull("movie_image"), stringOrNull("cover"), stringOrNull("icon")),
             group = stringOrNull("category_id"), categoryId = stringOrNull("category_id"),
             number = intOrNull("num") ?: index + 1,
             metadataTag = stringOrNull("epg_channel_id"),
@@ -394,7 +395,7 @@ class XtreamRepository(private val api: NetworkApi) {
         return MediaItem(
             "${source.id}:movie:$sid", source.id, MediaKind.MOVIE, title,
             streamUrl(creds, sid, MediaKind.MOVIE, ext),
-            posterUrl = stringOrNull("stream_icon") ?: stringOrNull("movie_image") ?: stringOrNull("cover"),
+            posterUrl = artwork(source, stringOrNull("stream_icon"), stringOrNull("movie_image"), stringOrNull("cover"), stringOrNull("cover_big"), stringOrNull("icon")),
             backdropUrl = firstString("backdrop_path"),
             group = stringOrNull("category_id"), categoryId = stringOrNull("category_id"),
             number = intOrNull("num") ?: index + 1,
@@ -410,7 +411,8 @@ class XtreamRepository(private val api: NetworkApi) {
         return MediaItem(
             "${source.id}:series:$sid", source.id, MediaKind.SERIES,
             stringOrNull("name") ?: stringOrNull("title").orEmpty(), "",
-            posterUrl = stringOrNull("cover") ?: stringOrNull("cover_big") ?: stringOrNull("stream_icon"),
+            // iOS XtreamSeriesItem: se `cover` manca si usa il primo backdrop.
+            posterUrl = artwork(source, stringOrNull("cover"), stringOrNull("cover_big"), stringOrNull("stream_icon"), firstString("backdrop_path")),
             backdropUrl = firstString("backdrop_path"), plot = stringOrNull("plot") ?: stringOrNull("description"),
             genre = stringOrNull("genre"), rating = doubleOrNull("rating"), categoryId = stringOrNull("category_id"),
             group = stringOrNull("category_id")
@@ -427,13 +429,20 @@ class XtreamRepository(private val api: NetworkApi) {
         return MediaItem(
             "${source.id}:episode:$id", source.id, MediaKind.EPISODE,
             stringOrNull("title") ?: stringOrNull("name").orEmpty(), streamUrl(creds, id, MediaKind.EPISODE, ext),
-            posterUrl = stringOrNull("movie_image") ?: stringOrNull("cover") ?: info?.stringOrNull("movie_image") ?: info?.stringOrNull("cover"),
+            posterUrl = artwork(source, stringOrNull("movie_image"), stringOrNull("cover"), info?.stringOrNull("movie_image"), info?.stringOrNull("cover"), info?.stringOrNull("cover_big")),
             seasonNumber = season, episodeNumber = episode, seriesId = seriesId,
             plot = stringOrNull("plot") ?: info?.stringOrNull("plot") ?: info?.stringOrNull("description"),
             rating = doubleOrNull("rating") ?: info?.doubleOrNull("rating"),
             durationSec = longOrNull("duration_secs") ?: info?.longOrNull("duration_secs") ?: durationTextToSeconds(info?.stringOrNull("duration")),
             streamMimeType = mimeForExtension(ext)
         )
+    }
+
+    /** First usable artwork URL among the provider fields (relative paths resolved on the Xtream server). */
+    private fun artwork(source: MediaSourceConfig, vararg candidates: String?): String? {
+        if (candidates.all { it == null }) return null
+        val base = ArtworkUrls.baseFor(source.id) ?: runCatching { serverBase(source.host) }.getOrNull()
+        return ArtworkUrls.firstValid(base, *candidates)
     }
 
     private fun mimeForExtension(ext: String): String? = when (ext.lowercase(Locale.ROOT).trimStart('.')) {

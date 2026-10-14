@@ -34,7 +34,9 @@ import javax.net.ssl.X509TrustManager
 object ArtworkImageLoader {
     private const val USER_AGENT =
         "Mozilla/5.0 (Linux; Android 12; Android TV) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
-    private const val ACCEPT = "image/webp,image/avif,image/png,image/jpeg,image/svg+xml,image/*;q=0.8,*/*;q=0.5"
+    // Like iOS PosterDownloader, WITHOUT image/avif: CDNs that negotiate the format would send AVIF, which
+    // Android TV devices before Android 12 cannot decode (the poster stayed empty).
+    private const val ACCEPT = "image/webp,image/png,image/jpeg,image/svg+xml,image/*;q=0.8,*/*;q=0.5"
 
     fun create(context: PlatformContext): ImageLoader {
         val appContext: Context = context.applicationContext

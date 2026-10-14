@@ -29,6 +29,9 @@ class MainViewModel(val app: GassPlayerApplication) : ViewModel() {
     val loading = _loading.asStateFlow()
     private val _message = MutableStateFlow<String?>(null)
     val message = _message.asStateFlow()
+    /** "Guarda tutte le liste insieme": Live TV di tutte le sorgenti abilitate (separato dal catalogo attivo). */
+    private val _allSourcesLive = MutableStateFlow<CatalogState?>(null)
+    val allSourcesLive = _allSourcesLive.asStateFlow()
 
     /** Aggiornamento in corso e se e' "forzato" (rete per tutte le sorgenti). */
     private var refreshJob: kotlinx.coroutines.Job? = null
@@ -38,7 +41,7 @@ class MainViewModel(val app: GassPlayerApplication) : ViewModel() {
 
     init {
         // Cataloghi ricomposti altrove (aggiornamento automatico in background): la UI li mostra subito.
-        viewModelScope.launch { app.catalog.updates.collect { _catalog.value = it } }
+        viewModelScope.launch { app.catalog.updates.collect { if (isForActiveSource(it)) _catalog.value = it } }
         viewModelScope.launch {
             val initialSettings = settings.first()
             val last = app.prefs.lastRefreshFlow().first()
@@ -78,7 +81,10 @@ class MainViewModel(val app: GassPlayerApplication) : ViewModel() {
             }
             val result = runCatching { app.catalog.loadAll(force, onlySources, onlyKinds) }
             // Un errore di rete non deve svuotare l'app: resta il catalogo gia' mostrato (cache).
-            result.getOrNull()?.let { _catalog.value = it }
+            // Scartato se nel frattempo e' stata scelta un'altra sorgente (menu "Cambia" della Home).
+            result.getOrNull()?.takeIf { isForActiveSource(it) }?.let { _catalog.value = it }
+            // La vista "Guarda tutte le liste insieme", se aperta, rilegge i canali aggiornati dalla cache.
+            if (_allSourcesLive.value != null) runCatching { app.catalog.allSourcesLiveState() }.getOrNull()?.let { _allSourcesLive.value = it }
             _message.value = result.exceptionOrNull()?.message ?: result.getOrNull()?.errors?.firstOrNull()
             _loading.value = false
             // Il timestamp rappresenta un aggiornamento realmente riuscito, non
@@ -95,8 +101,13 @@ class MainViewModel(val app: GassPlayerApplication) : ViewModel() {
     }
 
     fun addSource(source: MediaSourceConfig) = viewModelScope.launch {
+        val isNew = app.sources.sources.first().none { it.id == source.id }
         app.sources.addOrUpdate(source)
-        if (activeSource.value == null) app.sources.setActive(source.id)
+        // Come iOS SourceManager.add: una sorgente appena aggiunta diventa quella attiva (e' l'unica mostrata).
+        if (isNew || activeSource.value == null) {
+            app.sources.setActive(source.id)
+            _catalog.value = null
+        }
         // Solo la sorgente nuova/modificata va scaricata: le altre restano dalla cache.
         refresh(force = true, onlySources = setOf(source.id))
     }
@@ -117,11 +128,27 @@ class MainViewModel(val app: GassPlayerApplication) : ViewModel() {
     fun toggleFavorite(item: MediaItem) = viewModelScope.launch { app.favorites.toggle(item) }
     fun toggleLock(id: String) = viewModelScope.launch { app.parental.toggleLock(id) }
     fun setActive(id: String?) = viewModelScope.launch {
+        if (id != null && id == app.prefs.activeSourceFlow.first()) return@launch
         app.sources.setActive(id)
-        // The active source determines the catalog backing every library/Home rail. Cambiare sorgente usa la
-        // cache (la rete solo se la sorgente non e' mai stata caricata o e' scaduta): prima riscaricava TUTTO.
+        // Come iOS (ContentView.loadActiveSource): Home, Live TV, Film, Serie, Guida e Ricerca mostrano SOLO la
+        // sorgente scelta. Il suo catalogo in cache compare subito; senza cache la vista si svuota (niente canali
+        // della sorgente precedente) finche' il caricamento non termina. La rete si usa solo se serve.
+        _catalog.value = runCatching { app.catalog.cachedState() }.getOrNull()?.takeIf { isForActiveSource(it) }
         refresh(false)
     }
+
+    /** True se [state] e' il catalogo della sorgente attiva in questo momento. */
+    private suspend fun isForActiveSource(state: CatalogState): Boolean {
+        val active = app.prefs.activeSourceFlow.first() ?: return true
+        return state.sourceIds.isEmpty() || state.sourceIds == listOf(active)
+    }
+
+    /** Apre "Guarda tutte le liste insieme" con i canali in cache di tutte le sorgenti abilitate. */
+    fun openAllSourcesLive() = viewModelScope.launch {
+        _allSourcesLive.value = runCatching { app.catalog.allSourcesLiveState() }.getOrNull()
+    }
+
+    fun closeAllSourcesLive() { _allSourcesLive.value = null }
 
     fun updateSettings(s: AppSettings) = viewModelScope.launch {
         app.prefs.saveSettings(s)

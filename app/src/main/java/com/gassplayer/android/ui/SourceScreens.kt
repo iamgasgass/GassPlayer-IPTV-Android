@@ -137,7 +137,8 @@ fun SourcesView(
             subtitle = if (sources.count { it.type == SourceType.XTREAM && it.isEnabled } > 0) "Apri il catalogo Live TV delle sorgenti abilitate" else "Aggiungi e abilita una sorgente Xtream per unire i canali",
             tint = Color(0xFFFF667C).readable(),
             enabled = sources.any { it.type == SourceType.XTREAM && it.isEnabled },
-            onClick = { onRoute("live") }
+            // Vista dedicata (iOS AllSourcesLiveView): la Live TV normale mostra solo la sorgente attiva.
+            onClick = { vm.openAllSourcesLive(); onRoute("live-all") }
         )
 
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {

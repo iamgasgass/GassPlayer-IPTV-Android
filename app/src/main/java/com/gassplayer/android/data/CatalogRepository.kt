@@ -48,13 +48,36 @@ class CatalogRepository(private val context: Context, private val prefs: AppPref
         val all = prefs.sourcesFlow.first()
         // Bases used to resolve relative artwork paths (server / playlist URL of each source).
         ArtworkUrls.registerSources(all)
-        val sources = all.filter { it.isEnabled }
-        if (sources.isEmpty()) return@withContext null
-        val metas = sources.mapNotNull { source ->
-            runCatching { db.sourceMeta(source.id) }.getOrNull()?.takeIf { it.count > 0 && cacheMatchesConfig(source) }
+        // Come iOS: il catalogo mostrato e' SOLO quello della sorgente attiva.
+        val source = resolveActive(all) ?: return@withContext null
+        val meta = runCatching { db.sourceMeta(source.id) }.getOrNull()?.takeIf { it.count > 0 && cacheMatchesConfig(source) }
+            ?: return@withContext null
+        buildState(listOf(source.id), listOf(meta), emptyList())
+    }
+
+    /**
+     * Sorgente attiva come `SourceManager.activeSource` iOS: quella scelta (anche dal menu "Cambia" della Home);
+     * se non c'e' piu' (eliminata) o non e' mai stata scelta, la prima abilitata, che viene salvata come attiva.
+     */
+    private suspend fun resolveActive(configured: List<MediaSourceConfig>): MediaSourceConfig? {
+        val stored = prefs.activeSourceFlow.first()
+        val chosen = configured.firstOrNull { it.id == stored }
+            ?: configured.firstOrNull { it.isEnabled }
+            ?: configured.firstOrNull()
+        if (chosen != null && chosen.id != stored) runCatching { prefs.saveActiveSource(chosen.id) }
+        return chosen
+    }
+
+    /**
+     * "Guarda tutte le liste insieme" (iOS `AllSourcesLiveView`): i canali Live di TUTTE le sorgenti abilitate,
+     * dalla cache su disco. Indipendente dal catalogo della sorgente attiva. `null` se nulla e' in cache.
+     */
+    suspend fun allSourcesLiveState(): CatalogState? = withContext(Dispatchers.IO) {
+        val enabled = prefs.sourcesFlow.first().filter { it.isEnabled }
+        val cached = enabled.mapNotNull { source ->
+            runCatching { db.sourceMeta(source.id) }.getOrNull()?.takeIf { it.count > 0 && cacheMatchesConfig(source) }?.let { source.id to it }
         }
-        if (metas.isEmpty()) return@withContext null
-        buildState(sources.map { it.id }, metas, emptyList())
+        if (cached.isEmpty()) null else buildState(cached.map { it.first }, cached.map { it.second }, emptyList())
     }
 
     /**
@@ -71,7 +94,10 @@ class CatalogRepository(private val context: Context, private val prefs: AppPref
         withContext(Dispatchers.IO) {
         val configured = prefs.sourcesFlow.first()
         ArtworkUrls.registerSources(configured)
-        val sources = configured.filter { it.isEnabled }
+        val active = resolveActive(configured)
+        // Si scaricano/aggiornano tutte le sorgenti abilitate (cosi' cambiare playlist dalla Home e' istantaneo e
+        // "Guarda tutte le liste insieme" ha i canali), ma il catalogo pubblicato contiene solo quella attiva.
+        val sources = configured.filter { it.isEnabled || it.id == active?.id }
         val appSettings = prefs.settingsFlow.first()
         val errors = java.util.concurrent.CopyOnWriteArrayList<String>()
         runCatching { db.pruneExcept(configured.map { it.id }) }
@@ -80,7 +106,7 @@ class CatalogRepository(private val context: Context, private val prefs: AppPref
                 loadPermits.withPermit {
                     try {
                         val forceThis = force && (forceSourceIds == null || source.id in forceSourceIds)
-                        loadSource(source, forceThis, appSettings, if (forceThis) onlyKinds else null).also { rememberConfig(source) }
+                        loadSource(source, forceThis, appSettings, if (forceThis) onlyKinds else null).also { rememberConfig(source); rememberArtworkVersion(source) }
                     } catch (t: Throwable) {
                         if (t is kotlinx.coroutines.CancellationException) throw t
                         errors += friendlyError(source, t)
@@ -91,7 +117,10 @@ class CatalogRepository(private val context: Context, private val prefs: AppPref
                 }
             }
         }.awaitAll()
-        buildState(sources.map { it.id }, metas, errors.toList()).also { _updates.tryEmit(it) }
+        val activeIndex = sources.indexOfFirst { it.id == active?.id }
+        val visibleIds = if (activeIndex >= 0) listOf(sources[activeIndex].id) else emptyList()
+        val visibleMetas = if (activeIndex >= 0) listOf(metas[activeIndex]) else emptyList()
+        buildState(visibleIds, visibleMetas, errors.toList()).also { _updates.tryEmit(it) }
         }
     }
 
@@ -114,6 +143,18 @@ class CatalogRepository(private val context: Context, private val prefs: AppPref
         return stored == configFingerprint(source)
     }
 
+    /**
+     * Versione della lettura di icone/poster con cui la cache della sorgente e' stata scritta. Le cache precedenti
+     * hanno loghi M3U decodificati male e campi Xtream di riserva mancanti, che la normalizzazione in lettura non
+     * puo' recuperare: vengono riscaricate UNA volta (il catalogo in cache resta visibile nel frattempo).
+     */
+    private fun artworkOutdated(source: MediaSourceConfig): Boolean =
+        loadState.getInt("art_${source.id}", 0) < ARTWORK_PARSE_VERSION
+
+    private fun rememberArtworkVersion(source: MediaSourceConfig) {
+        if (artworkOutdated(source)) loadState.edit().putInt("art_${source.id}", ARTWORK_PARSE_VERSION).apply()
+    }
+
     private fun rememberConfig(source: MediaSourceConfig) {
         val fp = configFingerprint(source)
         if (loadState.getString("fp_${source.id}", null) != fp) loadState.edit().putString("fp_${source.id}", fp).apply()
@@ -128,7 +169,7 @@ class CatalogRepository(private val context: Context, private val prefs: AppPref
         // la cache e' di un'altra configurazione (host/credenziali/URL cambiati) o se e' scaduto l'intervallo scelto in
         // Impostazioni ("Manuale" = mai). Prima valeva un limite fisso di 6 ore: all'avvio l'app riscaricava
         // playlist intere anche con aggiornamento manuale o giornaliero.
-        if (!force && cacheMatchesConfig(source)) {
+        if (!force && cacheMatchesConfig(source) && !artworkOutdated(source)) {
             val ttl = RefreshInterval.from(appSettings.catalogRefreshInterval).millis
             db.sourceMeta(source.id)?.takeIf { it.count > 0 && (ttl == null || System.currentTimeMillis() - it.updatedAt < ttl) }?.let { return it }
         }
@@ -138,7 +179,7 @@ class CatalogRepository(private val context: Context, private val prefs: AppPref
             SourceType.XTREAM -> {
                 // Con cache valida della stessa configurazione si possono aggiornare solo alcune sezioni.
                 val canKeep = cacheMatchesConfig(source) && (db.sourceMeta(source.id)?.count ?: 0) > 0
-                val kinds = onlyKinds?.takeIf { canKeep }?.intersect(setOf(MediaKind.LIVE, MediaKind.MOVIE, MediaKind.SERIES))?.takeIf { it.isNotEmpty() }
+                val kinds = onlyKinds?.takeIf { canKeep && !artworkOutdated(source) }?.intersect(setOf(MediaKind.LIVE, MediaKind.MOVIE, MediaKind.SERIES))?.takeIf { it.isNotEmpty() }
                     ?: setOf(MediaKind.LIVE, MediaKind.MOVIE, MediaKind.SERIES)
                 val b = xtream.loadCatalog(source, kinds)
                 keepKinds = if (canKeep) b.notRefreshed else emptySet()
@@ -179,7 +220,7 @@ class CatalogRepository(private val context: Context, private val prefs: AppPref
         val cached = db.sourceMeta(source.id)?.takeIf { it.count > 0 && cacheMatchesConfig(source) }
         val validatorKey = "m3u_${source.id}"
         val validators = loadState.getString(validatorKey, null)?.split('\n')
-            ?.takeIf { cached != null && it.size == 3 && it[0] == playlistUrl }
+            ?.takeIf { cached != null && it.size == 3 && it[0] == playlistUrl && !artworkOutdated(source) }
         val outcome = network.readTextStreamIfChanged(
             playlistUrl,
             mapOf("Accept" to "application/vnd.apple.mpegurl, application/x-mpegURL, audio/mpegurl, text/plain, */*"),
@@ -247,6 +288,11 @@ class CatalogRepository(private val context: Context, private val prefs: AppPref
     }
 
     fun clearCache() { runCatching { db.clearAll() }; deleteLegacyCaches() }
+
+    private companion object {
+        /** Incrementare quando cambia il modo in cui icone/poster vengono letti dalla playlist o dal pannello. */
+        const val ARTWORK_PARSE_VERSION = 1
+    }
     fun cacheCount(): Int = runCatching { db.cachedSourceCount() }.getOrDefault(0)
 }
 

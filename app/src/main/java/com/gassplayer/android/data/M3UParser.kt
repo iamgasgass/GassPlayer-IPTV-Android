@@ -32,6 +32,7 @@ object M3UParser {
     private const val HEADER_NAMES = "user-agent|referer|referrer|origin|cookie|authorization|accept|accept-language|http-user-agent|http-referrer|http-referer|http-origin|http-cookie"
     private val headerAssignmentRegex = Regex("(?i)(?:^|[&|])\\s*($HEADER_NAMES)\\s*=\\s*(\"[^\"]*\"|'[^']*'|.*?)(?=(?:&(?:$HEADER_NAMES)\\s*=)|$)")
     private val trailingSeparators = Regex("[\\s._:-]+$")
+    private val rawValueAttributes = setOf("tvg-logo", "logo", "tvg-logo-small")
 
     /** Convenience wrapper for small in-memory playlists (tests, short lists). */
     fun parse(
@@ -181,7 +182,7 @@ object M3UParser {
                         pendingAttrs["show"], pendingAttrs["show-title"], pendingAttrs["parent-title"]
                     ).firstOrNull { !it.isNullOrBlank() }?.trim()
                     val group = intern(seriesHint ?: rawGroup)
-                    val logo = pendingAttrs["tvg-logo"]?.trim()?.ifBlank { null }
+                    val logo = (pendingAttrs["tvg-logo"]?.trim()?.ifBlank { null } ?: pendingAttrs["logo"]?.trim()?.ifBlank { null })
                     val tvgId = pendingAttrs["tvg-id"]?.trim()?.ifBlank { null }
                     val explicitType = pendingAttrs["tvg-type"]?.lowercase(Locale.ROOT)
                     val marker = episodeMarker(title, pendingAttrs, url)
@@ -327,7 +328,10 @@ object M3UParser {
         for (m in attributeRegex.findAll(value)) {
             val key = m.groupValues[1].ifBlank { m.groupValues[3].ifBlank { m.groupValues[5] } }
             val raw = m.groupValues[2].ifBlank { m.groupValues[4].ifBlank { m.groupValues[6] } }
-            out[key.lowercase(Locale.ROOT)] = decodeHeaderValue(raw)
+            val lowerKey = key.lowercase(Locale.ROOT)
+            // Image URLs are kept exactly as written (as iOS does): URL-decoding them turned %3F/%2F/%23 into
+            // URL syntax and Latin-1 escapes (%E8...) into invalid characters, breaking the logo/poster.
+            out[lowerKey] = if (lowerKey in rawValueAttributes) raw.trim() else decodeHeaderValue(raw)
         }
         return out
     }

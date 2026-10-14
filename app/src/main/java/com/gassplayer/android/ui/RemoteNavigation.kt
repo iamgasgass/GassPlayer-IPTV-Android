@@ -214,7 +214,7 @@ internal fun navigationRailDestination(route: String): String = when (route) {
     "live-customize" -> "live"
     "movies-customize" -> "movies"
     "series-customize" -> "series"
-    "source-manager" -> "sources"
+    "source-manager", "live-all" -> "sources"
     "epg-manage" -> "epg"
     "vpn", "parental", "diagnostics", "backup", "trakt", "downloads", "merged" -> "settings"
     else -> route
@@ -231,7 +231,7 @@ internal fun destinationAfterRemoteBack(route: String, epgManageReturnRoute: Str
     "live-customize" -> "live"
     "movies-customize" -> "movies"
     "series-customize" -> "series"
-    "source-manager" -> "sources"
+    "source-manager", "live-all" -> "sources"
     "epg-manage" -> epgManageReturnRoute
     "vpn", "parental", "diagnostics", "backup", "trakt", "downloads", "merged" -> "settings"
     else -> "home"
