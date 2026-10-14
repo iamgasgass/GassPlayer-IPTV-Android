@@ -57,7 +57,12 @@ object M3UParser {
          * as they are parsed and are NOT kept in the returned list, so memory stays flat. Only series and
          * episodes (which need post-processing) are returned and must be stored by the caller.
          */
-        sink: ((MediaItem) -> Unit)? = null
+        sink: ((MediaItem) -> Unit)? = null,
+        /**
+         * Indirizzi XMLTV dichiarati nell'intestazione `#EXTM3U` (`x-tvg-url`, `url-tvg`, `tvg-url`, anche piu'
+         * d'uno separati da virgola), come M3UPlaylistService iOS: la guida delle playlist M3U arriva da qui.
+         */
+        onEpgUrls: ((List<String>) -> Unit)? = null
     ): List<MediaItem> {
         val sunkIds = HashSet<Long>()
         val interned = HashMap<String, String>()
@@ -100,6 +105,16 @@ object M3UParser {
                         streamMimeType = "application/vnd.apple.mpegurl"
                     )
                 )
+            }
+
+            if (onEpgUrls != null && line.startsWith("#EXTM3U", true)) {
+                val attrs = parseAttributes(line.substring(7).trim())
+                val urls = listOf("x-tvg-url", "url-tvg", "tvg-url").flatMap { key ->
+                    attrs.entries.firstOrNull { it.key.equals(key, ignoreCase = true) }?.value
+                        ?.split(',')?.map { it.trim() }.orEmpty()
+                }.filter { it.startsWith("http://", true) || it.startsWith("https://", true) }.distinct()
+                if (urls.isNotEmpty()) onEpgUrls(urls)
+                continue
             }
 
             when {

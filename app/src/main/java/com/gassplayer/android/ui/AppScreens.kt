@@ -2198,7 +2198,7 @@ private fun ExternalEpgManageScreen(app: GassPlayerApplication, onBack: () -> Un
     Column {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Button({ showAdd = true }) { Icon(Icons.Default.Add, null); Spacer(Modifier.width(6.dp)); Text("Aggiungi sorgente") }
-            OutlinedButton({ scope.launch { app.prefs.saveSources(sources.sortedWith(compareBy<MediaSourceConfig> { if (it.isPinned) 0 else 1 }.thenBy { it.sortOrder })) }; vm.refresh() }) { Text("Ordina") }
+            OutlinedButton({ scope.launch { app.prefs.saveSources(sources.sortedWith(compareBy<MediaSourceConfig> { if (it.isPinned) 0 else 1 }.thenBy { it.sortOrder })) }; vm.refresh(false) }) { Text("Ordina") }
         }
         Spacer(Modifier.height(12.dp))
         LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -2212,11 +2212,11 @@ private fun ExternalEpgManageScreen(app: GassPlayerApplication, onBack: () -> Un
                             Text(if (s.lastVerificationSucceeded) "Verificata • ${s.lastKnownChannelCount}" else "Non verificata", color = if (s.lastVerificationSucceeded) Color(0xFF6EDC82).readable() else Color(0xFFFFB55E).readable())
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Switch(checked = s.isEnabled, onCheckedChange = { value -> scope.launch { app.sources.toggle(s.id, value); vm.refresh(true) } }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp, includeDescendants = true))
+                            Switch(checked = s.isEnabled, onCheckedChange = { value -> scope.launch { app.sources.toggle(s.id, value); vm.refresh(false) } }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp, includeDescendants = true))
                             IconButton({ vm.setActive(s.id) }) { Icon(if (vm.activeSource.value == s.id) Icons.Default.RadioButtonChecked else Icons.Default.RadioButtonUnchecked, null) }
                             IconButton({ renameOpen = true }) { Icon(Icons.Default.Edit, null) }
                             IconButton({ scope.launch { app.sources.pin(s.id, !s.isPinned); vm.refresh(false) } }) { Icon(Icons.Default.PushPin, null) }
-                            IconButton({ scope.launch { app.sources.duplicate(s.id); vm.refresh(true) } }) { Icon(Icons.Default.ContentCopy, null) }
+                            IconButton({ scope.launch { app.sources.duplicate(s.id); vm.refresh(false) } }) { Icon(Icons.Default.ContentCopy, null) }
                             IconButton({ scope.launch { app.sources.verify(s); vm.refresh(false) } }) { Icon(Icons.Default.Verified, null) }
                             IconButton({ vm.deleteSource(s.id) }) { Icon(Icons.Default.Delete, null) }
                         }

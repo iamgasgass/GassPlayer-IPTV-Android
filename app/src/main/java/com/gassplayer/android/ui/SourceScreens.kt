@@ -217,7 +217,8 @@ fun SourcesView(
                                     val next = sources.firstOrNull { it.id != source.id && it.isEnabled }
                                     app.sources.setActive(next?.id)
                                 }
-                                vm.refresh(true)
+                                // Attivare/disattivare usa la cache (rete solo se la sorgente non e' mai stata caricata).
+                                vm.refresh(false)
                             }
                         }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp, includeDescendants = true))
                         TextButton(onClick = { vm.setActive(source.id) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp)) { Text(if (activeId == source.id) "Attiva" else "Usa", color = if (activeId == source.id) SourcesGreen else SourcesBlue) }
@@ -533,7 +534,8 @@ private fun SourceManageView(
             scope.launch {
                 reloadLoading = true
                 val result = runCatching {
-                    if (active) vm.refresh(true).join() else app.sources.verify(current).getOrThrow()
+                    // "Ricarica" scarica di nuovo SOLO questa sorgente.
+                    if (active) vm.refresh(true, onlySources = setOf(current.id)).join() else app.sources.verify(current).getOrThrow()
                 }
                 if (!active) vm.refresh(false).join()
                 feedback = result.fold({ if (active) "Catalogo aggiornato." else "Sorgente verificata." }, { "Aggiornamento non riuscito: ${it.message ?: "errore sconosciuto"}" })

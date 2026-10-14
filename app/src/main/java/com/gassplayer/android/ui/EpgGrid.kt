@@ -87,7 +87,7 @@ import java.util.Locale
  *  - densities "compatta" (row 66, banner 80x58, header 40) / "comoda" (row 96, banner 86x76, header 44)
  *  - 160 dp every 30 minutes (5.333 dp/min), window = 30 min past .. 180 min future (day views centred on 12:00)
  *  - fixed channel column + horizontally scrolling programme tiles, live axis, quality badge pill, catch-up/favourite marks
- *  - "…" menu: Aspetto EPG, Assetti EPG, Colori EPG, Aggiorna guida, Solo preferiti, Ieri/Oggi/Domani
+ *  - "…" menu: Aspetto EPG, Assetti EPG, Colori EPG, Aggiorna guida, (Categorie TV) Aggiorna Live TV, Solo preferiti, Ieri/Oggi/Domani
  *  - 32 channels per page with "Carica altri N canali" (hard cap 250), 24 concurrent short-EPG requests
  */
 private const val PAGE = 32
@@ -235,6 +235,24 @@ internal fun EpgGridScreen(
     var renderLimit by remember { mutableIntStateOf(PAGE) }
     var selectedProgram by remember { mutableStateOf<Pair<MediaItem, EpgProgram>?>(null) }
     var toast by remember { mutableStateOf<String?>(null) }
+    // "Aggiorna Live TV" (Categorie TV): riscarica SOLO i canali live (le sezioni Film/Serie restano dalla cache) e,
+    // a fine aggiornamento, la guida si riallinea da sola ai canali nuovi (la lista `live` cambia).
+    var liveRefreshing by remember { mutableStateOf(false) }
+    val refreshLiveTv: () -> Unit = {
+        if (!liveRefreshing) {
+            liveRefreshing = true
+            toast = "Aggiornamento Live TV in corso…"
+            scope.launch {
+                try {
+                    vm.refresh(true, onlyKinds = setOf(MediaKind.LIVE)).join()
+                    val error = vm.message.value
+                    toast = if (error.isNullOrBlank()) "Live TV aggiornata" else "Aggiornamento Live TV non riuscito: $error"
+                } finally {
+                    liveRefreshing = false
+                }
+            }
+        }
+    }
     var refreshTick by remember { mutableIntStateOf(0) }
     var manualGuideRefreshTick by remember { mutableIntStateOf(0) }
     // Stable DPAD path on TV: preview/player or the ellipsis menu -> search -> first channel.
@@ -406,20 +424,27 @@ internal fun EpgGridScreen(
     // The signature changes only when an enabled feed or its credentials/URL change. The shared
     // session supplies its last good index synchronously; building a large XMLTV index is always
     // moved off Main, and Live TV does not force a network refresh on every tab return.
-    val guideInputKey = remember(external, sources, live) {
+    // Come iOS (EPGGridView + M3UPlaylistStore): le sorgenti Xtream NON scaricano l'XMLTV completo del provider
+    // (xmltv.php, spesso decine di MB da scaricare e indicizzare): la guida arriva canale per canale con
+    // get_short_epg, solo per i canali visibili. L'XMLTV si usa per le playlist M3U (indirizzi dichiarati
+    // nell'intestazione #EXTM3U) e per le fonti EPG esterne abilitate.
+    val headerGuideFeeds = remember(sources, live) {
         val usedSourceIds = live.sourceIds()
+        sources.filter { it.type == SourceType.M3U8 && it.isEnabled && it.id in usedSourceIds }.flatMap { source ->
+            app.catalog.m3uEpgUrls(source.id).map { url -> source to url }
+        }
+    }
+    val guideInputKey = remember(external, headerGuideFeeds) {
         buildList {
             external.filter { it.isEnabled }.forEach { add("external:${it.id}:${it.urlString.hashCode()}") }
-            sources.filter { it.type == SourceType.XTREAM && it.id in usedSourceIds && it.isEnabled }.forEach {
-                add("xtream:${it.id}:${it.host.hashCode()}:${it.username.orEmpty().hashCode()}:${it.password.orEmpty().hashCode()}")
-            }
+            headerGuideFeeds.forEach { (source, url) -> add("m3u:${source.id}:${url.hashCode()}") }
         }.sorted().joinToString("|")
     }
     val lastGuideRefresh = remember { intArrayOf(-1, -1) }
     val entryRefreshedFeedKeys = remember { mutableSetOf<String>() }
     val producedXmltvIndex by produceState<EpgGuideIndex?>(
         initialValue = session.cachedIndex(guideInputKey),
-        session, guideInputKey, external, sources, live, refreshTick, manualGuideRefreshTick, tvCategoryMode,
+        session, guideInputKey, external, headerGuideFeeds, refreshTick, manualGuideRefreshTick, tvCategoryMode,
     ) {
         // A return to Live TV with the same feed set reuses the already indexed XMLTV in memory.
         // The dedicated Guide section still revalidates automatically when opened, as requested.
@@ -435,14 +460,12 @@ internal fun EpgGridScreen(
         lastGuideRefresh[0] = refreshTick
         lastGuideRefresh[1] = manualGuideRefreshTick
 
-        val usedSourceIds = live.sourceIds()
         val externalFeeds = external.filter { it.isEnabled }
-        val providerFeeds = sources.filter {
-            it.type == SourceType.XTREAM && it.id in usedSourceIds && it.isEnabled
-        }
+        // Guida dichiarata dalle playlist M3U: indicizzata sotto l'id della sorgente (abbinamento per tvg-id locale).
+        val providerFeeds = headerGuideFeeds
         fun externalFeedKey(feed: ExternalEpgSource) = "external:${feed.id}:${feed.urlString.hashCode()}"
-        fun providerFeedKey(source: MediaSourceConfig) =
-            "xtream:${source.id}:${source.host.hashCode()}:${source.username.orEmpty().hashCode()}:${source.password.orEmpty().hashCode()}"
+        fun providerFeedKey(feed: Pair<MediaSourceConfig, String>) = "m3u:${feed.first.id}:${feed.second.hashCode()}"
+        fun providerCacheId(feed: Pair<MediaSourceConfig, String>) = "m3u_${feed.first.id}"
         val activeFeedKeys = externalFeeds.map { externalFeedKey(it) } + providerFeeds.map { providerFeedKey(it) }
         entryRefreshedFeedKeys.retainAll(activeFeedKeys.toSet())
         val downloadSemaphore = Semaphore(3)
@@ -462,11 +485,11 @@ internal fun EpgGridScreen(
                         }
                     }
                 }
-                val providerJobs = providerFeeds.map { source ->
+                val providerJobs = providerFeeds.map { feed ->
                     async(Dispatchers.IO) {
                         downloadSemaphore.withPermit {
                             try {
-                                source.id to app.epg.cachedXtreamXmltvGuide(source)
+                                feed.first.id to app.epg.cachedXmltvGuide(feed.second, providerCacheId(feed))
                             } catch (cancelled: CancellationException) {
                                 throw cancelled
                             } catch (_: Exception) {
@@ -478,7 +501,7 @@ internal fun EpgGridScreen(
                 (externalJobs + providerJobs).awaitAll().filterNotNull()
             }
         }
-        val cachedForIndex = cachedGuides.filter { it.second.programs.isNotEmpty() }
+        val cachedForIndex = cachedGuides.filter { it.second.programs.isNotEmpty() }.mergedBySource()
         val cachedPayloads = cachedForIndex.associate { it.first to it.second }
         if (cachedForIndex.isNotEmpty()) {
             val reusable = session.reusableIndex(guideInputKey, cachedPayloads)
@@ -509,13 +532,13 @@ internal fun EpgGridScreen(
                         }
                     }
                 }
-                val providerJobs = providerFeeds.map { source ->
+                val providerJobs = providerFeeds.map { feed ->
                     async(Dispatchers.IO) {
                         downloadSemaphore.withPermit {
                             try {
-                                val forceThisFeed = refreshAllFeeds || (!tvCategoryMode && providerFeedKey(source) !in entryRefreshedFeedKeys)
-                                val staleFallback = if (forceThisFeed) cachedById[source.id] ?: XmlTvGuide() else null
-                                source.id to app.epg.xtreamXmltvGuide(source, forceThisFeed, staleFallback)
+                                val forceThisFeed = refreshAllFeeds || (!tvCategoryMode && providerFeedKey(feed) !in entryRefreshedFeedKeys)
+                                val staleFallback = if (forceThisFeed) app.epg.cachedXmltvGuide(feed.second, providerCacheId(feed)) else null
+                                feed.first.id to app.epg.xmltvGuide(feed.second, providerCacheId(feed), forceThisFeed, staleFallback)
                             } catch (cancelled: CancellationException) {
                                 throw cancelled
                             } catch (_: Exception) {
@@ -529,7 +552,7 @@ internal fun EpgGridScreen(
         }
         // Mark only after all jobs finish, so a cancelled producer retries newly arrived feeds.
         entryRefreshedFeedKeys.addAll(activeFeedKeys)
-        val loadedForIndex = loadedGuides.filter { it.second.programs.isNotEmpty() }
+        val loadedForIndex = loadedGuides.filter { it.second.programs.isNotEmpty() }.mergedBySource()
         if (loadedForIndex.isNotEmpty()) {
             val loadedPayloads = loadedForIndex.associate { it.first to it.second }
             val reusable = session.reusableIndex(guideInputKey, loadedPayloads)
@@ -550,13 +573,18 @@ internal fun EpgGridScreen(
     // Resolve only rows that have no data yet or whose guide revision actually changed. Cached rows
     // remain visible during navigation, so the first frame after returning to Live TV is populated.
     val guideRevision = session.revision
-    LaunchedEffect(visible.map { it.id }, xmltvIndex, dayOffset, guideRevision, screenActive) {
+    // "Aggiorna guida" (come `reloadEPG(forceRefresh: true)` iOS): la guida breve dei canali visibili torna in rete.
+    val lastShortForcedTick = remember { intArrayOf(0) }
+    LaunchedEffect(visible.map { it.id }, xmltvIndex, dayOffset, guideRevision, screenActive, manualGuideRefreshTick) {
         if (!screenActive) return@LaunchedEffect
+        val forceShort = manualGuideRefreshTick != lastShortForcedTick[0]
+        lastShortForcedTick[0] = manualGuideRefreshTick
+        if (forceShort) app.epg.clearShortCache()
         val sem = Semaphore(MAX_CONCURRENT)
         coroutineScope {
             visible.filter { channel ->
                 val alreadyResolved = xmltvIndex != null && store.resolvedRevision[channel.id] == guideRevision
-                !alreadyResolved && (store.programs[channel.id] == null || xmltvIndex != null)
+                forceShort || (!alreadyResolved && (store.programs[channel.id] == null || xmltvIndex != null))
             }.map { ch ->
                 async(Dispatchers.IO) {
                     sem.withPermit {
@@ -567,7 +595,7 @@ internal fun EpgGridScreen(
                             var requestFailed = false
                             val streamId = ch.id.substringAfterLast(':')
                             val fullGuidePrograms = xmltvIndex?.find(ch.sourceId, ch.metadataTag, streamId, ch.title).orEmpty()
-                            if (found.isEmpty() && fullGuidePrograms.isEmpty() && source?.type == SourceType.XTREAM) {
+                            if ((found.isEmpty() || forceShort) && fullGuidePrograms.isEmpty() && source?.type == SourceType.XTREAM) {
                                 val result = try {
                                     Result.success(app.epg.shortEpg(source, streamId, SHORT_LIMIT))
                                 } catch (cancelled: CancellationException) {
@@ -575,7 +603,9 @@ internal fun EpgGridScreen(
                                 } catch (error: Exception) {
                                     Result.failure(error)
                                 }
-                                found = result.getOrDefault(emptyList())
+                                // Un aggiornamento fallito non cancella la guida gia' mostrata.
+                                val fetched = result.getOrDefault(emptyList())
+                                if (fetched.isNotEmpty() || found.isEmpty()) found = fetched
                                 requestFailed = result.isFailure
                             }
                             if (fullGuidePrograms.isNotEmpty()) {
@@ -708,6 +738,8 @@ internal fun EpgGridScreen(
                     refreshTick++
                 },
                 onFavoritesOnly = { favoritesOnly = !favoritesOnly },
+                onRefreshLive = refreshLiveTv,
+                liveRefreshing = liveRefreshing,
                 onDay = {
                     if (dayOffset != it) {
                         // XMLTV covers the previous/current/next-day window; changing the date
@@ -1029,6 +1061,8 @@ private fun TvEpgPreviewPanel(
     onFavoritesOnly: () -> Unit,
     onDay: (Int) -> Unit,
     onWatch: () -> Unit,
+    onRefreshLive: (() -> Unit)? = null,
+    liveRefreshing: Boolean = false,
     compactLayout: Boolean = false,
     onMoveDown: (() -> Boolean)? = null,
     modifier: Modifier = Modifier,
@@ -1097,6 +1131,8 @@ private fun TvEpgPreviewPanel(
                 onFavoritesOnly = onFavoritesOnly,
                 tvCategoryMode = true,
                 onDay = onDay,
+                onRefreshLive = onRefreshLive,
+                liveRefreshing = liveRefreshing,
             )
             Text(channel?.title ?: "Seleziona un canale", color = glassForeground(), fontSize = if (compactLayout) 13.sp else 22.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (current != null) {
@@ -1457,6 +1493,9 @@ private fun EpgTopBar(
     settings: AppSettings, favoritesOnly: Boolean,
     onSettings: (AppSettings) -> Unit, onRefresh: () -> Unit, onFavoritesOnly: () -> Unit, onDay: (Int) -> Unit,
     tvCategoryMode: Boolean = false,
+    /** Solo Categorie TV: "Aggiorna Live TV" sotto "Aggiorna guida". */
+    onRefreshLive: (() -> Unit)? = null,
+    liveRefreshing: Boolean = false,
 ) {
     var groupOpen by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
@@ -1491,6 +1530,13 @@ private fun EpgTopBar(
                         DropdownMenuItem({ Text("Colori EPG") }, { page = "colori" }, leadingIcon = { Icon(Icons.Default.Palette, null) }, trailingIcon = { Icon(Icons.Default.ChevronRight, null) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true))
                         HorizontalDivider()
                         DropdownMenuItem({ Text("Aggiorna guida") }, { onRefresh(); menuOpen = false }, leadingIcon = { Icon(Icons.Default.Refresh, null) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true))
+                        if (onRefreshLive != null) DropdownMenuItem(
+                            { Text(if (liveRefreshing) "Aggiornamento Live TV…" else "Aggiorna Live TV") },
+                            { onRefreshLive(); menuOpen = false },
+                            leadingIcon = { Icon(Icons.Default.LiveTv, null) },
+                            enabled = !liveRefreshing,
+                            modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true)
+                        )
                         DropdownMenuItem({ Text(if (favoritesOnly) "Mostra tutti" else "Solo preferiti") }, { onFavoritesOnly(); menuOpen = false },
                             leadingIcon = { Icon(if (favoritesOnly) Icons.Default.Star else Icons.Default.StarBorder, null) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true))
                         HorizontalDivider()
@@ -1557,4 +1603,16 @@ private fun Modifier.bleedLeft(bleed: Dp): Modifier = if (bleed <= 0.dp) this el
         )
     )
     layout((placeable.width - extra).coerceAtLeast(0), placeable.height) { placeable.place(-extra, 0) }
+}
+
+
+/** Piu' guide della stessa sorgente (piu' URL XMLTV in una playlist M3U) diventano una sola, come su iOS. */
+private fun List<Pair<String, XmlTvGuide>>.mergedBySource(): List<Pair<String, XmlTvGuide>> {
+    if (map { it.first }.distinct().size == size) return this
+    return groupBy({ it.first }, { it.second }).map { (id, guides) ->
+        id to if (guides.size == 1) guides[0] else XmlTvGuide(
+            programs = guides.flatMap { it.programs },
+            channels = guides.flatMap { it.channels }
+        )
+    }
 }

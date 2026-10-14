@@ -40,6 +40,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusProperties
@@ -93,14 +94,18 @@ fun LiquidGlassBackdrop(modifier: Modifier = Modifier, content: @Composable BoxS
                 )
             )
         )
-        Box(
-            Modifier.align(Alignment.TopEnd).fillMaxSize(.78f).background(
-                Brush.radialGradient(
-                    colors = if (light) listOf(Color(0xFF79A7D9).copy(alpha = .12f), Color.Transparent)
-                    else listOf(Color.Black, Color.Black),
-                    radius = 850f
+        // Secondo alone (in alto a destra), calcolato sulle dimensioni reali: niente riquadro tagliato su TV.
+        if (light) Box(
+            Modifier.fillMaxSize().drawBehind {
+                val radius = kotlin.math.hypot(size.width, size.height) * .45f
+                if (radius > 0f) drawRect(
+                    Brush.radialGradient(
+                        listOf(Color(0xFF79A7D9).copy(alpha = .12f), Color.Transparent),
+                        center = androidx.compose.ui.geometry.Offset(size.width * .61f, size.height * .39f),
+                        radius = radius
+                    )
                 )
-            )
+            }
         )
         Box(
             Modifier.fillMaxSize().background(
@@ -121,35 +126,41 @@ fun LiquidGlassBackdrop(modifier: Modifier = Modifier, content: @Composable BoxS
 @Composable
 private fun MediumBackdrop(modifier: Modifier, content: @Composable BoxScope.() -> Unit) {
     Box(
-        modifier.background(
-            Brush.verticalGradient(
-                // Profilo verticale misurato sulla foto di riferimento (colonna del contenuto).
-                0f to Color(0xFF080A13),
-                .125f to Color(0xFF0F131D),
-                .25f to Color(0xFF161C2A),
-                .375f to Color(0xFF1A2232),
-                .44f to Color(0xFF1D2435),
-                .50f to Color(0xFF182030),
-                .625f to Color(0xFF101622),
-                .75f to Color(0xFF080C14),
-                .875f to Color(0xFF04090C),
-                1f to Color(0xFF04060A)
-            )
-        )
-    ) {
-        // Alone blu più intenso sul lato sinistro, a metà schermo (come nelle foto).
-        // Centro dell'alone a ~45% della larghezza e ~40% dell'altezza (riquadro 90%×80% allineato in alto a sinistra).
-        Box(
-            Modifier.align(Alignment.TopStart).fillMaxWidth(.9f).fillMaxHeight(.8f).background(
+        modifier.drawBehind {
+            // Profilo verticale misurato sulla foto di riferimento (colonna del contenuto), steso su TUTTA l'altezza.
+            drawRect(MediumVerticalProfile)
+            // Alone blu a ~45% della larghezza e ~42% dell'altezza, calcolato sulle dimensioni REALI dello schermo:
+            // il raggio copre sempre l'intera area e sfuma a zero prima dei bordi, quindi nessun riquadro visibile
+            // (prima un riquadro fisso 90% x 80% con raggio in pixel da telefono mostrava un rettangolo su TV).
+            val center = androidx.compose.ui.geometry.Offset(size.width * .45f, size.height * .42f)
+            val radius = kotlin.math.hypot(size.width, size.height) * .62f
+            if (radius > 0f) drawRect(
                 Brush.radialGradient(
-                    colors = listOf(Color(0xFF1C2840).copy(alpha = .55f), Color(0xFF16203A).copy(alpha = .18f), Color.Transparent),
-                    radius = 1300f
+                    0f to Color(0xFF1C2840).copy(alpha = .55f),
+                    .55f to Color(0xFF16203A).copy(alpha = .18f),
+                    1f to Color.Transparent,
+                    center = center,
+                    radius = radius
                 )
             )
-        )
+        }
+    ) {
         content()
     }
 }
+
+private val MediumVerticalProfile = Brush.verticalGradient(
+    0f to Color(0xFF080A13),
+    .125f to Color(0xFF0F131D),
+    .25f to Color(0xFF161C2A),
+    .375f to Color(0xFF1A2232),
+    .44f to Color(0xFF1D2435),
+    .50f to Color(0xFF182030),
+    .625f to Color(0xFF101622),
+    .75f to Color(0xFF080C14),
+    .875f to Color(0xFF04090C),
+    1f to Color(0xFF04060A)
+)
 
 /** Layered glass card inspired by Views/LiquidGlass/GlassCard.swift. */
 @Composable

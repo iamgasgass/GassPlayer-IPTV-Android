@@ -157,8 +157,10 @@ class EpgGuideIndex private constructor(
                         add(globalNames, nameKey, programs)
                     }
                 }
-                idsBySource[sourceId] = sourceIds
-                namesBySource[sourceId] = sourceNames.mapValues { (_, values) -> deduplicate(values) }
+                // Piu' guide per la stessa sorgente (es. piu' URL XMLTV nella stessa playlist M3U): si uniscono.
+                idsBySource[sourceId] = idsBySource[sourceId]?.let { it + sourceIds } ?: sourceIds
+                val names = sourceNames.mapValues { (_, values) -> deduplicate(values) }
+                namesBySource[sourceId] = namesBySource[sourceId]?.let { it + names } ?: names
             }
 
             return EpgGuideIndex(

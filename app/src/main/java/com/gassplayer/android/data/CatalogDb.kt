@@ -22,6 +22,12 @@ class CatalogDb(context: Context) : SQLiteOpenHelper(context.applicationContext,
     override fun onConfigure(db: SQLiteDatabase) {
         super.onConfigure(db)
         db.enableWriteAheadLogging()
+        // Scritture in blocco (playlist da centinaia di migliaia di righe): con WAL `synchronous=NORMAL` resta
+        // sicuro (al massimo si perde l'ultima transazione in caso di blackout, mai la coerenza) ma evita un
+        // fsync per ogni commit; tabelle temporanee in RAM; cache pagine piu' ampia (16 MB) per gli indici.
+        runCatching { db.execSQL("PRAGMA synchronous=NORMAL") }
+        runCatching { db.execSQL("PRAGMA temp_store=MEMORY") }
+        runCatching { db.execSQL("PRAGMA cache_size=-16000") }
     }
 
     override fun onCreate(db: SQLiteDatabase) {
@@ -42,20 +48,41 @@ class CatalogDb(context: Context) : SQLiteOpenHelper(context.applicationContext,
     @kotlinx.serialization.Serializable
     private data class Cats(val live: List<Category> = emptyList(), val vod: List<Category> = emptyList(), val series: List<Category> = emptyList())
 
-    /** Replaces everything stored for [src] in one transaction (old data stays visible until commit). */
+    /**
+     * Replaces what is stored for [src] in one transaction (old data stays visible until commit).
+     * [keepKinds]: sections NOT replaced (their rows and categories stay as cached) — a section that failed to
+     * download, a section-only refresh ("Ricarica Live TV"), or the lazily cached series episodes. Like iOS, one
+     * failing section never wipes the others.
+     */
     @Synchronized
-    fun replaceSource(src: String, snapshot: SourceSnapshot) {
+    fun replaceSource(src: String, snapshot: SourceSnapshot, keepKinds: Set<MediaKind> = emptySet()) {
         val db = writableDatabase
+        val previousCats = if (keepKinds.isEmpty()) null else sourceMeta(src)
         db.beginTransaction()
         try {
-            db.delete("items", "src=?", arrayOf(src))
+            if (keepKinds.isEmpty()) {
+                db.delete("items", "src=?", arrayOf(src))
+            } else {
+                val placeholders = keepKinds.joinToString(",") { "?" }
+                db.delete("items", "src=? AND kind NOT IN ($placeholders)", arrayOf(src) + keepKinds.map { it.ordinal.toString() })
+            }
             val stmt = db.compileStatement("INSERT INTO items(src,kind,cat,id,sid,title,json) VALUES(?,?,?,?,?,?,?)")
             var count = 0
-            for (list in listOf(snapshot.live, snapshot.movies, snapshot.series, snapshot.episodes)) {
+            for ((kind, list) in listOf(MediaKind.LIVE to snapshot.live, MediaKind.MOVIE to snapshot.movies, MediaKind.SERIES to snapshot.series, MediaKind.EPISODE to snapshot.episodes)) {
+                if (kind in keepKinds) continue
                 for (item in list) { insert(stmt, src, item); count++ }
             }
             stmt.close()
-            val cats = JsonStore.json.encodeToString(Cats.serializer(), Cats(snapshot.liveCategories, snapshot.vodCategories, snapshot.seriesCategories))
+            if (keepKinds.isNotEmpty()) {
+                val placeholders = keepKinds.joinToString(",") { "?" }
+                count += db.rawQuery("SELECT COUNT(*) FROM items WHERE src=? AND kind IN ($placeholders)", arrayOf(src) + keepKinds.map { it.ordinal.toString() })
+                    .use { if (it.moveToFirst()) it.getInt(0) else 0 }
+            }
+            val cats = JsonStore.json.encodeToString(Cats.serializer(), Cats(
+                if (MediaKind.LIVE in keepKinds) previousCats?.liveCategories.orEmpty() else snapshot.liveCategories,
+                if (MediaKind.MOVIE in keepKinds) previousCats?.vodCategories.orEmpty() else snapshot.vodCategories,
+                if (MediaKind.SERIES in keepKinds) previousCats?.seriesCategories.orEmpty() else snapshot.seriesCategories
+            ))
             val cv = android.content.ContentValues().apply {
                 put("src", src); put("updatedAt", snapshot.updatedAt); put("categories", cats); put("cnt", count)
             }
@@ -139,7 +166,7 @@ class CatalogDb(context: Context) : SQLiteOpenHelper(context.applicationContext,
         stmt.bindString(4, item.id)
         item.seriesId?.let { stmt.bindString(5, it) }
         stmt.bindString(6, item.title)
-        stmt.bindString(7, JsonStore.json.encodeToString(MediaItem.serializer(), item))
+        stmt.bindString(7, RowJson.encodeToString(MediaItem.serializer(), item))
         stmt.executeInsert()
     }
 
@@ -313,9 +340,31 @@ class CatalogDb(context: Context) : SQLiteOpenHelper(context.applicationContext,
     internal fun scalar(sql: String, args: Array<String>): Int =
         readableDatabase.rawQuery(sql, args).use { if (it.moveToFirst()) it.getInt(0) else 0 }
 
-    private fun decode(json: String): MediaItem = JsonStore.json.decodeFromString(MediaItem.serializer(), json)
+    private fun decode(json: String): MediaItem = RowJson.decodeFromString(MediaItem.serializer(), json)
+
+    /**
+     * Playlist invariata (risposta HTTP 304): nessun download/parsing/scrittura, si aggiorna solo l'orario
+     * dell'ultima verifica cosi' la cache resta "fresca".
+     */
+    @Synchronized
+    fun touchSource(src: String, updatedAt: Long) {
+        val cv = android.content.ContentValues().apply { put("updatedAt", updatedAt) }
+        writableDatabase.update("meta", cv, "src=?", arrayOf(src))
+    }
 
     companion object {
+        /**
+         * JSON delle righe: SENZA i valori di default (liste/mappe vuote, false, null). Le righe sono molto piu'
+         * corte (meno byte da scrivere, indicizzare e rileggere a ogni pagina) e la decodifica le ricostruisce
+         * identiche, perche' ogni campo di MediaItem ha un default. Le righe gia' salvate restano leggibili.
+         */
+        internal val RowJson = kotlinx.serialization.json.Json {
+            ignoreUnknownKeys = true
+            encodeDefaults = false
+            explicitNulls = false
+            isLenient = true
+        }
+
         fun categoryOf(item: MediaItem): String? = (item.categoryId ?: item.group)?.takeIf { it.isNotBlank() }
     }
 }

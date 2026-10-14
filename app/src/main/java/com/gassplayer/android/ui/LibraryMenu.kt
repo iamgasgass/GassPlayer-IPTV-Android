@@ -212,7 +212,12 @@ internal fun LibraryHeader(
                         )
                         DropdownMenuItem(
                             text = { Text("Ricarica $kindLabel", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                            onClick = { vm.refresh(true); menuOpen = false },
+                            onClick = {
+                                // Solo la sezione aperta (Live TV / Film / Serie TV), come "Aggiorna" di ChannelGridView iOS.
+                                val sectionKind = runCatching { items.firstOrNull()?.kind }.getOrNull()
+                                vm.refresh(true, onlyKinds = sectionKind?.let { setOf(it) })
+                                menuOpen = false
+                            },
                             leadingIcon = { Icon(Icons.Default.Refresh, null) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true)
                         )
                     }

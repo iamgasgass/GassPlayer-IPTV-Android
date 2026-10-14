@@ -34,15 +34,23 @@ class XtreamRepository(private val api: NetworkApi) {
      * Failures are never swallowed silently: if nothing at all can be loaded the thrown error
      * explains why (credentials, HTML page, HTTP status, timeout...).
      */
-    suspend fun loadCatalog(source: MediaSourceConfig): CatalogBundle = coroutineScope {
+    suspend fun loadCatalog(
+        source: MediaSourceConfig,
+        /** Sezioni da scaricare (iOS `refresh(kind:)`): le altre non vengono richieste affatto. */
+        kinds: Set<MediaKind> = setOf(MediaKind.LIVE, MediaKind.MOVIE, MediaKind.SERIES),
+    ): CatalogBundle = coroutineScope {
         val creds = XtreamCredentials(serverBase(source.host), source.username.orEmpty(), source.password.orEmpty())
+        val wantLive = MediaKind.LIVE in kinds
+        val wantVod = MediaKind.MOVIE in kinds
+        val wantSeries = MediaKind.SERIES in kinds
+        val skipped: Result<List<Nothing>> = Result.success(emptyList())
         val authD = async { runCatching { authenticate(creds) } }
-        val liveCatD = async { runCatching { categories(creds, "get_live_categories", source) } }
-        val vodCatD = async { runCatching { categories(creds, "get_vod_categories", source) } }
-        val serCatD = async { runCatching { categories(creds, "get_series_categories", source) } }
-        val liveD = async { runCatching { withRetry { api.getJsonObjects(playerApi(creds, mapOf("action" to "get_live_streams"))) { it.toLiveOrNull(source, creds) } } } }
-        val vodD = async { runCatching { withRetry { api.getJsonObjects(playerApi(creds, mapOf("action" to "get_vod_streams"))) { it.toVodOrNull(source, creds) } } } }
-        val serD = async { runCatching { withRetry { api.getJsonObjects(playerApi(creds, mapOf("action" to "get_series"))) { it.toSeriesOrNull(source) } } } }
+        val liveCatD = async { if (wantLive) runCatching { categories(creds, "get_live_categories", source) } else skipped }
+        val vodCatD = async { if (wantVod) runCatching { categories(creds, "get_vod_categories", source) } else skipped }
+        val serCatD = async { if (wantSeries) runCatching { categories(creds, "get_series_categories", source) } else skipped }
+        val liveD = async { if (wantLive) runCatching { withRetry { api.getJsonObjects(playerApi(creds, mapOf("action" to "get_live_streams"))) { it.toLiveOrNull(source, creds) } } } else skipped }
+        val vodD = async { if (wantVod) runCatching { withRetry { api.getJsonObjects(playerApi(creds, mapOf("action" to "get_vod_streams"))) { it.toVodOrNull(source, creds) } } } else skipped }
+        val serD = async { if (wantSeries) runCatching { withRetry { api.getJsonObjects(playerApi(creds, mapOf("action" to "get_series"))) { it.toSeriesOrNull(source) } } } else skipped }
 
         val auth = authD.await()
         val liveCategories = liveCatD.await().getOrDefault(emptyList())
@@ -62,18 +70,18 @@ class XtreamRepository(private val api: NetworkApi) {
         // fallback instead of failing the entire Xtream source.
         var fallbackEpisodes = emptyList<MediaItem>()
         var fallbackError: Throwable? = null
-        if (series.isEmpty() || live.isEmpty() || movies.isEmpty()) {
+        if ((wantSeries && series.isEmpty()) || (wantLive && live.isEmpty()) || (wantVod && movies.isEmpty())) {
             runCatching {
                 api.readTextStream(xtreamPlaylist(creds), mapOf("Accept" to "application/vnd.apple.mpegurl, application/x-mpegURL, text/plain, */*")) { reader, finalUrl ->
                     M3UParser.parse(source.id, reader, NetworkApi.stripInlineHeaders(finalUrl))
                 }
             }.onFailure { fallbackError = it }.onSuccess { parsed ->
-                if (series.isEmpty()) series = parsed.filter { it.kind == MediaKind.SERIES }.distinctBy { it.id }
-                if (live.isEmpty()) {
+                if (wantSeries && series.isEmpty()) series = parsed.filter { it.kind == MediaKind.SERIES }.distinctBy { it.id }
+                if (wantLive && live.isEmpty()) {
                     live = parsed.filter { it.kind == MediaKind.LIVE }.mapIndexed { i, item -> item.copy(number = item.number ?: i + 1) }.distinctBy { it.id }
                 }
-                if (movies.isEmpty()) movies = parsed.filter { it.kind == MediaKind.MOVIE }.distinctBy { it.id }
-                fallbackEpisodes = parsed.filter { it.kind == MediaKind.EPISODE }.distinctBy { it.id }
+                if (wantVod && movies.isEmpty()) movies = parsed.filter { it.kind == MediaKind.MOVIE }.distinctBy { it.id }
+                if (wantSeries) fallbackEpisodes = parsed.filter { it.kind == MediaKind.EPISODE }.distinctBy { it.id }
             }
         }
 
@@ -83,7 +91,14 @@ class XtreamRepository(private val api: NetworkApi) {
                 "Xtream '${source.name}': nessun contenuto ricevuto" + (reason?.message?.let { " — $it" } ?: " (il provider ha risposto con liste vuote)")
             )
         }
-        CatalogBundle(liveCategories, vodCategories, seriesCategories, live, movies, series, fallbackEpisodes)
+        // Sezioni NON aggiornate: non richieste, oppure richiesta fallita senza alcun contenuto recuperato. Il
+        // chiamante conserva per queste i dati gia' in cache (un errore su una sezione non svuota le altre).
+        val keep = buildSet {
+            if (!wantLive || (liveR.isFailure && live.isEmpty())) add(MediaKind.LIVE)
+            if (!wantVod || (vodR.isFailure && movies.isEmpty())) add(MediaKind.MOVIE)
+            if (!wantSeries || (serR.isFailure && series.isEmpty())) add(MediaKind.SERIES)
+        }
+        CatalogBundle(liveCategories, vodCategories, seriesCategories, live, movies, series, fallbackEpisodes, keep)
     }
 
     /** iOS RetryPolicy: 3 attempts, 0.5 s doubling, only for transient backend errors (5xx/408/429). */
@@ -195,13 +210,19 @@ class XtreamRepository(private val api: NetworkApi) {
 
     suspend fun seriesEpisodes(source: MediaSourceConfig, seriesId: String, seriesTitleHint: String? = null): List<MediaItem> {
         val creds = XtreamCredentials(serverBase(source.host), source.username.orEmpty(), source.password.orEmpty())
+        val info = runCatching {
+            api.getJson(playerApi(creds, mapOf("action" to "get_series_info", "series_id" to seriesId))).jsonObject
+        }.getOrNull()
+        // A number of compatible Xtream panels expose a lighter streams endpoint instead of embedding the complete
+        // episode object in get_series_info. Requested ONLY when get_series_info has no episodes (prima veniva
+        // sempre richiesto: una seconda chiamata di rete a ogni apertura di una serie).
+        val infoHasEpisodes = info?.let { root ->
+            val episodes = root["episodes"]
+            (episodes is JsonObject && episodes.isNotEmpty()) || (episodes is JsonArray && episodes.isNotEmpty())
+        } == true
         val roots = buildList {
-            runCatching {
-                add(api.getJson(playerApi(creds, mapOf("action" to "get_series_info", "series_id" to seriesId))).jsonObject)
-            }
-            // A number of compatible Xtream panels expose a lighter streams endpoint instead of
-            // embedding the complete episode object in get_series_info. Try it only as a fallback.
-            runCatching {
+            info?.let { add(it) }
+            if (!infoHasEpisodes) runCatching {
                 add(api.getJson(playerApi(creds, mapOf("action" to "get_series_streams", "series_id" to seriesId))).jsonObject)
             }
         }.distinctBy { it.toString() }
@@ -450,7 +471,9 @@ class XtreamRepository(private val api: NetworkApi) {
 
 data class CatalogBundle(
     val liveCategories: List<Category>, val vodCategories: List<Category>, val seriesCategories: List<Category>,
-    val live: List<MediaItem>, val movies: List<MediaItem>, val series: List<MediaItem>, val episodes: List<MediaItem> = emptyList()
+    val live: List<MediaItem>, val movies: List<MediaItem>, val series: List<MediaItem>, val episodes: List<MediaItem> = emptyList(),
+    /** Sezioni non aggiornate da questo caricamento (da conservare dalla cache). */
+    val notRefreshed: Set<MediaKind> = emptySet()
 )
 
 private fun JsonElement?.asObjectList(): List<JsonObject> = when (this) {

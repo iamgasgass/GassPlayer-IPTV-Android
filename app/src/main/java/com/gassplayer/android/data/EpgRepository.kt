@@ -30,6 +30,9 @@ class EpgRepository(private val context: Context, private val api: NetworkApi) {
         }
     }
 
+    /** "Aggiorna guida": la prossima richiesta della guida breve torna in rete (iOS `forceRefresh`). */
+    fun clearShortCache() = shortCache.clear()
+
     suspend fun shortEpg(source: MediaSourceConfig, streamId: String, limit: Int = 40): List<EpgProgram> = withContext(Dispatchers.IO) {
         val key = "${source.id}:$streamId"
         shortCache[key]?.takeIf { System.currentTimeMillis() - it.first < SHORT_CACHE_TTL_MS }?.let { return@withContext it.second }

@@ -66,7 +66,38 @@ class NetworkApi {
      * [block] receives the reader and the final (redirected) URL, and runs on the IO dispatcher.
      */
     suspend fun <T> readTextStream(url: String, headers: Map<String, String> = emptyMap(), block: (java.io.BufferedReader, String) -> T): T =
-        execute(url, headers, "*/*") { response, _ ->
+        execute(url, headers, "*/*") { response, _ -> readTextBody(response, block) }
+
+    /** Esito di [readTextStreamIfChanged]. */
+    sealed interface Conditional<out T> {
+        /** Contenuto nuovo (o server che non supporta le richieste condizionali) + validatori da ricordare. */
+        data class Changed<T>(val value: T, val etag: String?, val lastModified: String?) : Conditional<T>
+        /** HTTP 304: la playlist non e' cambiata dall'ultimo download; nessun byte del corpo e' stato letto. */
+        data object NotModified : Conditional<Nothing>
+    }
+
+    /**
+     * Come [readTextStream], ma con richiesta condizionale (If-None-Match / If-Modified-Since) quando si
+     * conoscono i validatori dell'ultimo download: se il server risponde 304 la playlist non viene
+     * riscaricata ne' rianalizzata (ricarica istantanea delle liste statiche: GitHub, CDN, hosting web).
+     */
+    suspend fun <T> readTextStreamIfChanged(
+        url: String,
+        headers: Map<String, String> = emptyMap(),
+        etag: String? = null,
+        lastModified: String? = null,
+        block: (java.io.BufferedReader, String) -> T
+    ): Conditional<T> {
+        val conditional = LinkedHashMap(headers)
+        etag?.takeIf { it.isNotBlank() }?.let { conditional["If-None-Match"] = it }
+        lastModified?.takeIf { it.isNotBlank() }?.let { conditional["If-Modified-Since"] = it }
+        return execute(url, conditional, "*/*") { response, _ ->
+            if (response.code == 304) Conditional.NotModified
+            else Conditional.Changed(readTextBody(response, block), response.header("ETag"), response.header("Last-Modified"))
+        }
+    }
+
+    private fun <T> readTextBody(response: okhttp3.Response, block: (java.io.BufferedReader, String) -> T): T {
             val finalUrl = response.request.url.toString()
             var stream: java.io.InputStream = java.io.BufferedInputStream(response.body.source().inputStream(), 64 * 1024)
             stream.mark(2)
@@ -84,8 +115,8 @@ class NetworkApi {
             }
             sniffable.reset()
             val charset = sniffCharset(head, filled)
-            java.io.BufferedReader(java.io.InputStreamReader(sniffable, charset), 64 * 1024).use { reader -> block(reader, finalUrl) }
-        }
+            return java.io.BufferedReader(java.io.InputStreamReader(sniffable, charset), 64 * 1024).use { reader -> block(reader, finalUrl) }
+    }
 
     suspend fun getJson(url: String, headers: Map<String, String> = emptyMap()): JsonElement =
         JsonStore.json.parseToJsonElement(
@@ -268,7 +299,11 @@ class NetworkApi {
                 }
                 val call = (if (index == 0) client else fastClient).newCall(builder.build())
                 call.execute().use { response ->
-                    if (response.isSuccessful) {
+                    // 304 a una richiesta condizionale e' una risposta valida ("non cambiato"), non un errore.
+                    val notModified = response.code == 304 && requestHeaders.keys.any {
+                        it.equals("If-None-Match", true) || it.equals("If-Modified-Since", true)
+                    }
+                    if (response.isSuccessful || notModified) {
                         workingBase[key] = baseOf(candidate)
                         return@withContext block(response, candidate)
                     }
