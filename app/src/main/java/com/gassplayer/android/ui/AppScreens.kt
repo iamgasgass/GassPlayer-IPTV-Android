@@ -1252,10 +1252,15 @@ private fun MediaCard(
         LiquidGlassSurface(modifier = Modifier.fillMaxWidth(), cornerRadius = 18.dp, contentPadding = 0.dp, highlighted = focused) {
             Column {
                 Box(Modifier.fillMaxWidth().height(h).background(Color(0xFF0C0C0C))) {
-                    item.backdropUrl?.takeIf { item.kind != MediaKind.LIVE }?.let { AsyncImage(it, null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
-                    if (item.posterUrl != null && item.kind != MediaKind.LIVE) AsyncImage(item.posterUrl, null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                    if (item.kind != MediaKind.LIVE) {
+                        item.backdropUrl?.let { ArtworkImage(it, null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+                        // M3U movies/series only carry tvg-logo: use it as poster instead of an empty cell.
+                        ArtworkImage(item.posterUrl ?: item.logoUrl, item.title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop,
+                            fallback = { if (item.backdropUrl.isNullOrBlank()) ArtworkPlaceholderIcon(item.kind, size = 34.dp, alpha = .45f) })
+                    }
                     Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(.30f)))))
-                    if (item.kind == MediaKind.LIVE && item.logoUrl != null) AsyncImage(item.logoUrl, null, modifier = Modifier.fillMaxSize().padding(18.dp), contentScale = ContentScale.Fit)
+                    if (item.kind == MediaKind.LIVE) ArtworkImage(item.logoUrl ?: item.posterUrl, item.title, modifier = Modifier.fillMaxSize().padding(18.dp), contentScale = ContentScale.Fit,
+                        fallback = { ArtworkPlaceholderIcon(MediaKind.LIVE, size = 34.dp, alpha = .55f) })
                     if (onToggleFavorite != null) {
                         Surface(
                             onClick = onToggleFavorite,

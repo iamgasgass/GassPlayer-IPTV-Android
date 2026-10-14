@@ -1088,9 +1088,8 @@ private fun TvEpgPreviewPanel(
             border = BorderStroke(.8.dp, Color.White.copy(.16f)),
         ) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                if (!channel?.logoUrl.isNullOrBlank()) {
-                    AsyncImage(channel?.logoUrl, contentDescription = channel?.title, modifier = Modifier.fillMaxSize(.60f), contentScale = ContentScale.Fit)
-                } else Icon(Icons.Default.LiveTv, null, tint = Color.White.copy(.75f), modifier = Modifier.size(36.dp))
+                ArtworkImage(channel?.logoUrl, contentDescription = channel?.title, modifier = Modifier.fillMaxSize(.60f), contentScale = ContentScale.Fit,
+                    fallback = { Icon(Icons.Default.LiveTv, null, tint = Color.White.copy(.75f), modifier = Modifier.size(36.dp)) })
                 if (player != null && channel != null) {
                     AndroidView(
                         modifier = Modifier.fillMaxSize(),
@@ -1225,9 +1224,8 @@ private fun ChannelBanner(
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(displayNumber?.toString().orEmpty(), color = glassForeground(.68f), fontSize = 10.sp, maxLines = 1)
                         Box(Modifier.size(23.dp).clip(RoundedCornerShape(5.dp)).background(glassForeground(.10f)), contentAlignment = Alignment.Center) {
-                            if (!ch.logoUrl.isNullOrBlank()) {
-                                AsyncImage(model = ch.logoUrl, contentDescription = ch.title, modifier = Modifier.fillMaxSize().padding(1.dp), contentScale = ContentScale.Fit)
-                            } else Icon(Icons.Default.LiveTv, contentDescription = "Canale TV", tint = glassForeground(.8f), modifier = Modifier.size(15.dp))
+                            ArtworkImage(model = ch.logoUrl, contentDescription = ch.title, modifier = Modifier.fillMaxSize().padding(1.dp), contentScale = ContentScale.Fit,
+                                fallback = { Icon(Icons.Default.LiveTv, contentDescription = "Canale TV", tint = glassForeground(.8f), modifier = Modifier.size(15.dp)) })
                         }
                         Spacer(Modifier.weight(1f))
                         Icon(if (favorite) Icons.Default.Star else Icons.Default.StarBorder, contentDescription = if (favorite) "Canale preferito" else "Aggiungi ai preferiti con pressione prolungata", tint = if (favorite) Color(0xFFFFD60A) else glassForeground(.58f), modifier = Modifier.size(13.dp))
@@ -1259,16 +1257,13 @@ private fun ChannelBanner(
                             .background(glassForeground(.10f)),
                         contentAlignment = Alignment.Center,
                     ) {
-                        if (!ch.logoUrl.isNullOrBlank()) {
-                            AsyncImage(
-                                model = ch.logoUrl,
-                                contentDescription = ch.title,
-                                modifier = Modifier.fillMaxSize().padding(2.dp),
-                                contentScale = ContentScale.Fit,
-                            )
-                        } else {
-                            Icon(Icons.Default.LiveTv, contentDescription = "Canale TV", tint = glassForeground(.8f), modifier = Modifier.size(24.dp))
-                        }
+                        ArtworkImage(
+                            model = ch.logoUrl,
+                            contentDescription = ch.title,
+                            modifier = Modifier.fillMaxSize().padding(2.dp),
+                            contentScale = ContentScale.Fit,
+                            fallback = { Icon(Icons.Default.LiveTv, contentDescription = "Canale TV", tint = glassForeground(.8f), modifier = Modifier.size(24.dp)) },
+                        )
                     }
                     Column(
                         Modifier.weight(1f),
@@ -1295,21 +1290,20 @@ private fun ChannelBanner(
                     }
                 }
             } else {
-                if (!ch.logoUrl.isNullOrBlank()) {
-                    AsyncImage(
-                        model = ch.logoUrl,
-                        contentDescription = ch.title,
-                        modifier = Modifier.fillMaxSize().padding(if (compact) 8.dp else 12.dp),
-                        contentScale = ContentScale.Fit
-                    )
-                } else {
-                    Icon(
-                        Icons.Default.LiveTv,
-                        contentDescription = "Canale TV",
-                        tint = glassForeground(),
-                        modifier = Modifier.size(if (compact) 22.dp else 26.dp).align(Alignment.Center)
-                    )
-                }
+                ArtworkImage(
+                    model = ch.logoUrl,
+                    contentDescription = ch.title,
+                    modifier = Modifier.fillMaxSize().padding(if (compact) 8.dp else 12.dp),
+                    contentScale = ContentScale.Fit,
+                    fallback = {
+                        Icon(
+                            Icons.Default.LiveTv,
+                            contentDescription = "Canale TV",
+                            tint = glassForeground(),
+                            modifier = Modifier.size(if (compact) 22.dp else 26.dp)
+                        )
+                    }
+                )
                 if (favorite) {
                     Box(Modifier.align(Alignment.TopEnd).padding(4.dp).size(if (compact) 18.dp else 20.dp)
                         .clip(RoundedCornerShape(50)).background(Color.Black.copy(.34f)), contentAlignment = Alignment.Center) {

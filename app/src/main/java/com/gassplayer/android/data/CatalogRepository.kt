@@ -45,7 +45,10 @@ class CatalogRepository(private val context: Context, private val prefs: AppPref
      * all'istante mentre l'aggiornamento dalla rete prosegue in background. `null` se non c'e' nulla in cache.
      */
     suspend fun cachedState(): CatalogState? = withContext(Dispatchers.IO) {
-        val sources = prefs.sourcesFlow.first().filter { it.isEnabled }
+        val all = prefs.sourcesFlow.first()
+        // Bases used to resolve relative artwork paths (server / playlist URL of each source).
+        ArtworkUrls.registerSources(all)
+        val sources = all.filter { it.isEnabled }
         if (sources.isEmpty()) return@withContext null
         val metas = sources.mapNotNull { source ->
             runCatching { db.sourceMeta(source.id) }.getOrNull()?.takeIf { it.count > 0 && cacheMatchesConfig(source) }
@@ -67,6 +70,7 @@ class CatalogRepository(private val context: Context, private val prefs: AppPref
     ): CatalogState = refreshMutex.withLock {
         withContext(Dispatchers.IO) {
         val configured = prefs.sourcesFlow.first()
+        ArtworkUrls.registerSources(configured)
         val sources = configured.filter { it.isEnabled }
         val appSettings = prefs.settingsFlow.first()
         val errors = java.util.concurrent.CopyOnWriteArrayList<String>()
@@ -235,7 +239,7 @@ class CatalogRepository(private val context: Context, private val prefs: AppPref
         val fetched = runCatching { xtream.seriesEpisodes(source, seriesId, seriesTitle) }.getOrDefault(emptyList())
         if (fetched.isEmpty()) return@withContext cached
         runCatching { db.replaceEpisodes(sourceId, seriesId, fetched.distinctBy { it.id }) }
-        fetched
+        fetched.map(ArtworkUrls::normalize)
     }
 
     private fun deleteLegacyCaches() {

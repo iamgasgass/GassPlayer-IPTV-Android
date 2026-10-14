@@ -1,6 +1,9 @@
 package com.gassplayer.android
 
 import android.app.Application
+import coil3.ImageLoader
+import coil3.PlatformContext
+import coil3.SingletonImageLoader
 import com.gassplayer.android.data.*
 import com.gassplayer.android.media.PlaybackController
 import com.gassplayer.android.vpn.VpnController
@@ -10,7 +13,10 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
-class GassPlayerApplication : Application() {
+class GassPlayerApplication : Application(), SingletonImageLoader.Factory {
+    /** Icons/posters: tolerant loader for IPTV image servers (see ArtworkImageLoader). */
+    override fun newImageLoader(context: PlatformContext): ImageLoader = ArtworkImageLoader.create(context)
+
     /** Scope dell'app: sopravvive alle schermate (es. salvataggio della posizione alla chiusura del player). */
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -66,6 +72,8 @@ class GassPlayerApplication : Application() {
         mergedPlaylists = MergedPlaylistRepository(prefs)
         externalEpg = ExternalEpgRepository(prefs)
 
+        // Bases used to resolve relative artwork paths (server / playlist URL of each source).
+        appScope.launch { prefs.sourcesFlow.collect { ArtworkUrls.registerSources(it) } }
         appScope.launch {
             prefs.settingsFlow.collectLatest { settings ->
                 network.userAgent = settings.customUserAgent.trim().ifBlank { com.gassplayer.android.media.StreamUserAgents.DEFAULT_VLC }

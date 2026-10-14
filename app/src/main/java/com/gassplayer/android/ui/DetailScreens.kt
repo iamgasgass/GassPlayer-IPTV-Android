@@ -806,7 +806,7 @@ private fun MediaDetailHero(item: MediaItem, meta: MetadataResult?, height: andr
     val light = isGassLight()
     Box(Modifier.fillMaxWidth().height(height).background(Color.Black)) {
         val image = meta?.backdropUrl ?: item.backdropUrl ?: item.posterUrl
-        if (!image.isNullOrBlank()) AsyncImage(image, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        if (!image.isNullOrBlank()) ArtworkImage(image, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
         // SwiftUI uses a short fade at the bottom of the edge-to-edge hero, not a full-image dark veil.
         Box(
             Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(160.dp).background(
@@ -821,7 +821,7 @@ private fun MediaDetailHero(item: MediaItem, meta: MetadataResult?, height: andr
         ) {
             val logoUrl = meta?.logoUrl
             if (!logoUrl.isNullOrBlank()) {
-                AsyncImage(logoUrl, contentDescription = meta?.title, modifier = Modifier.fillMaxWidth(.72f).heightIn(max = 88.dp), contentScale = ContentScale.Fit)
+                ArtworkImage(logoUrl, contentDescription = meta?.title, modifier = Modifier.fillMaxWidth(.72f).heightIn(max = 88.dp), contentScale = ContentScale.Fit)
             } else {
                 Text(
                     meta?.title?.takeIf { it.isNotBlank() } ?: item.title,
@@ -951,7 +951,7 @@ private fun MediaDetailCast(
                     Row(Modifier.width(210.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         Box(Modifier.size(68.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFF333333), Color(0xFF171717)))), contentAlignment = Alignment.Center) {
                             if (!person.profileUrl.isNullOrBlank()) {
-                                AsyncImage(person.profileUrl, contentDescription = person.name, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                                ArtworkImage(person.profileUrl, contentDescription = person.name, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                             } else {
                                 Text(person.name.take(1).uppercase(), color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
                             }
@@ -1002,7 +1002,7 @@ private fun EpisodeDetailRow(
                 Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(topStart = 17.dp, topEnd = 17.dp)).background(Color(0xFF111111))) {
                     val image = episode.backdropUrl ?: episode.posterUrl
                     if (!image.isNullOrBlank()) {
-                        AsyncImage(image, contentDescription = episode.title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                        ArtworkImage(image, contentDescription = episode.title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                     } else {
                         Box(Modifier.fillMaxSize().background(Brush.linearGradient(listOf(Color(0xFF222222), Color(0xFF080808)))), contentAlignment = Alignment.Center) {
                             Icon(Icons.Default.PlayArrow, null, tint = Color.White.copy(.7f), modifier = Modifier.size(34.dp))
@@ -1219,7 +1219,7 @@ private fun TvMediaDetailLayoutContent(
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         if (!backdrop.isNullOrBlank()) {
-            AsyncImage(backdrop, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alpha = .62f)
+            ArtworkImage(backdrop, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alpha = .62f)
         }
         // Velo a sinistra (testo leggibile) e in basso (righe di episodi/cast leggibili), immagine visibile a destra.
         Box(
@@ -1249,7 +1249,7 @@ private fun TvMediaDetailLayoutContent(
                     Column(Modifier.weight(1f).padding(top = 6.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         val logoUrl = meta?.logoUrl
                         if (!logoUrl.isNullOrBlank()) {
-                            AsyncImage(
+                            ArtworkImage(
                                 logoUrl, contentDescription = title,
                                 modifier = Modifier.widthIn(max = 380.dp).heightIn(max = 92.dp),
                                 contentScale = ContentScale.Fit,
@@ -1297,6 +1297,15 @@ private fun TvMediaDetailLayoutContent(
     }
 }
 
+/** Solo un'immagine orizzontale: intera (Fit), mai ritagliata; senza immagini, l'iniziale del titolo. */
+@Composable
+private fun PosterSecondary(fallback: String?, title: String) {
+    val initial: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit = {
+        Text(title.take(1).uppercase(), color = Color.White.copy(.7f), fontSize = 54.sp, fontWeight = FontWeight.Bold)
+    }
+    ArtworkImage(fallback, contentDescription = title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit, fallback = initial)
+}
+
 @Composable
 private fun TvDetailPoster(poster: String?, fallback: String?, title: String) {
     val shape = RoundedCornerShape(14.dp)
@@ -1311,10 +1320,10 @@ private fun TvDetailPoster(poster: String?, fallback: String?, title: String) {
     ) {
         when {
             // Il poster è 2:3 come il riquadro: si vede intero.
-            !poster.isNullOrBlank() -> AsyncImage(poster, contentDescription = title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-            // Solo un'immagine orizzontale: intera (Fit), mai ritagliata.
-            !fallback.isNullOrBlank() -> AsyncImage(fallback, contentDescription = title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
-            else -> Text(title.take(1).uppercase(), color = Color.White.copy(.7f), fontSize = 54.sp, fontWeight = FontWeight.Bold)
+            // Se il poster non si scarica si passa all'immagine orizzontale e poi all'iniziale, mai un riquadro vuoto.
+            !poster.isNullOrBlank() -> ArtworkImage(poster, contentDescription = title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop,
+                fallback = { PosterSecondary(fallback, title) })
+            else -> PosterSecondary(fallback, title)
         }
     }
 }
@@ -1483,7 +1492,7 @@ private fun TvEpisodeCard(
             contentAlignment = Alignment.Center
         ) {
             val image = episode.backdropUrl ?: episode.posterUrl
-            if (!image.isNullOrBlank()) AsyncImage(image, contentDescription = episode.title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            if (!image.isNullOrBlank()) ArtworkImage(image, contentDescription = episode.title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
             else Icon(Icons.Default.PlayArrow, null, tint = Color.White.copy(.7f), modifier = Modifier.size(34.dp))
             if (focused) {
                 Box(Modifier.fillMaxSize().background(Color.Black.copy(.18f)))
@@ -1546,7 +1555,7 @@ private fun TvCastRow(names: List<String>, people: List<MetadataCastMember>) {
                             .border(BorderStroke(if (focused) 2.5.dp else 0.dp, if (focused) TvFocusAccent else Color.Transparent), CircleShape),
                         contentAlignment = Alignment.Center
                     ) {
-                        if (!person.profileUrl.isNullOrBlank()) AsyncImage(person.profileUrl, contentDescription = person.name, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                        if (!person.profileUrl.isNullOrBlank()) ArtworkImage(person.profileUrl, contentDescription = person.name, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                         else Text(person.name.take(1).uppercase(), color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
                     }
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {

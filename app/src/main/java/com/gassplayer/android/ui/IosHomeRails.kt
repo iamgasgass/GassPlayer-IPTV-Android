@@ -542,7 +542,7 @@ private fun RailArtwork(
     ) {
         if (!loaded) Icon(placeholder, contentDescription = null, tint = glassForeground(.45f), modifier = Modifier.size(30.dp))
         if (!url.isNullOrBlank()) {
-            AsyncImage(
+            ArtworkImage(
                 model = url,
                 contentDescription = null,
                 modifier = Modifier.fillMaxSize().then(if (fit) Modifier.padding(18.dp) else Modifier),

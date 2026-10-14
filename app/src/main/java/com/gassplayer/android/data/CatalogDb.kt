@@ -340,7 +340,8 @@ class CatalogDb(context: Context) : SQLiteOpenHelper(context.applicationContext,
     internal fun scalar(sql: String, args: Array<String>): Int =
         readableDatabase.rawQuery(sql, args).use { if (it.moveToFirst()) it.getInt(0) else 0 }
 
-    private fun decode(json: String): MediaItem = RowJson.decodeFromString(MediaItem.serializer(), json)
+    // Artwork URLs are normalized on read: playlists already cached get working icons/posters without a re-download.
+    private fun decode(json: String): MediaItem = ArtworkUrls.normalize(RowJson.decodeFromString(MediaItem.serializer(), json))
 
     /**
      * Playlist invariata (risposta HTTP 304): nessun download/parsing/scrittura, si aggiorna solo l'orario

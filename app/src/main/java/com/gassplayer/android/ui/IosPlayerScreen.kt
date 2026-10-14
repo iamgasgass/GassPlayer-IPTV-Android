@@ -1195,16 +1195,13 @@ private fun PlayerLiveCategoryRail(
                                                     Box(Modifier.width(22.dp), contentAlignment = Alignment.Center) {
                                                         Text(channel.number?.toString() ?: (index + 1).toString(), color = glassForeground(.50f), fontSize = 10.sp, maxLines = 1)
                                                     }
-                                                    if (!channel.logoUrl.isNullOrBlank()) {
-                                                        AsyncImage(
-                                                            model = channel.logoUrl,
-                                                            contentDescription = null,
-                                                            modifier = Modifier.size(if (compactLayout) 28.dp else 38.dp),
-                                                            contentScale = ContentScale.Fit,
-                                                        )
-                                                    } else {
-                                                        Icon(Icons.Default.LiveTv, contentDescription = null, tint = glassForeground(.55f), modifier = Modifier.size(22.dp))
-                                                    }
+                                                    ArtworkImage(
+                                                        model = channel.logoUrl,
+                                                        contentDescription = null,
+                                                        modifier = Modifier.size(if (compactLayout) 28.dp else 38.dp),
+                                                        contentScale = ContentScale.Fit,
+                                                        fallback = { Icon(Icons.Default.LiveTv, contentDescription = null, tint = glassForeground(.55f), modifier = Modifier.size(22.dp)) },
+                                                    )
                                                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
                                                         Text(channel.title, color = glassForeground(if (playing) 1f else .86f), fontSize = if (compactLayout) 11.sp else 13.sp, fontWeight = if (playing) FontWeight.SemiBold else FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                                         if (playing) Text("IN RIPRODUZIONE", color = Color(0xFFBBD0FF), fontSize = 8.sp, maxLines = 1)
@@ -1322,7 +1319,7 @@ private fun PlayerControlsOverlay(
             ) {
                 if (item.kind == MediaKind.LIVE && currentLiveProgram != null) {
                     item.logoUrl?.takeIf { it.isNotBlank() }?.let { logo ->
-                        AsyncImage(
+                        ArtworkImage(
                             model = logo,
                             contentDescription = null,
                             modifier = Modifier
