@@ -68,7 +68,9 @@ object ArtworkImageLoader {
             // Timeouts PER TENTATIVO, come iOS (timeoutIntervalForRequest 30 s per richiesta). Prima un callTimeout
             // globale di 90 s copriva TUTTI i tentativi: su un server https lento la chiamata veniva chiusa
             // ("InterruptedIOException: timeout <- Socket closed") prima di arrivare al ripiego http.
-            .connectTimeout(10, TimeUnit.SECONDS)
+            // 30 s come iOS (timeoutIntervalForRequest copre anche la connessione): alcuni server immagini dei provider
+            // accettano la connessione lentamente e con 10 s davano "connect timed out" dove iOS carica.
+            .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
             .writeTimeout(15, TimeUnit.SECONDS)
             .followRedirects(true)

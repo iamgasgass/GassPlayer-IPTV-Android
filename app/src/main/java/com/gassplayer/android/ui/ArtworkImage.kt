@@ -68,8 +68,14 @@ internal fun ArtworkImage(
         if (fallback != null) Box(modifier, contentAlignment = Alignment.Center, content = fallback)
         return
     }
+    // Inline `data:image/...;base64,` posters: decoded here and handed to Coil as bytes (no network).
+    val imageModel: Any? = remember(url) { if (url.startsWith("data:", ignoreCase = true)) decodeDataImage(url) else url }
+    if (imageModel == null) {
+        if (fallback != null) Box(modifier, contentAlignment = Alignment.Center, content = fallback)
+        return
+    }
     AsyncImage(
-        model = url,
+        model = imageModel,
         contentDescription = contentDescription,
         modifier = modifier,
         contentScale = contentScale,
@@ -84,6 +90,15 @@ internal fun ArtworkImage(
 }
 
 private const val MAX_ARTWORK_RETRIES = 3
+
+private fun decodeDataImage(uri: String): ByteArray? = runCatching {
+    val comma = uri.indexOf(',')
+    if (comma < 0) return null
+    val meta = uri.substring(0, comma)
+    val payload = uri.substring(comma + 1)
+    if (meta.contains(";base64", ignoreCase = true)) android.util.Base64.decode(payload, android.util.Base64.DEFAULT)
+    else java.net.URLDecoder.decode(payload, "UTF-8").toByteArray(Charsets.ISO_8859_1)
+}.getOrNull()?.takeIf { it.isNotEmpty() }
 
 /**
  * Logs every icon/poster that cannot be shown to Impostazioni -> Diagnostica (tag ARTWORK), once per address:

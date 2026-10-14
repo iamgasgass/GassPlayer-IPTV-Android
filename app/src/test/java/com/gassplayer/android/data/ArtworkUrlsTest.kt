@@ -77,4 +77,11 @@ class ArtworkUrlsTest {
         assertEquals("http://h.com/img/a.png", ArtworkUrls.clean("../img/a.png", "http://h.com/list/pl.m3u"))
         assertNull(ArtworkUrls.clean("http://h.com:abc/a.png"))
     }
+
+    @Test
+    fun inlineDataImagesAreKept() {
+        val data = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/\n2wCEAAkGBxMTEhUTExMWFhUXFxcYGBgXGB0Y"
+        assertEquals(data.replace("\n", ""), ArtworkUrls.clean(data))
+        assertNull(ArtworkUrls.clean("data:text/html;base64,PGh0bWw+"))
+    }
 }

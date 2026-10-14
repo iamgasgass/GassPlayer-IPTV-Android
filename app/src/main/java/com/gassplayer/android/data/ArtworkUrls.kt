@@ -85,6 +85,10 @@ object ArtworkUrls {
         if (raw == null) return null
         var text = raw.trim().trim('"', '\'').trim()
         if (text.isEmpty() || text.lowercase(Locale.ROOT) in placeholders) return null
+        // Poster incorporato dal provider (`data:image/jpeg;base64,...`): Coil lo decodifica senza rete.
+        if (text.regionMatches(0, "data:image/", 0, 11, ignoreCase = true)) {
+            return text.filterNot { it.isWhitespace() }.takeIf { it.contains(',') && it.length > 32 }
+        }
         // Fast path: an already valid absolute URL (the vast majority) is returned untouched.
         if (isCleanAbsolute(text)) return text
 
