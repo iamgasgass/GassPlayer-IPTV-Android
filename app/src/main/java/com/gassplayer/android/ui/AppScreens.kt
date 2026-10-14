@@ -2157,7 +2157,15 @@ private fun SearchScreen(
     val history by app.search.flow.collectAsStateWithLifecycle(SearchHistory())
     val scope = rememberCoroutineScope()
     val inputFocusRequester = remember { FocusRequester() }
-    val results = remember(submitted, catalog) { if (submitted.isBlank()) emptyList() else catalog?.search(submitted, 100).orEmpty() }
+    // Come iOS GlobalSearchService: la ricerca copre TUTTE le sorgenti abilitate (dalla cache su disco), non solo
+    // quella attiva mostrata nelle sezioni. Ripiega sul catalogo attivo finche' quello completo non e' pronto.
+    val allSourcesCatalog by produceState<CatalogState?>(initialValue = null, catalog?.updatedAt) {
+        value = runCatching { app.catalog.allSourcesLiveState() }.getOrNull()
+    }
+    val query = submitted.trim()
+    val results = remember(query, catalog, allSourcesCatalog) {
+        if (query.length < 2) emptyList() else (allSourcesCatalog ?: catalog)?.search(query, 100).orEmpty()
+    }
     Column(Modifier.focusGroup()) {
         EpgStyleSearchField(
             value = q,
@@ -2169,6 +2177,10 @@ private fun SearchScreen(
             inputFocusRequester = inputFocusRequester,
         )
         Spacer(Modifier.height(10.dp))
+        if (query.length == 1) {
+            Text("Inserisci almeno due caratteri per cercare canali, film e serie in tutte le tue sorgenti.", color = glassForeground().copy(.6f), fontSize = 13.sp)
+            Spacer(Modifier.height(8.dp))
+        }
         if (submitted.isBlank() && history.terms.isNotEmpty()) {
             Text("Ricerche recenti", color = glassForeground().copy(.6f))
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) { items(history.terms) { term -> AssistChip(onClick = { q = term; submitted = term }, label = { Text(term) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp)) } }

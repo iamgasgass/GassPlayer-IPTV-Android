@@ -33,11 +33,13 @@ import javax.net.ssl.X509TrustManager
  *  - SVG logos decoded (common for channel picons), 6 connections per host, 300 MB disk cache.
  */
 object ArtworkImageLoader {
+    // Header IDENTICI a iOS PosterDownloader (httpAdditionalHeaders): alcuni server immagini decidono in base a
+    // questi se servire l'immagine o un sostituto ("This image was hotlinked"); con lo User-Agent di Chrome Android
+    // rispondevano diversamente da iOS. Nessun Referer, come iOS.
     private const val USER_AGENT =
-        "Mozilla/5.0 (Linux; Android 12; Android TV) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
-    // Like iOS PosterDownloader, WITHOUT image/avif: CDNs that negotiate the format would send AVIF, which
-    // Android TV devices before Android 12 cannot decode (the poster stayed empty).
-    private const val ACCEPT = "image/webp,image/png,image/jpeg,image/svg+xml,image/*;q=0.8,*/*;q=0.5"
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+    private const val ACCEPT = "image/webp,image/png,image/jpeg,image/*;q=0.8,*/*;q=0.5"
+    private const val ACCEPT_LANGUAGE = "it-IT,it;q=0.9"
 
     fun create(context: PlatformContext): ImageLoader {
         val appContext: Context = context.applicationContext
@@ -89,8 +91,10 @@ object ArtworkImageLoader {
         override fun intercept(chain: Interceptor.Chain): Response {
             val request = chain.request()
             val builder = request.newBuilder()
-            if (request.header("User-Agent") == null) builder.header("User-Agent", USER_AGENT)
+            builder.header("User-Agent", USER_AGENT)
             builder.header("Accept", ACCEPT)
+            if (request.header("Accept-Language") == null) builder.header("Accept-Language", ACCEPT_LANGUAGE)
+            builder.removeHeader("Referer")
             return chain.proceed(builder.build())
         }
     }

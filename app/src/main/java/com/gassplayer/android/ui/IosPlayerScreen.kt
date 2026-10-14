@@ -213,11 +213,23 @@ fun IosPlayerScreen(
     val source = remember(sources, item.sourceId) {
         sources.firstOrNull { it.id == item.sourceId }
     }
-    val nextItem = remember(catalog, item.id) {
-        catalog?.nextFor(item)
+    // Episodi della serie caricati in background quando il catalogo non li ha ancora (ripresa da "Continua a
+    // guardare" senza aver mai aperto la scheda della serie): come SeriesResumePlayer.loadSeriesInfo su iOS, il
+    // player parte subito e, appena le info arrivano, abilita precedente/successivo e "Prossimo episodio".
+    var seriesEpisodes by remember(item.sourceId, item.seriesId) { mutableStateOf<List<MediaItem>?>(null) }
+    val nextItem = remember(catalog, item.id, seriesEpisodes) {
+        catalog?.nextFor(item) ?: seriesEpisodes?.episodeNeighbor(item, forward = true)
     }
-    val previousItem = remember(catalog, item.id) {
-        catalog?.previousFor(item)
+    val previousItem = remember(catalog, item.id, seriesEpisodes) {
+        catalog?.previousFor(item) ?: seriesEpisodes?.episodeNeighbor(item, forward = false)
+    }
+    LaunchedEffect(item.id, item.seriesId, item.sourceId) {
+        val seriesId = item.seriesId
+        if (!isSeriesEpisode || seriesId.isNullOrBlank()) return@LaunchedEffect
+        val known = seriesEpisodes?.any { it.id == item.id } == true
+        if (known || catalog?.nextFor(item) != null || catalog?.previousFor(item) != null) return@LaunchedEffect
+        val loaded = runCatching { app.catalog.loadSeriesEpisodes(item.sourceId, seriesId) }.getOrNull().orEmpty()
+        if (loaded.any { it.id == item.id }) seriesEpisodes = loaded
     }
 
     // "Prossimo episodio" (come PlayerView.showNextEpisodeButton su iOS): visibilita' calcolata qui, cosi' il
@@ -2284,7 +2296,20 @@ private fun CatalogState.neighborOf(item: MediaItem, forward: Boolean): MediaIte
         else -> emptyList()
     }
     val index = sequence.indexOfFirst { it.id == item.id }
+    // Elemento non presente (episodi della serie non ancora in cache): nessun vicino. Prima restituiva il
+    // PRIMO episodio della serie come "successivo".
+    if (index < 0) return null
     return if (forward) sequence.getOrNull(index + 1) else if (index > 0) sequence[index - 1] else null
+}
+
+/** Episodio precedente/successivo in una lista di episodi della stessa serie (stagione, episodio, titolo). */
+private fun List<MediaItem>.episodeNeighbor(item: MediaItem, forward: Boolean): MediaItem? {
+    val sequence = filter { it.kind == MediaKind.EPISODE && it.seriesId == item.seriesId && it.sourceId == item.sourceId }
+        .distinctBy { it.id }
+        .sortedWith(compareBy<MediaItem> { it.seasonNumber ?: Int.MAX_VALUE }.thenBy { it.episodeNumber ?: Int.MAX_VALUE }.thenBy { it.title })
+    val index = sequence.indexOfFirst { it.id == item.id }
+    if (index < 0) return null
+    return if (forward) sequence.getOrNull(index + 1) else sequence.getOrNull(index - 1)
 }
 
 private fun Context.findActivity(): Activity? {
@@ -2385,7 +2410,14 @@ private suspend fun recordWatchEntry(
     reset: Boolean = false,
 ) {
     val live = item.kind == MediaKind.LIVE
-    val previous = app.watch.flow.first().firstOrNull { it.contentId == item.id }
+    val entries = app.watch.flow.first()
+    val previous = entries.firstOrNull { it.contentId == item.id }
+    // Nuovo episodio di una serie gia' in "Continua a guardare": eredita immagine e categoria dell'episodio
+    // precedente (iOS SeriesResumePlayer: imageURLString: request.item.imageURLString), cosi' la card non
+    // perde il poster quando si passa al prossimo episodio.
+    val seriesSibling = if (previous == null && item.kind == MediaKind.EPISODE && item.seriesId != null)
+        entries.firstOrNull { it.kind == MediaKind.EPISODE && it.seriesId == item.seriesId && it.sourceId == item.sourceId }
+    else null
     var savedPosition = previous?.positionMs ?: 0L
     var savedDuration = previous?.durationMs ?: 0L
     if (reset) {
@@ -2415,7 +2447,9 @@ private suspend fun recordWatchEntry(
             season = item.seasonNumber,
             episode = item.episodeNumber,
             seriesId = item.seriesId,
-            sourceId = item.sourceId
+            sourceId = item.sourceId,
+            imageUrl = seriesSibling?.imageUrl,
+            subtitle = seriesSibling?.subtitle
         )
     )
 }
