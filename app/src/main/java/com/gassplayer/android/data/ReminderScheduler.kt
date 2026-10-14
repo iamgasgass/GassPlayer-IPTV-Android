@@ -25,7 +25,7 @@ class ReminderScheduler(private val context: Context) {
 class EpgReminderReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val title = intent.getStringExtra("title") ?: "Programma TV"; val description = intent.getStringExtra("description").orEmpty()
-        val notification = NotificationCompat.Builder(context, "gassplayer").setSmallIcon(com.gassplayer.android.R.drawable.ic_stat_gassplayer).setContentTitle(title).setContentText(description).setAutoCancel(true).build()
+        val notification = NotificationCompat.Builder(context, "gassplayer").setSmallIcon(com.gassplayer.android.R.drawable.gass_stat_clapper).setContentTitle(title).setContentText(description).setAutoCancel(true).build()
         runCatching { NotificationManagerCompat.from(context).notify(title.hashCode(), notification) }
     }
 }

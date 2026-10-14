@@ -9,7 +9,9 @@ import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -19,6 +21,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import kotlinx.coroutines.delay
 import com.gassplayer.android.data.ArtworkUrls
 import com.gassplayer.android.data.MediaKind
 
@@ -42,6 +45,17 @@ internal fun ArtworkImage(
 ) {
     val url = remember(model) { ArtworkUrls.clean(model) }
     var failed by remember(url) { mutableStateOf(false) }
+    var retries by remember(url) { mutableIntStateOf(0) }
+    // iOS PosterDownloader: a failure is never permanent. After a short pause (15 s) the image is requested
+    // again, also in views that stay on screen (EPG rows, player channel list), instead of keeping the
+    // placeholder until the view is rebuilt.
+    LaunchedEffect(url, failed) {
+        if (failed && url != null && retries < MAX_ARTWORK_RETRIES) {
+            delay(15_000L)
+            retries++
+            failed = false
+        }
+    }
     if (url == null || failed) {
         if (fallback != null) Box(modifier, contentAlignment = Alignment.Center, content = fallback)
         return
@@ -57,6 +71,8 @@ internal fun ArtworkImage(
         onError = { failed = true },
     )
 }
+
+private const val MAX_ARTWORK_RETRIES = 3
 
 /** Neutral icon shown when a channel/poster has no image or it cannot be downloaded. */
 @Composable

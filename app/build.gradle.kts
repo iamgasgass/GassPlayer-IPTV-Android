@@ -13,7 +13,7 @@ android {
         minSdk = 24
         // Match GassTV’s tested target while compiling against the newer SDK needed by current dependencies.
         targetSdk = 35
-        versionCode = 1000
+        versionCode = 1001
         versionName = "1.0.0-android"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true

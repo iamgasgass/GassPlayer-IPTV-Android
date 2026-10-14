@@ -45,6 +45,13 @@ object ArtworkUrls {
     }
 
     /**
+     * Like [firstValid] but returns the provider's ORIGINAL value (trimmed): what is stored in the catalog stays
+     * raw and is cleaned on read, so a future fix of [clean] applies to cached playlists without a re-download.
+     */
+    fun firstUsable(base: String?, vararg candidates: String?): String? =
+        candidates.firstOrNull { clean(it, base) != null }?.trim()
+
+    /**
      * Cleans the artwork of a catalog item and fills the field each view reads:
      *  - LIVE views read `logoUrl` -> falls back to the poster when the provider only sent that;
      *  - VOD/series/episode views read `posterUrl` -> falls back to `logoUrl` (M3U `tvg-logo`, which the
@@ -72,6 +79,9 @@ object ArtworkUrls {
 
         text = text.replace("\\/", "/")
         if (!text.contains("://")) text = text.replace('\\', '/')
+        // Kodi-style headers appended to the image (`logo.png|User-Agent=...`) are not part of the address.
+        if ('|' in text && text.substringAfter('|').contains('=')) text = text.substringBefore('|').trim()
+        if (text.isEmpty()) return null
 
         val lower = text.lowercase(Locale.ROOT)
         text = when {
@@ -81,12 +91,66 @@ object ArtworkUrls {
             looksLikeHost(text) -> "http://$text"
             else -> resolveRelative(text, base) ?: return null
         }
+        return rebuild(text)
+    }
 
-        val encoded = encode(text)
-        val uri = runCatching { java.net.URI(encoded) }.getOrNull() ?: return null
-        val scheme = uri.scheme?.lowercase(Locale.ROOT)
-        if ((scheme != "http" && scheme != "https") || uri.host.isNullOrEmpty()) return null
-        return encoded
+    /**
+     * Pieces of an absolute http(s) URL. Parsed by hand on purpose: `java.net.URI` rejects host names that
+     * OkHttp/Coil (and iOS `URL`) download without problems, e.g. `img_cdn.provider.tv` (underscore) or
+     * non-ASCII (IDN) hosts, and those channel logos / posters were silently dropped.
+     */
+    private class UrlParts(val scheme: String, val userInfo: String?, val host: String, val port: String?, val rest: String) {
+        val origin: String get() = buildString {
+            append(scheme).append("://")
+            if (userInfo != null) append(userInfo).append('@')
+            append(host)
+            if (port != null) append(':').append(port)
+        }
+    }
+
+    private fun split(url: String): UrlParts? {
+        val sep = url.indexOf("://")
+        if (sep <= 0) return null
+        val scheme = url.substring(0, sep).lowercase(Locale.ROOT)
+        if (scheme != "http" && scheme != "https") return null
+        val authorityStart = sep + 3
+        var authorityEnd = url.length
+        for (i in authorityStart until url.length) {
+            val c = url[i]
+            if (c == '/' || c == '?' || c == '#') { authorityEnd = i; break }
+        }
+        val authority = url.substring(authorityStart, authorityEnd)
+        val at = authority.lastIndexOf('@')
+        val userInfo = if (at >= 0) authority.substring(0, at) else null
+        val hostPort = authority.substring(at + 1)
+        val rawHost: String
+        val port: String?
+        if (hostPort.startsWith("[")) {
+            val close = hostPort.indexOf(']')
+            if (close < 0) return null
+            rawHost = hostPort.substring(0, close + 1)
+            port = hostPort.substring(close + 1).removePrefix(":").ifEmpty { null }
+        } else {
+            val colon = hostPort.lastIndexOf(':')
+            rawHost = if (colon >= 0) hostPort.substring(0, colon) else hostPort
+            port = if (colon >= 0) hostPort.substring(colon + 1).ifEmpty { null } else null
+        }
+        if (port != null && (port.length > 5 || !port.all { it in '0'..'9' })) return null
+        val host = if (rawHost.startsWith("[")) rawHost else {
+            if (rawHost.isEmpty()) return null
+            val ascii = if (rawHost.all { it.code < 128 }) rawHost
+                else runCatching { java.net.IDN.toASCII(rawHost, java.net.IDN.ALLOW_UNASSIGNED) }.getOrNull() ?: return null
+            // Same host characters OkHttp accepts for a request (underscore included).
+            if (ascii.isEmpty() || !ascii.all { (it in 'a'..'z') || (it in 'A'..'Z') || (it in '0'..'9') || it == '.' || it == '-' || it == '_' }) return null
+            ascii
+        }
+        return UrlParts(scheme, userInfo?.let { encode(it) }, host, port, url.substring(authorityEnd))
+    }
+
+    /** Absolute URL -> canonical downloadable form (host checked/IDN-converted, the rest percent-encoded once). */
+    private fun rebuild(url: String): String? {
+        val parts = split(url) ?: return null
+        return parts.origin + encode(parts.rest)
     }
 
     private fun isCleanAbsolute(text: String): Boolean {
@@ -99,7 +163,9 @@ object ArtworkUrls {
             if (i + 2 >= text.length || !text[i + 1].isHex() || !text[i + 2].isHex()) return false
             i = text.indexOf('%', i + 1)
         }
-        return runCatching { !java.net.URI(text).host.isNullOrEmpty() }.getOrDefault(false)
+        val parts = split(text) ?: return false
+        // Untouched only when nothing would change (scheme case, IDN host...).
+        return text.startsWith(parts.origin)
     }
 
     /** `cdn.example.com/logo.png` (no scheme): first segment is a hostname with a TLD. */
@@ -109,25 +175,32 @@ object ArtworkUrls {
         val host = text.substring(0, slash).substringBefore(':')
         if (!host.contains('.')) return false
         val tld = host.substringAfterLast('.')
-        return tld.length in 2..12 && tld.all { it.isLetter() } && host.all { it.isLetterOrDigit() || it == '.' || it == '-' }
+        return tld.length in 2..12 && tld.all { it.isLetter() } && host.all { it.isLetterOrDigit() || it == '.' || it == '-' || it == '_' }
     }
 
     private fun schemeOf(base: String?): String? =
         base?.substringBefore("://", "")?.lowercase(Locale.ROOT)?.takeIf { it == "http" || it == "https" }
 
-    /** `/x.png` -> server origin + path; `x.png` -> resolved against the playlist/server URL. */
+    /**
+     * `/x.png` -> server origin + path (iOS `PosterImageStore.url`); `x.png` -> next to the playlist file
+     * (for an Xtream server, whose base has no path, that is the server root as on iOS).
+     */
     private fun resolveRelative(path: String, base: String?): String? {
         if (base.isNullOrBlank()) return null
-        val baseUri = runCatching { java.net.URI(encode(base)) }.getOrNull() ?: return null
-        val scheme = baseUri.scheme ?: return null
-        val host = baseUri.host ?: return null
-        val origin = buildString {
-            append(scheme).append("://").append(host)
-            if (baseUri.port > 0) append(':').append(baseUri.port)
-        }
+        val parts = split(base.trim()) ?: return null
+        val origin = parts.scheme + "://" + parts.host + (parts.port?.let { ":$it" } ?: "")
         if (path.startsWith("/")) return origin + path
-        return runCatching { baseUri.resolve(java.net.URI(encode(path))).toString() }.getOrNull()
-            ?: "$origin/$path"
+        val basePath = parts.rest.substringBefore('#').substringBefore('?')
+        val dir = if (basePath.isEmpty()) "/" else basePath.substringBeforeLast('/', "") + "/"
+        val segments = ArrayList<String>()
+        for (segment in (dir + path).split('/')) {
+            when (segment) {
+                "", "." -> Unit
+                ".." -> if (segments.isNotEmpty()) segments.removeAt(segments.size - 1)
+                else -> segments += segment
+            }
+        }
+        return origin + "/" + segments.joinToString("/") + if (path.endsWith("/")) "/" else ""
     }
 
     private fun isAllowed(c: Char): Boolean =

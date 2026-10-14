@@ -7,6 +7,7 @@ import coil3.disk.DiskCache
 import coil3.memory.MemoryCache
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import coil3.svg.SvgDecoder
+import okhttp3.ConnectionSpec
 import okhttp3.Dispatcher
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
@@ -71,6 +72,9 @@ object ArtworkImageLoader {
             .followSslRedirects(true)
             .sslSocketFactory(ssl.socketFactory, trustAll)
             .hostnameVerifier { _, _ -> true }
+            // iOS (ATS aperto) scarica anche da server immagini con TLS 1.0/1.1 o cifrari datati; OkHttp di default
+            // (MODERN_TLS) rifiutava l'handshake e l'icona restava vuota.
+            .connectionSpecs(listOf(ConnectionSpec.MODERN_TLS, ConnectionSpec.COMPATIBLE_TLS, ConnectionSpec.CLEARTEXT))
             .addInterceptor(HeadersInterceptor)
             .addInterceptor(RetryAndFallbackInterceptor)
             .build()
@@ -121,12 +125,17 @@ object ArtworkImageLoader {
             return lastResponse ?: throw (lastError ?: IOException("Immagine non disponibile: ${original.url}"))
         }
 
-        private fun Int.isTransient() = this == 408 || this == 429 || this in 500..599
+        // Same retryable statuses as iOS PosterDownloader (408, 425, 429, 5xx incl. 509/512/52x).
+        private fun Int.isTransient() = this == 408 || this == 425 || this == 429 || this in 500..599
 
-        // DNS failures and TLS errors are not retried on the same URL (the http fallback still runs).
+        // Like iOS (timedOut, networkConnectionLost, cannotConnectToHost, dnsLookupFailed, cannotFindHost): retried.
+        // TLS errors are not retried on the same URL (the http fallback still runs).
         private fun IOException.isTransient() =
             this is SocketTimeoutException || this is java.net.ConnectException ||
-                (this is InterruptedIOException && message?.contains("timeout", true) == true)
+                this is java.net.UnknownHostException || this is java.net.NoRouteToHostException ||
+                this is java.net.SocketException ||
+                (this is InterruptedIOException && message?.contains("timeout", true) == true) ||
+                message?.contains("unexpected end of stream", true) == true
 
         private fun backoff(attempt: Int) {
             try { Thread.sleep(300L shl attempt) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }

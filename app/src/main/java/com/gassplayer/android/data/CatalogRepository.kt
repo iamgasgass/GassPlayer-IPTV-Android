@@ -291,7 +291,7 @@ class CatalogRepository(private val context: Context, private val prefs: AppPref
 
     private companion object {
         /** Incrementare quando cambia il modo in cui icone/poster vengono letti dalla playlist o dal pannello. */
-        const val ARTWORK_PARSE_VERSION = 1
+        const val ARTWORK_PARSE_VERSION = 2
     }
     fun cacheCount(): Int = runCatching { db.cachedSourceCount() }.getOrDefault(0)
 }

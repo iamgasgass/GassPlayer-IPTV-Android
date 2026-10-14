@@ -65,4 +65,16 @@ class ArtworkUrlsTest {
         assertEquals("http://panel.example.com:8080/img/a.png", ArtworkUrls.firstValid(xtream, null, "/img/a.png"))
         assertNull(ArtworkUrls.firstValid(null, null, "null", "images/x.png"))
     }
+
+    @Test
+    fun hostsAcceptedByTheImageLoaderAreKept() {
+        // java.net.URI rejected these: the logo/poster was dropped although OkHttp and iOS download it.
+        assertEquals("http://img_cdn.example.com/logo.png", ArtworkUrls.clean("http://img_cdn.example.com/logo.png"))
+        assertEquals("http://" + java.net.IDN.toASCII("rè.it") + "/a.png", ArtworkUrls.clean("http://rè.it/a.png"))
+        assertEquals("http://h.com/x.png", ArtworkUrls.clean("HTTP://h.com/x.png"))
+        assertEquals("http://h.com/x.png?w=2", ArtworkUrls.clean("http://h.com/x.png?w=2|User-Agent=VLC"))
+        assertEquals("http://h.com/list/img/a.png", ArtworkUrls.clean("img/a.png", "http://h.com/list/pl.m3u"))
+        assertEquals("http://h.com/img/a.png", ArtworkUrls.clean("../img/a.png", "http://h.com/list/pl.m3u"))
+        assertNull(ArtworkUrls.clean("http://h.com:abc/a.png"))
+    }
 }

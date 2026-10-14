@@ -442,7 +442,7 @@ class XtreamRepository(private val api: NetworkApi) {
     private fun artwork(source: MediaSourceConfig, vararg candidates: String?): String? {
         if (candidates.all { it == null }) return null
         val base = ArtworkUrls.baseFor(source.id) ?: runCatching { serverBase(source.host) }.getOrNull()
-        return ArtworkUrls.firstValid(base, *candidates)
+        return ArtworkUrls.firstUsable(base, *candidates)
     }
 
     private fun mimeForExtension(ext: String): String? = when (ext.lowercase(Locale.ROOT).trimStart('.')) {

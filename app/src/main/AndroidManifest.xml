@@ -19,13 +19,13 @@
         android:hardwareAccelerated="true"
         android:largeHeap="true"
         android:usesCleartextTraffic="true"
-        android:icon="@mipmap/ic_launcher"
-        android:roundIcon="@mipmap/ic_launcher_round"
-        android:logo="@drawable/tv_banner"
+        android:icon="@mipmap/gass_launcher"
+        android:roundIcon="@mipmap/gass_launcher_round"
+        android:logo="@drawable/gass_tv_banner"
         android:label="@string/app_name"
         android:theme="@style/Theme.GassPlayer"
         android:supportsRtl="true"
-        android:banner="@drawable/tv_banner">
+        android:banner="@drawable/gass_tv_banner">
 
         <activity
             android:name=".ui.MainActivity"
@@ -38,10 +38,10 @@
             android:screenOrientation="fullUser"
             android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode"
             android:theme="@style/Theme.GassPlayer"
-            android:icon="@mipmap/ic_launcher"
-            android:roundIcon="@mipmap/ic_launcher_round"
-            android:banner="@drawable/tv_banner"
-            android:logo="@drawable/tv_banner">
+            android:icon="@mipmap/gass_launcher"
+            android:roundIcon="@mipmap/gass_launcher_round"
+            android:banner="@drawable/gass_tv_banner"
+            android:logo="@drawable/gass_tv_banner">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
