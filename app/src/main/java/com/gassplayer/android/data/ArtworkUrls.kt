@@ -35,6 +35,17 @@ object ArtworkUrls {
 
     fun baseFor(sourceId: String): String? = bases[sourceId]
 
+    /** Diagnostics hook: a non-empty provider value dropped as unusable (title, raw value). Set by the Application. */
+    @Volatile var onDiscarded: ((String, String) -> Unit)? = null
+
+    private fun cleanReporting(item: MediaItem, raw: String?, base: String?): String? {
+        val cleaned = clean(raw, base)
+        if (cleaned == null && !raw.isNullOrBlank() && raw.trim().lowercase(Locale.ROOT) !in placeholders) {
+            onDiscarded?.let { report -> runCatching { report(item.title, raw + if (base == null) " (base sorgente non registrata)" else "") } }
+        }
+        return cleaned
+    }
+
     /**
      * First candidate that is a usable image URL (cleaned). Unlike `a ?: b ?: c`, a non-empty but unusable
      * value (`"none"`, `"0"`, a broken path) does not hide a valid fallback field.
@@ -60,9 +71,9 @@ object ArtworkUrls {
      */
     fun normalize(item: MediaItem): MediaItem {
         val base = bases[item.sourceId]
-        val logo = clean(item.logoUrl, base)
-        val poster = clean(item.posterUrl, base)
-        val backdrop = clean(item.backdropUrl, base)
+        val logo = cleanReporting(item, item.logoUrl, base)
+        val poster = cleanReporting(item, item.posterUrl, base)
+        val backdrop = cleanReporting(item, item.backdropUrl, base)
         val finalLogo = if (item.kind == MediaKind.LIVE) logo ?: poster else logo
         val finalPoster = if (item.kind == MediaKind.LIVE) poster else poster ?: logo
         if (finalLogo == item.logoUrl && finalPoster == item.posterUrl && backdrop == item.backdropUrl) return item

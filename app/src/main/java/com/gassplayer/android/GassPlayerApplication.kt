@@ -72,6 +72,13 @@ class GassPlayerApplication : Application(), SingletonImageLoader.Factory {
         mergedPlaylists = MergedPlaylistRepository(prefs)
         externalEpg = ExternalEpgRepository(prefs)
 
+        // Diagnostica (Impostazioni -> Diagnostica, tag ARTWORK): valori immagine del provider scartati.
+        val discardedArtwork = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<String, Boolean>())
+        ArtworkUrls.onDiscarded = { title, raw ->
+            if (discardedArtwork.size < 300 && discardedArtwork.add(raw)) {
+                appScope.launch { runCatching { diagnostics.log("WARN", "ARTWORK", "Immagine scartata per \"$title\": valore provider=\"${raw.take(400)}\"") } }
+            }
+        }
         // Bases used to resolve relative artwork paths (server / playlist URL of each source).
         appScope.launch { prefs.sourcesFlow.collect { ArtworkUrls.registerSources(it) } }
         appScope.launch {

@@ -19,7 +19,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.gassplayer.android.GassPlayerApplication
+import kotlinx.coroutines.launch
 import coil3.compose.AsyncImage
 import kotlinx.coroutines.delay
 import com.gassplayer.android.data.ArtworkUrls
@@ -44,6 +47,11 @@ internal fun ArtworkImage(
     fallback: (@Composable BoxScope.() -> Unit)? = null,
 ) {
     val url = remember(model) { ArtworkUrls.clean(model) }
+    val context = LocalContext.current
+    // Diagnostica: un valore del provider presente ma scartato come indirizzo non valido.
+    LaunchedEffect(model, url) {
+        if (url == null && !model.isNullOrBlank()) ArtworkDiagnostics.report(context, model, null, "indirizzo scartato (non valido)")
+    }
     var failed by remember(url) { mutableStateOf(false) }
     var retries by remember(url) { mutableIntStateOf(0) }
     // iOS PosterDownloader: a failure is never permanent. After a short pause (15 s) the image is requested
@@ -68,11 +76,45 @@ internal fun ArtworkImage(
         alignment = alignment,
         alpha = alpha,
         onSuccess = { onSuccess?.invoke() },
-        onError = { failed = true },
+        onError = { state ->
+            ArtworkDiagnostics.report(context, model, url, state.result.throwable.describe())
+            failed = true
+        },
     )
 }
 
 private const val MAX_ARTWORK_RETRIES = 3
+
+/**
+ * Logs every icon/poster that cannot be shown to Impostazioni -> Diagnostica (tag ARTWORK), once per address:
+ * raw provider value, address requested and the exact reason (HTTP status, DNS, TLS, undecodable image...).
+ */
+internal object ArtworkDiagnostics {
+    private val seen = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<String, Boolean>())
+    private const val MAX_PER_SESSION = 300
+
+    fun report(context: android.content.Context, raw: String?, url: String?, reason: String) {
+        val key = url ?: raw ?: return
+        if (seen.size >= MAX_PER_SESSION || !seen.add(key)) return
+        val app = context.applicationContext as? GassPlayerApplication ?: return
+        val line = buildString {
+            append("Immagine non caricata: ").append(reason)
+            append(" | valore provider=\"").append(raw.orEmpty().take(400)).append('"')
+            if (url != null && url != raw) append(" | richiesto=").append(url.take(400))
+        }
+        app.appScope.launch { runCatching { app.diagnostics.log("WARN", "ARTWORK", line) } }
+    }
+}
+
+private fun Throwable.describe(): String {
+    var t: Throwable? = this
+    val parts = ArrayList<String>()
+    while (t != null && parts.size < 3) {
+        parts += (t.javaClass.simpleName + (t.message?.let { ": " + it.take(200) } ?: ""))
+        t = t.cause?.takeIf { it !== t }
+    }
+    return parts.joinToString(" <- ")
+}
 
 /** Neutral icon shown when a channel/poster has no image or it cannot be downloaded. */
 @Composable
