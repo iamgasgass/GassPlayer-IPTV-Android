@@ -311,6 +311,9 @@ class PlaybackController(
 
     private var previewPlayerInstance: ExoPlayer? = null
     private var previewPlayerUrl: String? = null
+    private val _previewFailed = MutableStateFlow(false)
+    /** Il player dell'anteprima non riesce a decodificare questo flusso: si usa la lettura a fotogrammi. */
+    val previewFailed: StateFlow<Boolean> = _previewFailed
 
     /** Player dell'anteprima per il contenuto attuale (null per la Live TV). Thread principale. */
     fun previewPlayer(): ExoPlayer? {
@@ -346,8 +349,10 @@ class PlaybackController(
         val builder = Builder().setUri(url)
         val explicitMime = item.streamMimeType?.takeIf { url == item.streamUrl }
         mimeTypeFor(url, explicitMime)?.let(builder::setMimeType)
+        _previewFailed.value = false
         val created = runCatching {
             ExoPlayer.Builder(context)
+                .setRenderersFactory(previewRenderersFactory())
                 .setTrackSelector(selector)
                 .setLoadControl(loadControl)
                 .setMediaSourceFactory(
@@ -360,10 +365,18 @@ class PlaybackController(
                     playWhenReady = false
                     setSeekParameters(SeekParameters.CLOSEST_SYNC)
                     setScrubbingMode(this, true)
+                    addListener(object : Player.Listener {
+                        override fun onPlayerError(error: PlaybackException) {
+                            _previewFailed.value = true
+                        }
+                    })
                     setMediaItem(builder.build())
                     prepare()
                 }
-        }.getOrNull() ?: return null
+        }.getOrNull() ?: run {
+            _previewFailed.value = true
+            return null
+        }
         previewPlayerInstance = created
         previewPlayerUrl = url
         return created
@@ -373,6 +386,20 @@ class PlaybackController(
     fun previewSeek(positionMs: Long) {
         previewPlayer()?.seekTo(positionMs.coerceAtLeast(0L))
     }
+
+    /**
+     * Decoder SOFTWARE per primi: sui box/TV spesso c'e' un solo decoder hardware video, gia' occupato dal
+     * player principale; il secondo player restava nero. Il software (bassa risoluzione, pochi fotogrammi)
+     * basta all'anteprima e non disturba mai il video principale. Se manca, ripiego sull'hardware.
+     */
+    private fun previewRenderersFactory(): androidx.media3.exoplayer.DefaultRenderersFactory =
+        androidx.media3.exoplayer.DefaultRenderersFactory(context)
+            .setEnableDecoderFallback(true)
+            .setMediaCodecSelector(androidx.media3.exoplayer.mediacodec.MediaCodecSelector { mime, secure, tunneling ->
+                androidx.media3.exoplayer.mediacodec.MediaCodecSelector.DEFAULT
+                    .getDecoderInfos(mime, secure, tunneling)
+                    .sortedBy { it.hardwareAccelerated }
+            })
 
     fun releasePreviewPlayer() {
         previewPlayerInstance?.let { runCatching { it.release() } }

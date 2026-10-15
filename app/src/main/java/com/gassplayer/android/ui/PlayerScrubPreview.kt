@@ -357,9 +357,60 @@ internal fun rememberScrubSeedFrame(scrubbing: Boolean): ImageBitmap? {
     var frame by remember { mutableStateOf<ImageBitmap?>(null) }
     LaunchedEffect(scrubbing) {
         frame = null
-        if (scrubbing) PlayerThumbnailStore.captureVideoFrame(CAPTURE_WIDTH) { frame = it.asImageBitmap() }
+        if (scrubbing) PlayerThumbnailStore.captureVideoFrame(CAPTURE_WIDTH) { bitmap ->
+            // Su molte TV la superficie video non si lascia copiare e restituisce un'immagine nera: scartata.
+            if (!bitmap.isMostlyBlack()) frame = bitmap.asImageBitmap()
+        }
     }
     return frame
+}
+
+/** Vero se l'immagine e' (quasi) tutta nera: cattura della superficie video negata dal dispositivo. */
+private fun Bitmap.isMostlyBlack(): Boolean {
+    if (width <= 0 || height <= 0) return true
+    var bright = 0
+    val stepX = (width / 12).coerceAtLeast(1)
+    val stepY = (height / 8).coerceAtLeast(1)
+    var y = stepY / 2
+    while (y < height) {
+        var x = stepX / 2
+        while (x < width) {
+            val c = getPixel(x, y)
+            val luma = (((c shr 16) and 0xFF) * 3 + ((c shr 8) and 0xFF) * 6 + (c and 0xFF)) / 10
+            if (luma > 18) bright++
+            x += stepX
+        }
+        y += stepY
+    }
+    return bright < 3
+}
+
+/**
+ * Ripiego quando il player nascosto non riesce a mostrare fotogrammi (errore o nessun fotogramma entro
+ * pochi secondi): lettura a fotogrammi dello stesso flusso, sempre l'ultimo punto richiesto.
+ */
+@Composable
+internal fun rememberRetrieverThumbnail(
+    source: Pair<String, Map<String, String>>?,
+    positionMs: Long?,
+    durationMs: Long,
+): ImageBitmap? {
+    val loader = remember(source?.first) { source?.let { PlayerThumbnailStore.obtain(it.first, it.second) } }
+    val fallbackVersion = remember { MutableStateFlow(0) }
+    val version by (loader?.version ?: fallbackVersion).collectAsState()
+    val scrubbing = positionMs != null
+    LaunchedEffect(loader, scrubbing) {
+        val current = loader ?: return@LaunchedEffect
+        if (scrubbing) current.start(durationMs) else current.finish()
+    }
+    LaunchedEffect(loader, positionMs) {
+        val target = positionMs ?: return@LaunchedEffect
+        loader?.start(durationMs)
+        loader?.request(target)
+    }
+    return remember(loader, version, positionMs) {
+        if (positionMs == null) null else loader?.nearest(positionMs)
+    }
 }
 
 private const val CAPTURE_WIDTH = 320
@@ -373,6 +424,7 @@ internal fun PlayerScrubPreview(
     isTelevision: Boolean,
     modifier: Modifier = Modifier,
     previewPlayer: ExoPlayer? = null,
+    onPreviewRendered: () -> Unit = {},
 ) {
     val width = if (isTelevision) 240.dp else 176.dp
     val height = if (isTelevision) 135.dp else 99.dp
@@ -400,7 +452,7 @@ internal fun PlayerScrubPreview(
                     )
                 }
                 // Sopra: il player nascosto dell'anteprima, che segue il dito / il telecomando in tempo reale.
-                previewPlayer?.let { player -> PreviewPlayerSurface(player, Modifier.matchParentSize()) }
+                previewPlayer?.let { player -> PreviewPlayerSurface(player, Modifier.matchParentSize(), onPreviewRendered) }
                 Box(Modifier.matchParentSize().border(.7.dp, Color.White.copy(alpha = .18f), shape))
             }
         }
@@ -438,11 +490,14 @@ internal fun Modifier.scrubPreviewPlacement(fraction: Float, containerWidthPx: I
  * un'immagine vecchia o vuota: sotto si vede il fotogramma iniziale.
  */
 @Composable
-private fun PreviewPlayerSurface(player: ExoPlayer, modifier: Modifier) {
+private fun PreviewPlayerSurface(player: ExoPlayer, modifier: Modifier, onRendered: () -> Unit) {
     var rendered by remember(player) { mutableStateOf(false) }
     DisposableEffect(player) {
         val listener = object : Player.Listener {
-            override fun onRenderedFirstFrame() { rendered = true }
+            override fun onRenderedFirstFrame() {
+                rendered = true
+                onRendered()
+            }
         }
         player.addListener(listener)
         onDispose { player.removeListener(listener) }

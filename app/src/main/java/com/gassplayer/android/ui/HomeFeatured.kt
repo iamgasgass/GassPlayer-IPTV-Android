@@ -69,6 +69,7 @@ import com.gassplayer.android.data.MediaKind
 import com.gassplayer.android.data.MetadataResult
 import com.gassplayer.android.data.TmdbTrendingItem
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -117,6 +118,25 @@ private const val FEATURED_MAX = 8
 private const val FEATURED_MAX_CONTINUE = 2
 private const val FEATURED_MAX_FOR_YOU = 3
 
+/**
+ * Memoria di processo della sezione: tornando alla Home (o cambiando schermata e rientrando) le schede e i
+ * dettagli TMDB gia' scaricati compaiono SUBITO, senza attendere la rete; poi si aggiornano in silenzio.
+ */
+internal object HomeFeaturedMemory {
+    @Volatile private var lastSourceKey: String? = null
+    @Volatile private var lastEntries: List<HomeFeaturedEntry> = emptyList()
+    /** Dettagli TMDB gia' arricchiti, per id della scheda. */
+    val enriched = java.util.concurrent.ConcurrentHashMap<String, HomeFeaturedEntry>()
+
+    fun entriesFor(sourceKey: String): List<HomeFeaturedEntry> =
+        if (sourceKey == lastSourceKey) lastEntries.map { enriched[it.id] ?: it } else emptyList()
+
+    fun store(sourceKey: String, entries: List<HomeFeaturedEntry>) {
+        lastSourceKey = sourceKey
+        lastEntries = entries
+    }
+}
+
 /** Contenuti della sezione, ricostruiti quando cambiano sorgente, catalogo, cronologia o chiave TMDB. */
 @Composable
 internal fun rememberHomeFeaturedEntries(
@@ -126,11 +146,14 @@ internal fun rememberHomeFeaturedEntries(
     continueCards: List<ContinueWatchingCard>,
     apiKey: String,
 ): List<HomeFeaturedEntry> {
-    var entries by remember { mutableStateOf<List<HomeFeaturedEntry>>(emptyList()) }
+    val sourceKey = catalog?.sourceIds?.joinToString(",").orEmpty()
+    // Comparsa istantanea: le schede dell'ultima volta (con immagini e dettagli gia' pronti).
+    var entries by remember(sourceKey) { mutableStateOf(if (enabled) HomeFeaturedMemory.entriesFor(sourceKey) else emptyList()) }
     val latestCatalog by rememberUpdatedState(catalog)
     val latestCards by rememberUpdatedState(continueCards)
+    val context = androidx.compose.ui.platform.LocalContext.current
     val key = if (!enabled) "off" else listOf(
-        catalog?.sourceIds?.joinToString(",").orEmpty(),
+        sourceKey,
         catalog?.updatedAt?.toString().orEmpty(),
         continueCards.take(4).joinToString(",") { it.key },
         if (apiKey.isBlank()) "-" else "tmdb",
@@ -141,16 +164,36 @@ internal fun rememberHomeFeaturedEntries(
             entries = emptyList()
             return@LaunchedEffect
         }
-        val base = withContext(Dispatchers.IO) {
-            runCatching { buildHomeFeaturedEntries(app, latestCatalog, latestCards, apiKey) }.getOrDefault(emptyList())
-        }
-        entries = base
-        // Dettagli TMDB scheda per scheda, appena pronti.
         coroutineScope {
-            base.forEach { entry ->
-                launch {
-                    val enriched = runCatching { enrichHomeFeaturedEntry(app, entry, apiKey) }.getOrNull() ?: return@launch
-                    entries = entries.map { if (it.id == entry.id) enriched else it }
+            val enriching = HashSet<String>()
+            fun publish(list: List<HomeFeaturedEntry>) {
+                if (list.isEmpty() && entries.isNotEmpty()) return // mai svuotare la sezione mentre si ricarica
+                val shown = list.map { HomeFeaturedMemory.enriched[it.id] ?: it }
+                entries = shown
+                HomeFeaturedMemory.store(sourceKey, shown)
+                // Dettagli TMDB scheda per scheda, in parallelo, appena una scheda compare.
+                shown.forEachIndexed { index, entry ->
+                    if (HomeFeaturedMemory.enriched.containsKey(entry.id) || !enriching.add(entry.id)) {
+                        return@forEachIndexed
+                    }
+                    launch {
+                        val done = withContext(Dispatchers.IO) {
+                            runCatching { enrichHomeFeaturedEntry(app, entry, apiKey) }.getOrNull()
+                        } ?: return@launch
+                        HomeFeaturedMemory.enriched[entry.id] = done
+                        prefetchHomeFeaturedImages(context, done, eager = index < 3)
+                        entries = entries.map { if (it.id == entry.id) done else it }
+                        HomeFeaturedMemory.store(sourceKey, entries)
+                    }
+                }
+            }
+            // Le schede compaiono a gruppi, appena pronte: prima "Continua a guardare" (nessuna rete),
+            // poi "Per te" e "Di tendenza" (scaricati in parallelo).
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    buildHomeFeaturedEntries(app, latestCatalog, latestCards, apiKey) { partial ->
+                        withContext(Dispatchers.Main) { publish(partial) }
+                    }
                 }
             }
         }
@@ -158,12 +201,30 @@ internal fun rememberHomeFeaturedEntries(
     return entries
 }
 
+/** Scarica in anticipo le immagini della scheda (cache di Coil): scorrendo compaiono subito. */
+private fun prefetchHomeFeaturedImages(context: android.content.Context, entry: HomeFeaturedEntry, eager: Boolean) {
+    val loader = coil3.SingletonImageLoader.get(context)
+    val urls = buildList {
+        entry.logoUrl?.let(::add)
+        if (eager) {
+            entry.backdropUrl?.let(::add)
+            entry.posterUrl?.let(::add)
+        } else {
+            (entry.backdropUrl ?: entry.posterUrl)?.let(::add)
+        }
+    }
+    urls.forEach { url ->
+        runCatching { loader.enqueue(coil3.request.ImageRequest.Builder(context).data(url).build()) }
+    }
+}
+
 private suspend fun buildHomeFeaturedEntries(
     app: GassPlayerApplication,
     catalog: CatalogState?,
     cards: List<ContinueWatchingCard>,
     apiKey: String,
-): List<HomeFeaturedEntry> {
+    emit: suspend (List<HomeFeaturedEntry>) -> Unit = {},
+): List<HomeFeaturedEntry> = coroutineScope {
     val result = ArrayList<HomeFeaturedEntry>()
     val used = HashSet<String>()
 
@@ -186,7 +247,13 @@ private suspend fun buildHomeFeaturedEntries(
         )
     }
 
-    if (apiKey.isBlank() || catalog == null) return result
+    // Subito, senza rete.
+    emit(result.toList())
+    if (apiKey.isBlank() || catalog == null) return@coroutineScope result
+
+    // Tutte le richieste TMDB partono insieme (prima erano una dopo l'altra).
+    val trendingSeries = async { runCatching { app.tmdb.trendingRail(isSeries = true, apiKey = apiKey) }.getOrDefault(emptyList()) }
+    val trendingMovies = async { runCatching { app.tmdb.trendingRail(isSeries = false, apiKey = apiKey) }.getOrDefault(emptyList()) }
 
     fun entryFor(match: MediaItem, trend: TmdbTrendingItem, badge: HomeFeaturedBadge) = HomeFeaturedEntry(
         id = "${badge.name}|${if (trend.isSeries) "tv" else "movie"}|${trend.id}",
@@ -223,11 +290,12 @@ private suspend fun buildHomeFeaturedEntries(
             }
         }
     }
+    if (result.isNotEmpty()) emit(result.toList())
 
     // 3. Di tendenza: film e serie della settimana, alternati.
     if (result.size < FEATURED_MAX) {
-        val series = runCatching { app.tmdb.trendingRail(isSeries = true, apiKey = apiKey) }.getOrDefault(emptyList())
-        val movies = runCatching { app.tmdb.trendingRail(isSeries = false, apiKey = apiKey) }.getOrDefault(emptyList())
+        val series = trendingSeries.await()
+        val movies = trendingMovies.await()
         val mixed = ArrayList<TmdbTrendingItem>()
         for (index in 0 until maxOf(series.size, movies.size)) {
             movies.getOrNull(index)?.let(mixed::add)
@@ -238,9 +306,14 @@ private suspend fun buildHomeFeaturedEntries(
             val match = match(trend) ?: continue
             if (!used.add(match.id)) continue
             result += entryFor(match, trend, HomeFeaturedBadge.TRENDING)
+            // Ogni scheda trovata compare subito.
+            emit(result.toList())
         }
     }
-    return result
+    trendingSeries.cancel()
+    trendingMovies.cancel()
+    emit(result.toList())
+    result
 }
 
 /** Locandina senza testo, logo, generi, anno e voto da TMDB (come la scheda dettaglio). */

@@ -1512,9 +1512,26 @@ private fun IosPlayerProgressSection(
             val thumbnailSource = remember(item.id, duration > 0L) { app.playback.thumbnailSource() }
             // Prima comparsa: il fotogramma a schermo; poi il player nascosto dell'anteprima (solo nella card).
             val thumbnail = rememberScrubSeedFrame(scrubPosition != null && thumbnailSource != null)
-            val previewPlayer = remember(item.id, scrubPosition != null) {
-                if (scrubPosition != null && thumbnailSource != null) app.playback.previewPlayer() else null
+            val scrubbingPreview = scrubPosition != null && thumbnailSource != null
+            val previewFailed by app.playback.previewFailed.collectAsState()
+            val previewPlayer = remember(item.id, scrubbingPreview, previewFailed) {
+                if (scrubbingPreview && !previewFailed) app.playback.previewPlayer() else null
             }
+            // Il player nascosto ha mostrato almeno un fotogramma su questa card? Se no entro 2,5 s (o errore),
+            // sotto parte anche la lettura a fotogrammi, cosi' l'anteprima non resta mai nera.
+            var previewRendered by remember(item.id, scrubbingPreview) { mutableStateOf(false) }
+            var previewSlow by remember(item.id, scrubbingPreview) { mutableStateOf(false) }
+            LaunchedEffect(scrubbingPreview) {
+                if (scrubbingPreview) {
+                    kotlinx.coroutines.delay(2_500L)
+                    if (!previewRendered) previewSlow = true
+                }
+            }
+            val retrieverThumbnail = rememberRetrieverThumbnail(
+                if (scrubbingPreview && (previewFailed || previewSlow)) thumbnailSource else null,
+                scrubPosition,
+                duration,
+            )
             val gapPx = with(androidx.compose.ui.platform.LocalDensity.current) { 12.dp.roundToPx() }
             // zIndex: l'anteprima, che sale sopra la barra, resta disegnata davanti a tutto.
             BoxWithConstraints(Modifier.fillMaxWidth().zIndex(1f)) {
@@ -1538,8 +1555,9 @@ private fun IosPlayerProgressSection(
                 scrubPosition?.let { scrub ->
                     PlayerScrubPreview(
                         positionMs = scrub,
-                        thumbnail = if (thumbnailSource != null) thumbnail else null,
+                        thumbnail = if (thumbnailSource != null) retrieverThumbnail ?: thumbnail else null,
                         previewPlayer = previewPlayer,
+                        onPreviewRendered = { previewRendered = true },
                         isTelevision = isTelevision,
                         modifier = Modifier.zIndex(2f).scrubPreviewPlacement(
                             fraction = scrub.toFloat() / duration.toFloat(),
