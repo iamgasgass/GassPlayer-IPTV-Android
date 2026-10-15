@@ -44,6 +44,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -351,6 +352,8 @@ internal fun HomeFeaturedHero(
     modifier: Modifier = Modifier,
     horizontalPadding: Dp = 0.dp,
     topContent: (@Composable () -> Unit)? = null,
+    /** Il focus del telecomando e' entrato nel pulsante o nei puntini della sezione. */
+    onFocusInside: () -> Unit = {},
 ) {
     if (entries.isEmpty()) {
         topContent?.let { Box(modifier) { it() } }
@@ -447,7 +450,10 @@ internal fun HomeFeaturedHero(
                     entry = entry,
                     isTelevision = isTelevision,
                     onSelect = onSelect,
-                    onFocusChanged = { buttonFocused = it },
+                    onFocusChanged = {
+                        buttonFocused = it
+                        if (it) onFocusInside()
+                    },
                     onStep = { forward ->
                         if (entries.size < 2) false else {
                             // SINISTRA sulla prima scheda lascia uscire il focus (barra di navigazione).
@@ -461,13 +467,26 @@ internal fun HomeFeaturedHero(
             }
             if (entries.size > 1) {
                 Spacer(Modifier.height(18.dp))
+                // Puntini: col telecomando il focus e' evidenziato come nel resto dell'app e, appena un
+                // puntino e' selezionato, la sua scheda compare subito (senza premere OK).
+                // Stesso spazio e stessa misura di prima (7 dp, distanza 6,5 dp): il focus e' solo disegnato
+                // sopra (contorno), senza spostare nulla.
                 Row(horizontalArrangement = Arrangement.spacedBy(6.5.dp), verticalAlignment = Alignment.CenterVertically) {
                     entries.indices.forEach { dot ->
+                        var dotFocused by remember { mutableStateOf(false) }
                         Box(
                             Modifier
                                 .size(7.dp)
+                                .onFocusChanged { state ->
+                                    dotFocused = state.isFocused
+                                    if (state.isFocused) {
+                                        selection = dot
+                                        onFocusInside()
+                                    }
+                                }
+                                .remoteFocusOutline(cornerRadius = 50.dp)
                                 .clip(CircleShape)
-                                .background(Color.White.copy(alpha = if (dot == index) 1f else .35f))
+                                .background(Color.White.copy(alpha = if (dot == index || dotFocused) 1f else .35f))
                                 .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { selection = dot }
                         )
                     }

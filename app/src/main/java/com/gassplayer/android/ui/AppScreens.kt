@@ -1183,7 +1183,13 @@ private fun HomeScreen(
                 }
             }
         } else {
+            // Telecomando: finche' il focus e' dentro "In evidenza" (pulsante, puntini) la sezione resta
+            // interamente visibile in cima; la Home scorre verso il basso solo quando il focus passa alle
+            // sezioni sotto l'intestazione (Live TV / Film / Serie TV...).
+            val edgeListState = rememberLazyListState()
+            val edgeScrollScope = rememberCoroutineScope()
             LazyColumn(
+                state = edgeListState,
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(20.dp),
                 contentPadding = PaddingValues(bottom = 48.dp)
@@ -1206,6 +1212,13 @@ private fun HomeScreen(
                             onSelect = { openFeatured(it) },
                             horizontalPadding = homeHorizontalPadding,
                             topContent = top,
+                            onFocusInside = {
+                                edgeScrollScope.launch {
+                                    // Dopo lo scorrimento automatico verso l'elemento con il focus.
+                                    kotlinx.coroutines.delay(40L)
+                                    edgeListState.animateScrollToItem(0)
+                                }
+                            },
                         )
                     } else {
                         top()
