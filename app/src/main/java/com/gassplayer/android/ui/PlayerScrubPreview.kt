@@ -34,6 +34,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.Player
+import androidx.media3.exoplayer.ExoPlayer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExecutorCoroutineDispatcher
 import kotlinx.coroutines.Job
@@ -347,6 +351,17 @@ internal fun rememberPlayerThumbnail(
     return if (!scrubbing) null else if (liveUnavailable) fallback else liveFrame
 }
 
+/** Fotogramma a schermo catturato all'inizio del trascinamento (prima anteprima immediata). */
+@Composable
+internal fun rememberScrubSeedFrame(scrubbing: Boolean): ImageBitmap? {
+    var frame by remember { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(scrubbing) {
+        frame = null
+        if (scrubbing) PlayerThumbnailStore.captureVideoFrame(CAPTURE_WIDTH) { frame = it.asImageBitmap() }
+    }
+    return frame
+}
+
 private const val CAPTURE_WIDTH = 320
 private const val CAPTURE_INTERVAL_MS = 90L
 
@@ -357,6 +372,7 @@ internal fun PlayerScrubPreview(
     thumbnail: ImageBitmap?,
     isTelevision: Boolean,
     modifier: Modifier = Modifier,
+    previewPlayer: ExoPlayer? = null,
 ) {
     val width = if (isTelevision) 240.dp else 176.dp
     val height = if (isTelevision) 135.dp else 99.dp
@@ -366,17 +382,27 @@ internal fun PlayerScrubPreview(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        if (thumbnail != null) {
-            Image(
-                bitmap = thumbnail,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
+        if (thumbnail != null || previewPlayer != null) {
+            Box(
+                Modifier
                     .size(width, height)
                     .shadow(10.dp, shape)
                     .clip(shape)
-                    .border(.7.dp, Color.White.copy(alpha = .18f), shape)
-            )
+                    .background(Color.Black)
+            ) {
+                // Sotto: il fotogramma a schermo all'inizio del trascinamento (comparsa immediata).
+                thumbnail?.let {
+                    Image(
+                        bitmap = it,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.matchParentSize()
+                    )
+                }
+                // Sopra: il player nascosto dell'anteprima, che segue il dito / il telecomando in tempo reale.
+                previewPlayer?.let { player -> PreviewPlayerSurface(player, Modifier.matchParentSize()) }
+                Box(Modifier.matchParentSize().border(.7.dp, Color.White.copy(alpha = .18f), shape))
+            }
         }
         Box(Modifier.clip(RoundedCornerShape(50)).background(Color.Black.copy(alpha = .35f))) {
             LiquidGlassPill {
@@ -404,6 +430,33 @@ internal fun Modifier.scrubPreviewPlacement(fraction: Float, containerWidthPx: I
         val x = (center - placeable.width / 2).coerceIn(0, (containerWidthPx - placeable.width).coerceAtLeast(0))
         placeable.place(x, -placeable.height - gapPx)
     }
+}
+
+/**
+ * Superficie del player dell'anteprima dentro la card (TextureView: rispetta gli angoli arrotondati).
+ * Resta invisibile finche' non ha disegnato un fotogramma su questa superficie, cosi' non compare mai
+ * un'immagine vecchia o vuota: sotto si vede il fotogramma iniziale.
+ */
+@Composable
+private fun PreviewPlayerSurface(player: ExoPlayer, modifier: Modifier) {
+    var rendered by remember(player) { mutableStateOf(false) }
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onRenderedFirstFrame() { rendered = true }
+        }
+        player.addListener(listener)
+        onDispose { player.removeListener(listener) }
+    }
+    AndroidView(
+        factory = { context ->
+            android.view.TextureView(context).also { view ->
+                rendered = false
+                player.setVideoTextureView(view)
+            }
+        },
+        onRelease = { view -> player.clearVideoTextureView(view) },
+        modifier = modifier.graphicsLayer { alpha = if (rendered) 1f else 0f },
+    )
 }
 
 private fun iosScrubTime(ms: Long): String {

@@ -158,7 +158,12 @@ fun IosPlayerScreen(
     // Durante lo scrubbing i controlli non si nascondono; al rilascio il timer riparte da capo.
     var controlsScrubbing by remember(item.id) { mutableStateOf(false) }
     // Anteprime della timeline: chiuse (flusso e cache) uscendo dal player.
-    DisposableEffect(Unit) { onDispose { PlayerThumbnailStore.releaseAll() } }
+    DisposableEffect(Unit) {
+        onDispose {
+            PlayerThumbnailStore.releaseAll()
+            app.playback.releasePreviewPlayer()
+        }
+    }
     val playerFocusRequester = remember(item.id) { FocusRequester() }
     // Like GassTV, LEFT opens the live channel browser while immersive. Keep its state
     // independent from item.id so zapping channels does not collapse the rail on every tune.
@@ -1489,14 +1494,7 @@ private fun IosPlayerProgressSection(
     // Al rilascio anteprima e tempo spariscono (scrubPosition = null) e il timer dei controlli riparte.
     val scrubbingNow = scrubPosition != null
     LaunchedEffect(scrubbingNow) { onScrubbingChanged(scrubbingNow) }
-    val latestScrub by rememberUpdatedState(scrubPosition)
-    DisposableEffect(Unit) {
-        onDispose {
-            // Controlli chiusi a meta' trascinamento: il player torna alla riproduzione normale.
-            latestScrub?.let { app.playback.endScrub(it) }
-            onScrubbingChanged(false)
-        }
-    }
+    DisposableEffect(Unit) { onDispose { onScrubbingChanged(false) } }
     val position = scrubPosition ?: progressState.value.position
     // Proporzioni iOS (30/34/44) portate alla scala TV, con il minimo di 48 dp dei pulsanti del player.
     val scale = if (isTelevision) 1.45f else 1.2f
@@ -1512,7 +1510,11 @@ private fun IosPlayerProgressSection(
         if (duration > 0L) {
             // Film / Serie TV: anteprima del punto scelto sopra la timeline durante lo scrubbing.
             val thumbnailSource = remember(item.id, duration > 0L) { app.playback.thumbnailSource() }
-            val thumbnail = rememberPlayerThumbnail(thumbnailSource, scrubPosition, duration) { progressState.value.position }
+            // Prima comparsa: il fotogramma a schermo; poi il player nascosto dell'anteprima (solo nella card).
+            val thumbnail = rememberScrubSeedFrame(scrubPosition != null && thumbnailSource != null)
+            val previewPlayer = remember(item.id, scrubPosition != null) {
+                if (scrubPosition != null && thumbnailSource != null) app.playback.previewPlayer() else null
+            }
             val gapPx = with(androidx.compose.ui.platform.LocalDensity.current) { 12.dp.roundToPx() }
             // zIndex: l'anteprima, che sale sopra la barra, resta disegnata davanti a tutto.
             BoxWithConstraints(Modifier.fillMaxWidth().zIndex(1f)) {
@@ -1525,11 +1527,11 @@ private fun IosPlayerProgressSection(
                     onScrub = {
                         scrubPosition = it
                         onUserActivity()
-                        // Tempo reale: il player si sposta mentre si trascina (video e miniatura seguono il dito).
-                        app.playback.scrubTo(it)
+                        // Tempo reale: si sposta SOLO il player nascosto dell'anteprima; il video dietro resta fermo.
+                        if (thumbnailSource != null) app.playback.previewSeek(it)
                     },
                     onCommit = { target ->
-                        if (scrubPosition != null) app.playback.endScrub(target) else onSeek(target)
+                        onSeek(target)
                         scrubPosition = null
                     },
                 )
@@ -1537,6 +1539,7 @@ private fun IosPlayerProgressSection(
                     PlayerScrubPreview(
                         positionMs = scrub,
                         thumbnail = if (thumbnailSource != null) thumbnail else null,
+                        previewPlayer = previewPlayer,
                         isTelevision = isTelevision,
                         modifier = Modifier.zIndex(2f).scrubPreviewPlacement(
                             fraction = scrub.toFloat() / duration.toFloat(),

@@ -302,48 +302,88 @@ class PlaybackController(
         player.seekTo(positionMs.coerceAtLeast(0L))
     }
 
-    // ---- Scrubbing in tempo reale (Film / Serie TV) ----
-    // Mentre si trascina la barra (dito o telecomando) il player stesso si sposta sul punto scelto: il video
-    // e l'anteprima mostrano subito il fotogramma (istantaneo dentro la parte gia' scaricata, avanti e
-    // indietro). "Scrubbing mode" di Media3 + fotogramma chiave piu' vicino: ricerche rapide e accorpate.
-    // Al rilascio: ricerca precisa sul punto finale e la riproduzione riprende se era in corso.
+    // ---- Anteprima della timeline in tempo reale (Film / Serie TV) ----
+    // Un secondo player NASCOSTO, senza audio e a bassa risoluzione, legge lo stesso flusso (stessi header,
+    // stessa cache su disco del player principale se attiva) e si sposta mentre si trascina la barra: i suoi
+    // fotogrammi vanno SOLO nella card dell'anteprima. Il video principale dietro non si muove fino al
+    // rilascio. "Scrubbing mode" di Media3 + fotogramma chiave piu' vicino: ricerche rapide e accorpate.
+    // Creato al primo trascinamento, riusato per i successivi, chiuso cambiando contenuto o uscendo.
 
-    private var scrubActive = false
-    private var scrubWasPlaying = false
-    private var scrubSavedSeekParameters: SeekParameters? = null
+    private var previewPlayerInstance: ExoPlayer? = null
+    private var previewPlayerUrl: String? = null
 
-    fun beginScrub() {
-        if (scrubActive) return
-        scrubActive = true
-        scrubWasPlaying = player.playWhenReady
-        scrubSavedSeekParameters = player.seekParameters
-        player.setSeekParameters(SeekParameters.CLOSEST_SYNC)
-        setScrubbingMode(true)
-        player.pause()
-    }
-
-    fun scrubTo(positionMs: Long) {
-        if (!scrubActive) beginScrub()
-        player.seekTo(positionMs.coerceAtLeast(0L))
-    }
-
-    fun endScrub(positionMs: Long) {
-        if (!scrubActive) {
-            seekTo(positionMs)
-            return
+    /** Player dell'anteprima per il contenuto attuale (null per la Live TV). Thread principale. */
+    fun previewPlayer(): ExoPlayer? {
+        val item = currentItem ?: return null
+        if (item.kind == MediaKind.LIVE) return null
+        val url = urlCandidates.getOrElse(urlIndex) { item.streamUrl }.takeIf { it.isNotBlank() } ?: return null
+        previewPlayerInstance?.let { existing ->
+            if (previewPlayerUrl == url) return existing
+            releasePreviewPlayer()
         }
-        scrubActive = false
-        setScrubbingMode(false)
-        scrubSavedSeekParameters?.let { player.setSeekParameters(it) }
-        scrubSavedSeekParameters = null
-        player.seekTo(positionMs.coerceAtLeast(0L))
-        if (scrubWasPlaying) player.play()
+        val factories = httpFactories.ifEmpty { makeHttpFactories().also { configureFactories(it) } }
+        val upstream = factories.map { DefaultDataSource.Factory(context, it) }
+        val failover = DataSource.Factory { FailoverDataSource(upstream, diagnostics) }
+        val dataSourceFactory: DataSource.Factory = simpleCache?.let { cache ->
+            CacheDataSource.Factory()
+                .setCache(cache)
+                .setUpstreamDataSourceFactory(failover)
+                .setFlags(
+                    CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR or
+                        CacheDataSource.FLAG_IGNORE_CACHE_FOR_UNSET_LENGTH_REQUESTS
+                )
+        } ?: failover
+        val selector = DefaultTrackSelector(context).apply {
+            parameters = buildUponParameters()
+                .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true)
+                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                .setMaxVideoSize(854, 480)
+                .build()
+        }
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(2_000, 6_000, 200, 400)
+            .build()
+        val builder = Builder().setUri(url)
+        val explicitMime = item.streamMimeType?.takeIf { url == item.streamUrl }
+        mimeTypeFor(url, explicitMime)?.let(builder::setMimeType)
+        val created = runCatching {
+            ExoPlayer.Builder(context)
+                .setTrackSelector(selector)
+                .setLoadControl(loadControl)
+                .setMediaSourceFactory(
+                    DefaultMediaSourceFactory(dataSourceFactory, createExtractorsFactory())
+                        .setLoadErrorHandlingPolicy(iptvLoadErrorPolicy)
+                )
+                .build()
+                .apply {
+                    volume = 0f
+                    playWhenReady = false
+                    setSeekParameters(SeekParameters.CLOSEST_SYNC)
+                    setScrubbingMode(this, true)
+                    setMediaItem(builder.build())
+                    prepare()
+                }
+        }.getOrNull() ?: return null
+        previewPlayerInstance = created
+        previewPlayerUrl = url
+        return created
+    }
+
+    /** Sposta il player dell'anteprima (il principale resta dov'e'). */
+    fun previewSeek(positionMs: Long) {
+        previewPlayer()?.seekTo(positionMs.coerceAtLeast(0L))
+    }
+
+    fun releasePreviewPlayer() {
+        previewPlayerInstance?.let { runCatching { it.release() } }
+        previewPlayerInstance = null
+        previewPlayerUrl = null
     }
 
     /** `ExoPlayer.setScrubbingModeEnabled` (Media3 1.8+), chiamato in modo tollerante. */
-    private fun setScrubbingMode(enabled: Boolean) {
+    private fun setScrubbingMode(target: ExoPlayer, enabled: Boolean) {
         runCatching {
-            player.javaClass.getMethod("setScrubbingModeEnabled", Boolean::class.javaPrimitiveType).invoke(player, enabled)
+            target.javaClass.getMethod("setScrubbingModeEnabled", Boolean::class.javaPrimitiveType).invoke(target, enabled)
         }
     }
 
@@ -433,6 +473,7 @@ class PlaybackController(
         sleepTimerAt = null
         _sleepRemainingMinutes.value = null
         playerInstance?.stop()
+        releasePreviewPlayer()
         _current.value = null
         currentItem = null
         if (playerInstance != null && loadControlSignature(settings.value) != lastLoadControlSignature) {
@@ -519,6 +560,7 @@ class PlaybackController(
     }
 
     private fun stopCurrentForNewItem() {
+        releasePreviewPlayer()
         playerInstance?.apply {
             stop()
             clearMediaItems()
@@ -527,6 +569,7 @@ class PlaybackController(
     }
 
     private fun releasePlayerOnly() {
+        releasePreviewPlayer()
         playerInstance?.let { runCatching { it.release() } }
         playerInstance = null
         simpleCache?.let { runCatching { it.release() } }
