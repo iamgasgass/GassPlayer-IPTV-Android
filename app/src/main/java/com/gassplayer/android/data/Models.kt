@@ -193,7 +193,7 @@ internal fun migratedGroupUIStyle(
     hasDefaultsVersion: Boolean,
 ): String = if (!hasDefaultsVersion && !isTelevision && current == "scorrevole") "categorie_tv" else current
 
-val defaultHomeSections = listOf("heading", "search", "continueWatching", "sourceCard", "sources", "liveTV", "guidaTV", "onDemand", "favoriteChannels", "favoriteSeries", "favoriteMovies", "trendingSeries", "trendingMovies")
+val defaultHomeSections = listOf("search", "featured", "heading", "continueWatching", "sourceCard", "sources", "liveTV", "guidaTV", "onDemand", "favoriteChannels", "favoriteSeries", "favoriteMovies", "trendingSeries", "trendingMovies")
 val defaultLiveSections = listOf("search", "categories")
 val defaultMovieSections = listOf("search", "continueWatching", "trendingMovies", "categories")
 val defaultSeriesSections = listOf("search", "continueWatching", "trendingSeries", "categories")
@@ -264,3 +264,23 @@ data class SearchHistory(val terms: List<String> = emptyList())
 
 @Serializable
 data class TraktAccount(val accessToken: String = "", val refreshToken: String = "", val username: String = "")
+
+
+/**
+ * Ordine delle sezioni Home salvato, completato con le sezioni nate dopo (in coda) e senza quelle sconosciute.
+ * "In evidenza" (featured) va invece in cima, subito dopo la ricerca, dove la Home la mostra a tutta larghezza
+ * (come `HomeLayoutStore` su iOS).
+ */
+fun normalizedHomeSectionOrder(stored: List<String>): List<String> {
+    val result = stored.filter { it in defaultHomeSections }.distinct().toMutableList()
+    for (id in defaultHomeSections) {
+        if (id in result) continue
+        if (id == "featured") {
+            val search = result.indexOf("search")
+            result.add(if (search >= 0) search + 1 else 0, id)
+        } else {
+            result += id
+        }
+    }
+    return result
+}

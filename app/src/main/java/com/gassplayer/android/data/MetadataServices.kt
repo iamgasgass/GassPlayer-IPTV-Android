@@ -65,6 +65,40 @@ class TmdbService(private val api: NetworkApi) {
         items.take(limit)
     }
 
+    /**
+     * Titoli consigliati da TMDB a partire da un titolo visto (`{movie|tv}/{id}/recommendations`), per "Per te"
+     * nella sezione "In evidenza" della Home (iOS TMDBService.recommendations). Cache di 30 minuti.
+     */
+    suspend fun recommendations(id: String, apiKey: String, series: Boolean, limit: Int = 20): List<TmdbTrendingItem> = withContext(Dispatchers.IO) {
+        if (apiKey.isBlank() || id.isBlank()) return@withContext emptyList()
+        val key = if (series) "tv" else "movie"
+        val cacheKey = "rec|$key|$id|$apiKey"
+        trendingRailCache[cacheKey]?.let { (date, items) ->
+            if (System.currentTimeMillis() - date < 1_800_000L) return@withContext items.take(limit)
+        }
+        val genres = genreNames(key, apiKey)
+        val root = api.getJson("https://api.themoviedb.org/3/$key/${enc(id)}/recommendations?api_key=${enc(apiKey)}&language=it-IT")
+        val seen = HashSet<String>()
+        val items = root.jsonObject["results"]?.jsonArray?.mapNotNull { element ->
+            val raw = element.jsonObject
+            val itemId = raw.stringOrNull("id") ?: return@mapNotNull null
+            val title = (raw.stringOrNull("title") ?: raw.stringOrNull("name"))?.trim()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+            if (!seen.add(itemId)) return@mapNotNull null
+            val date = raw.stringOrNull("release_date") ?: raw.stringOrNull("first_air_date")
+            TmdbTrendingItem(
+                id = itemId,
+                title = title,
+                originalTitle = raw.stringOrNull("original_title") ?: raw.stringOrNull("original_name"),
+                genre = raw["genre_ids"]?.jsonArray?.firstNotNullOfOrNull { genre -> genre.jsonPrimitive.intOrNull?.let { genres[it] } },
+                backdropUrl = raw.stringOrNull("backdrop_path")?.takeIf { it.isNotBlank() }?.let { "https://image.tmdb.org/t/p/w780$it" },
+                year = date?.takeIf { it.length >= 4 }?.take(4),
+                isSeries = series
+            )
+        }.orEmpty()
+        trendingRailCache[cacheKey] = System.currentTimeMillis() to items
+        items.take(limit)
+    }
+
     private suspend fun genreNames(key: String, apiKey: String): Map<Int, String> {
         genreNamesCache[key]?.let { return it }
         val map = runCatching {
@@ -138,7 +172,14 @@ class TmdbService(private val api: NetworkApi) {
             } ?: emptyList(),
             externalId = this["external_ids"]?.jsonObject?.get("imdb_id")?.jsonPrimitive?.contentOrNull,
             originalTitle = stringOrNull("original_title") ?: stringOrNull("original_name"),
-            logoUrl = logo?.get("file_path")?.jsonPrimitive?.contentOrNull?.let { "https://image.tmdb.org/t/p/w500$it" }
+            logoUrl = logo?.get("file_path")?.jsonPrimitive?.contentOrNull?.let { "https://image.tmdb.org/t/p/w500$it" },
+            // Immagini senza testo (iso_639_1 nullo) per la sezione "In evidenza" della Home.
+            textlessPosterUrl = this["images"]?.jsonObject?.get("posters")?.jsonArray?.mapNotNull { it.jsonObject }
+                ?.firstOrNull { it["iso_639_1"]?.jsonPrimitive?.contentOrNull == null }
+                ?.get("file_path")?.jsonPrimitive?.contentOrNull?.let { "https://image.tmdb.org/t/p/w780$it" },
+            textlessBackdropUrl = this["images"]?.jsonObject?.get("backdrops")?.jsonArray?.mapNotNull { it.jsonObject }
+                ?.firstOrNull { it["iso_639_1"]?.jsonPrimitive?.contentOrNull == null }
+                ?.get("file_path")?.jsonPrimitive?.contentOrNull?.let { "https://image.tmdb.org/t/p/w1280$it" }
         )
     }
     private fun JsonObject.stringOrNull(k: String)=this[k]?.jsonPrimitive?.contentOrNull
@@ -179,7 +220,11 @@ data class MetadataResult(
     val originalTitle: String? = null,
     val logoUrl: String? = null,
     /** Release / first-air year from TMDB, used to match trending titles to the playlist accurately. */
-    val year: String? = null
+    val year: String? = null,
+    /** Locandina verticale senza testo (Home "In evidenza"); null se TMDB non la ha. */
+    val textlessPosterUrl: String? = null,
+    /** Immagine orizzontale senza testo (Home "In evidenza" su schermi larghi). */
+    val textlessBackdropUrl: String? = null
 )
 
 /** TMDBTrendingItem on iOS: one card of "Film/Serie di tendenza". */

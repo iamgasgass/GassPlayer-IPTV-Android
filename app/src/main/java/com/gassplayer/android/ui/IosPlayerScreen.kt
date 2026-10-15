@@ -94,7 +94,9 @@ private data class PlayerSnapshot(
 /** Fast-changing timeline state is isolated from the player metadata so progress ticks
  * recompose only the controls that render the timeline, not the whole video surface. */
 private data class PlaybackProgress(
-    val position: Long = 0L
+    val position: Long = 0L,
+    /** Fin dove il contenuto e' gia' scaricato (bufferedPosition): parte chiara della timeline. */
+    val buffered: Long = 0L
 )
 
 private data class PlayerTrackChoice(
@@ -153,6 +155,10 @@ fun IosPlayerScreen(
     // Bumped on every remote key while the controls are visible, so the 4s auto-hide timer
     // restarts instead of hiding the controls under the user's focus mid-navigation.
     var controlsActivity by remember(item.id) { mutableIntStateOf(0) }
+    // Durante lo scrubbing i controlli non si nascondono; al rilascio il timer riparte da capo.
+    var controlsScrubbing by remember(item.id) { mutableStateOf(false) }
+    // Anteprime della timeline: chiuse (flusso e cache) uscendo dal player.
+    DisposableEffect(Unit) { onDispose { PlayerThumbnailStore.releaseAll() } }
     val playerFocusRequester = remember(item.id) { FocusRequester() }
     // Like GassTV, LEFT opens the live channel browser while immersive. Keep its state
     // independent from item.id so zapping channels does not collapse the rail on every tune.
@@ -348,7 +354,8 @@ fun IosPlayerScreen(
                 nextItem != null && localSettings.autoplayNextEpisode
             if (showControls || needsHiddenProgress) {
                 val nextProgress = PlaybackProgress(
-                    position = p.currentPosition.coerceAtLeast(0L)
+                    position = p.currentPosition.coerceAtLeast(0L),
+                    buffered = p.bufferedPosition.coerceAtLeast(0L)
                 )
                 if (progressState.value != nextProgress) progressState.value = nextProgress
             }
@@ -370,8 +377,8 @@ fun IosPlayerScreen(
         showVolumeHud = false
     }
 
-    LaunchedEffect(showControls, dialog, locked, snapshot.isBuffering, controlsActivity) {
-        if (!showControls || dialog != null || locked) return@LaunchedEffect
+    LaunchedEffect(showControls, dialog, locked, snapshot.isBuffering, controlsActivity, controlsScrubbing) {
+        if (!showControls || dialog != null || locked || controlsScrubbing) return@LaunchedEffect
         delay(4_000L)
         showControls = false
     }
@@ -581,6 +588,8 @@ fun IosPlayerScreen(
                     setShutterBackgroundColor(android.graphics.Color.BLACK)
                     setKeepContentOnPlayerReset(true)
                     resizeMode = resizeModeForAspect(aspect)
+                    // Superficie video per la prima anteprima istantanea della timeline (fotogramma attuale).
+                    PlayerThumbnailStore.videoSurface = videoSurfaceView?.let { java.lang.ref.WeakReference(it) }
                 }
             },
             update = {
@@ -787,6 +796,10 @@ fun IosPlayerScreen(
                     playPauseFocusRequester = controlsFocusRequester,
                     isTelevision = remoteFirstDevice,
                     onUserActivity = { controlsActivity++ },
+                    onScrubbingChanged = { scrubbing ->
+                        controlsScrubbing = scrubbing
+                        if (!scrubbing) controlsActivity++
+                    },
                     onSkipBack = { app.playback.skipBack(15_000L) },
                     onSkipForward = { app.playback.skipForward(15_000L) },
                     onPrevious = {
@@ -1268,6 +1281,7 @@ private fun PlayerControlsOverlay(
     playPauseFocusRequester: FocusRequester? = null,
     isTelevision: Boolean = false,
     onUserActivity: () -> Unit = {},
+    onScrubbingChanged: (Boolean) -> Unit = {},
 ) {
     Box(Modifier.fillMaxSize()) {
         Box(
@@ -1424,6 +1438,7 @@ private fun PlayerControlsOverlay(
             }
 
             IosPlayerProgressSection(
+                app = app,
                 item = item,
                 snapshot = snapshot,
                 progressState = progressState,
@@ -1438,6 +1453,7 @@ private fun PlayerControlsOverlay(
                 onPrevious = onPrevious,
                 onNext = onNext,
                 onUserActivity = onUserActivity,
+                onScrubbingChanged = onScrubbingChanged,
             )
         }
     }
@@ -1450,6 +1466,7 @@ private fun PlayerControlsOverlay(
  */
 @Composable
 private fun IosPlayerProgressSection(
+    app: GassPlayerApplication,
     item: MediaItem,
     snapshot: PlayerSnapshot,
     progressState: State<PlaybackProgress>,
@@ -1464,15 +1481,21 @@ private fun IosPlayerProgressSection(
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onUserActivity: () -> Unit,
+    onScrubbingChanged: (Boolean) -> Unit = {},
 ) {
     val duration = snapshot.duration
     // Posizione mostrata durante lo scrubbing col telecomando (anteprima), null = posizione reale.
     var scrubPosition by remember(item.id) { mutableStateOf<Long?>(null) }
+    // Al rilascio anteprima e tempo spariscono (scrubPosition = null) e il timer dei controlli riparte.
+    val scrubbingNow = scrubPosition != null
+    LaunchedEffect(scrubbingNow) { onScrubbingChanged(scrubbingNow) }
+    DisposableEffect(Unit) { onDispose { onScrubbingChanged(false) } }
     val position = scrubPosition ?: progressState.value.position
     // Proporzioni iOS (30/34/44) portate alla scala TV, con il minimo di 48 dp dei pulsanti del player.
     val scale = if (isTelevision) 1.45f else 1.2f
     Column(
         Modifier
+            .zIndex(1f)
             .fillMaxWidth()
             .padding(horizontal = 16.dp)
             .padding(bottom = if (isTelevision) 18.dp else 8.dp),
@@ -1480,16 +1503,37 @@ private fun IosPlayerProgressSection(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         if (duration > 0L) {
-            IosPlayerSlider(
-                position = position.coerceIn(0L, duration),
-                duration = duration,
-                isTelevision = isTelevision,
-                onScrub = { scrubPosition = it; onUserActivity() },
-                onCommit = { target ->
-                    onSeek(target)
-                    scrubPosition = null
-                },
-            )
+            // Film / Serie TV: anteprima del punto scelto sopra la timeline durante lo scrubbing.
+            val thumbnailSource = remember(item.id, duration > 0L) { app.playback.thumbnailSource() }
+            val thumbnail = rememberPlayerThumbnail(thumbnailSource, scrubPosition, duration) { progressState.value.position }
+            val gapPx = with(androidx.compose.ui.platform.LocalDensity.current) { 12.dp.roundToPx() }
+            // zIndex: l'anteprima, che sale sopra la barra, resta disegnata davanti a tutto.
+            BoxWithConstraints(Modifier.fillMaxWidth().zIndex(1f)) {
+                val containerWidthPx = constraints.maxWidth
+                IosPlayerSlider(
+                    position = position.coerceIn(0L, duration),
+                    buffered = progressState.value.buffered.coerceIn(0L, duration),
+                    duration = duration,
+                    isTelevision = isTelevision,
+                    onScrub = { scrubPosition = it; onUserActivity() },
+                    onCommit = { target ->
+                        onSeek(target)
+                        scrubPosition = null
+                    },
+                )
+                scrubPosition?.let { scrub ->
+                    PlayerScrubPreview(
+                        positionMs = scrub,
+                        thumbnail = if (thumbnailSource != null) thumbnail else null,
+                        isTelevision = isTelevision,
+                        modifier = Modifier.zIndex(2f).scrubPreviewPlacement(
+                            fraction = scrub.toFloat() / duration.toFloat(),
+                            containerWidthPx = containerWidthPx,
+                            gapPx = gapPx,
+                        ),
+                    )
+                }
+            }
         }
 
         Row(
@@ -1541,6 +1585,7 @@ private fun iosPlayerTime(ms: Long): String {
 @Composable
 private fun IosPlayerSlider(
     position: Long,
+    buffered: Long,
     duration: Long,
     isTelevision: Boolean,
     onScrub: (Long) -> Unit,
@@ -1554,6 +1599,8 @@ private fun IosPlayerSlider(
     val scope = rememberCoroutineScope()
     var commitJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     val fraction = if (duration > 0L) (position.toFloat() / duration.toFloat()).coerceIn(0f, 1f) else 0f
+    // Parte gia' scaricata (mai prima della posizione): ci si sposta avanti/indietro sapendo cosa e' pronto.
+    val bufferedFraction = if (duration > 0L) (maxOf(buffered, position).toFloat() / duration.toFloat()).coerceIn(0f, 1f) else 0f
     val trackHeight = if (focused) 6.dp else 4.dp
     val thumbSize = if (focused) 30.dp else if (isTelevision) 22.dp else 28.dp
 
@@ -1579,6 +1626,19 @@ private fun IosPlayerSlider(
                 if (!state.isFocused) pending?.let { target -> commitJob?.cancel(); pending = null; onCommit(target) }
             }
             .onKeyEvent { event ->
+                // Tasto rilasciato: la ricerca parte subito e anteprima/tempo spariscono.
+                if (event.type == KeyEventType.KeyUp) {
+                    val released = event.key == Key.DirectionLeft || event.key == Key.DirectionRight ||
+                        event.key == Key.MediaRewind || event.key == Key.MediaFastForward
+                    val target = pending
+                    if (released && target != null) {
+                        commitJob?.cancel()
+                        pending = null
+                        onCommit(target)
+                        return@onKeyEvent true
+                    }
+                    return@onKeyEvent false
+                }
                 if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
                 when (event.key) {
                     Key.DirectionLeft, Key.DirectionRight, Key.MediaRewind, Key.MediaFastForward -> {
@@ -1633,6 +1693,7 @@ private fun IosPlayerSlider(
                 .clip(RoundedCornerShape(50))
                 .background(Color.White.copy(alpha = .30f))
         ) {
+            Box(Modifier.fillMaxHeight().fillMaxWidth(bufferedFraction).background(Color.White.copy(alpha = .45f)))
             Box(Modifier.fillMaxHeight().fillMaxWidth(fraction).background(Color.White))
         }
         // Pallino bianco con ombra; col focus del telecomando anello d'accento.

@@ -170,9 +170,12 @@ fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
     // Live TV / Film / Serie TV own the large title on the same row as
     // "Modifica". Do not render a shell/system heading or even a placeholder
     // row above it, otherwise the page appears to have a duplicate title.
+    // "In evidenza" nella Home: la shell non aggiunge margini ne' il titolo, l'immagine arriva ai bordi (come iOS).
+    val homeFeaturedEnabled = "featured" in normalizedHomeSectionOrder(settings.homeSectionOrder) &&
+        "featured" !in settings.hiddenHomeSections
     val shellTitle = when (contentRoute) {
         "live", "movies", "series" -> ""
-        "home" -> "GassPlayer"
+        "home" -> if (homeFeaturedEnabled) "" else "GassPlayer"
         "epg" -> "Guida TV"
         "search" -> "Cerca"
         "sources" -> "Sorgenti"
@@ -206,6 +209,7 @@ fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
         onRetry = { vm.refresh(true) },
         onRoute = { route = it },
         title = shellTitle,
+        edgeToEdge = contentRoute == "home" && homeFeaturedEnabled,
         content = { activeRoute, entryFocusRequester ->
             when (activeRoute) {
                 "home" -> {
@@ -216,6 +220,7 @@ fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
                         if (openSection != null && target in homeLinkSections) openSection(target) else route = target
                     }
                     HomeScreen(vm, catalog, favorite, watch, sources, onRoute = openFromHome, onPlay = { playerItem = it }, entryFocusRequester = entryFocusRequester,
+                        edgeToEdge = homeFeaturedEnabled,
                         onOpenInSection = { item, meta ->
                             pendingSectionDetail = item; pendingSectionMeta = meta
                             openFromHome(if (item.kind == MediaKind.SERIES) "series" else "movies")
@@ -320,6 +325,8 @@ private fun AdaptiveShell(
     onRetry: () -> Unit,
     onRoute: (String) -> Unit,
     title: String,
+    /** Pagina senza margini (Home con "In evidenza"): la pagina gestisce da se' i propri margini. */
+    edgeToEdge: Boolean = false,
     content: @Composable (String, FocusRequester?) -> Unit,
     overlay: @Composable () -> Unit,
 ) {
@@ -642,7 +649,11 @@ private fun AdaptiveShell(
                 }
             }
             } // end tab-column focus scope
-            Column(Modifier.fillMaxSize().padding(horizontal = if (tv) 28.dp else 16.dp, vertical = 18.dp)) {
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .then(if (edgeToEdge) Modifier else Modifier.padding(horizontal = if (tv) 28.dp else 16.dp, vertical = 18.dp))
+            ) {
                 if (title.isNotBlank()) {
                     Text(
                         title,
@@ -654,6 +665,7 @@ private fun AdaptiveShell(
                     Spacer(Modifier.height(16.dp))
                 }
                 val showStatusBanner = loading || (!message.isNullOrBlank() && route != "sources" && route != "settings")
+                Column(if (edgeToEdge && showStatusBanner) Modifier.padding(horizontal = if (tv) 28.dp else 16.dp).padding(top = 12.dp) else Modifier) {
                 if (loading) {
                     Spacer(Modifier.height(8.dp)); LinearProgressIndicator(Modifier.fillMaxWidth(), color = Color(0xFF8CB7FF).readable(), trackColor = glassForeground(.08f))
                     Text("Caricamento playlist…", color = glassForeground().copy(.6f), fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
@@ -665,6 +677,7 @@ private fun AdaptiveShell(
                             TextButton(onRetry) { Text("Riprova") }
                         }
                     }
+                }
                 }
                 if (showStatusBanner) Spacer(Modifier.height(12.dp))
                 val libraryRoutes = remember { setOf("live", "movies", "series") }
@@ -795,6 +808,7 @@ private fun navIcon(id: String) = when(id) { "home" -> Icons.Default.Home; "live
 private val homeSectionTitles = linkedMapOf(
     "heading" to "Intestazione",
     "search" to "Ricerca",
+    "featured" to "In evidenza",
     "categories" to "Categorie",
     "continueWatching" to "Continua a guardare",
     "sourceCard" to "Sorgente",
@@ -821,13 +835,15 @@ private fun HomeScreen(
     onPlay: (MediaItem) -> Unit,
     entryFocusRequester: FocusRequester? = null,
     onOpenInSection: ((MediaItem, MetadataResult?) -> Unit)? = null,
+    /** La shell non applica margini: la Home disegna "In evidenza" a tutta larghezza e i propri margini. */
+    edgeToEdge: Boolean = false,
 ) {
     val settings by vm.settings.collectAsStateWithLifecycle()
     val remoteFirstDevice = LocalContext.current.isTvOrFireTvDevice()
     val activeSource by vm.activeSource.collectAsStateWithLifecycle()
     val allSectionOrder = remember(settings.homeSectionOrder) {
         // Ignore stale library-only sections from older Android preferences.
-        (settings.homeSectionOrder.filter { it in defaultHomeSections } + defaultHomeSections).distinct()
+        normalizedHomeSectionOrder(settings.homeSectionOrder)
     }
     val visibleOrder = allSectionOrder.filterNot { settings.hiddenHomeSections.contains(it) }
     var homeMode by remember { mutableStateOf("overview") }
@@ -840,7 +856,15 @@ private fun HomeScreen(
     // "Continua a guardare" identico a iOS (IosHomeRails.kt): card calcolate fuori dal main thread.
     val continueCards = rememberContinueWatchingCards(
         watch, catalog, settings.homeContinueKind,
-        enabled = "continueWatching" in visibleOrder
+        enabled = "continueWatching" in visibleOrder || "featured" in visibleOrder
+    )
+    // "In evidenza": continua a guardare, per te, di tendenza (HomeFeatured.kt).
+    val featuredEntries = rememberHomeFeaturedEntries(
+        enabled = "featured" in visibleOrder && homeMode == "overview",
+        app = vm.app,
+        catalog = catalog,
+        continueCards = continueCards,
+        apiKey = settings.tmdbApiKey,
     )
     val detailFocusScope = rememberCoroutineScope()
     val closeHomeDetail: () -> Unit = {
@@ -853,10 +877,13 @@ private fun HomeScreen(
 
     if (selectedDetail != null) {
         val detail = selectedDetail!!
+        // In modalita' a tutta larghezza la shell non applica margini: la scheda li riprende qui.
+        Box(if (edgeToEdge) Modifier.fillMaxSize().padding(horizontal = if (remoteFirstDevice) 28.dp else 16.dp, vertical = 18.dp) else Modifier.fillMaxSize()) {
         when (detail.kind) {
             MediaKind.MOVIE -> MovieDetailScreen(vm.app, detail, catalog?.movies.orEmpty(), fav, onBack = closeHomeDetail, onPlay = { item, pos -> onPlayWithPosition(onPlay, item, pos) }, entryFocusRequester = entryFocusRequester)
             MediaKind.SERIES -> SeriesDetailScreen(vm.app, detail, catalog?.episodes.orEmpty(), fav, onBack = closeHomeDetail, onPlay = { item, pos -> onPlayWithPosition(onPlay, item, pos) }, allSeries = catalog?.series.orEmpty(), onOpenAlternateSeries = { selectedDetail = it }, entryFocusRequester = entryFocusRequester)
             else -> onPlay(detail)
+        }
         }
         return
     }
@@ -865,6 +892,16 @@ private fun HomeScreen(
         when (item.kind) {
             MediaKind.MOVIE, MediaKind.SERIES -> selectedDetail = item
             MediaKind.LIVE, MediaKind.EPISODE -> onPlay(item)
+        }
+    }
+
+    // "Continua a guardare" riprende come la card della sezione omonima (il player chiede "Riprendi?");
+    // "Maggiori informazioni" apre il titolo nella sua sezione, come le card di tendenza.
+    fun openFeatured(entry: HomeFeaturedEntry) {
+        when {
+            entry.isResume -> onPlay(entry.item)
+            onOpenInSection != null -> onOpenInSection(entry.item, entry.meta)
+            else -> openLibraryItem(entry.item)
         }
     }
 
@@ -903,42 +940,215 @@ private fun HomeScreen(
         }
     }
 
-    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        // The iOS Home menu is always available, even if the user hides the heading section.
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Box {
-                Surface(
-                    onClick = { homeMenuOpen = true },
-                    modifier = Modifier
-                        .then(entryFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
-                        .remoteFocusOutline(cornerRadius = 50.dp),
-                    shape = RoundedCornerShape(50),
-                    color = Color.Transparent,
-                ) {
-                    LiquidGlassPill(selected = true) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                            Icon(when (homeMode) { "live" -> Icons.Default.LiveTv; "movies" -> Icons.Default.Movie; "series" -> Icons.Default.Tv; else -> Icons.Default.Home }, null, tint = Color(0xFF9ABEFF).readable(), modifier = Modifier.size(17.dp))
-                            Text(menuItems.first { it.first == homeMode }.second, color = glassForeground(), fontWeight = FontWeight.SemiBold, maxLines = 1)
-                            Icon(Icons.Default.ExpandMore, null, tint = glassForeground().copy(.75f), modifier = Modifier.size(17.dp))
-                        }
-                    }
-                }
-                DropdownMenu(homeMenuOpen, { homeMenuOpen = false }) {
-                    menuItems.forEach { (id, label) ->
-                        DropdownMenuItem(text = { Text(label) }, onClick = { homeMode = id; homeMenuOpen = false }, leadingIcon = { Icon(when (id) { "live" -> Icons.Default.LiveTv; "movies" -> Icons.Default.Movie; "series" -> Icons.Default.Tv; else -> Icons.Default.Home }, null) }, trailingIcon = { if (homeMode == id) Icon(Icons.Default.Check, null) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true))
+    val homeHorizontalPadding = if (remoteFirstDevice) 28.dp else 16.dp
+    // The iOS Home menu is always available, even if the user hides the heading section.
+    val homeHeader: @Composable () -> Unit = {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Box {
+            Surface(
+                onClick = { homeMenuOpen = true },
+                modifier = Modifier
+                    .then(entryFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
+                    .remoteFocusOutline(cornerRadius = 50.dp),
+                shape = RoundedCornerShape(50),
+                color = Color.Transparent,
+            ) {
+                LiquidGlassPill(selected = true) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                        Icon(when (homeMode) { "live" -> Icons.Default.LiveTv; "movies" -> Icons.Default.Movie; "series" -> Icons.Default.Tv; else -> Icons.Default.Home }, null, tint = Color(0xFF9ABEFF).readable(), modifier = Modifier.size(17.dp))
+                        Text(menuItems.first { it.first == homeMode }.second, color = glassForeground(), fontWeight = FontWeight.SemiBold, maxLines = 1)
+                        Icon(Icons.Default.ExpandMore, null, tint = glassForeground().copy(.75f), modifier = Modifier.size(17.dp))
                     }
                 }
             }
-            Spacer(Modifier.weight(1f))
-            Surface(onClick = { onRoute("home-customize") }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp), color = Color.Transparent, shape = RoundedCornerShape(50)) {
-                LiquidGlassPill {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Icon(Icons.Default.Tune, null, tint = glassForeground().copy(.85f), modifier = Modifier.size(16.dp))
-                        Text("Personalizza", color = glassForeground(), fontSize = 13.sp)
-                    }
+            DropdownMenu(homeMenuOpen, { homeMenuOpen = false }) {
+                menuItems.forEach { (id, label) ->
+                    DropdownMenuItem(text = { Text(label) }, onClick = { homeMode = id; homeMenuOpen = false }, leadingIcon = { Icon(when (id) { "live" -> Icons.Default.LiveTv; "movies" -> Icons.Default.Movie; "series" -> Icons.Default.Tv; else -> Icons.Default.Home }, null) }, trailingIcon = { if (homeMode == id) Icon(Icons.Default.Check, null) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true))
                 }
             }
         }
+        Spacer(Modifier.weight(1f))
+        Surface(onClick = { onRoute("home-customize") }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp), color = Color.Transparent, shape = RoundedCornerShape(50)) {
+            LiquidGlassPill {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Icon(Icons.Default.Tune, null, tint = glassForeground().copy(.85f), modifier = Modifier.size(16.dp))
+                    Text("Personalizza", color = glassForeground(), fontSize = 13.sp)
+                }
+            }
+        }
+    }
+    }
+    val renderSection: @Composable (String) -> Unit = { section ->
+        when (section) {
+            "heading" -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Text("Tutto il tuo intrattenimento", color = glassForeground(), fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                    Text(if (activeSource != null) "Scegli cosa guardare dalla sorgente attiva." else "Configura una sorgente dalle Impostazioni quando vuoi.", color = glassForeground().copy(.64f), fontSize = 14.sp)
+                }
+                androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    item { HomeActionChip("Live TV", Icons.Default.LiveTv) { onRoute("live") } }
+                    item { HomeActionChip("Film", Icons.Default.Movie) { onRoute("movies") } }
+                    item { HomeActionChip("Serie", Icons.Default.Tv) { onRoute("series") } }
+                    item { HomeActionChip("Guida TV", Icons.Default.CalendarMonth) { onRoute("epg") } }
+                }
+            }
+            "search" -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                EpgStyleSearchField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = "Cerca Live TV, film e serie…"
+                )
+                if (!searching) {
+                    Text("Ricerca globale nella sorgente attiva", color = glassForeground().copy(.5f), fontSize = 12.sp)
+                } else if (query.trim().length < 2) {
+                    Text("Digita almeno due caratteri", color = glassForeground().copy(.55f), fontSize = 12.sp)
+                } else if (debouncedQuery != query.trim()) {
+                    Text("Ricerca in corso…", color = glassForeground().copy(.55f), fontSize = 12.sp)
+                } else if (activeSource == null) {
+                    EmptyHint("Attiva una sorgente dalle Impostazioni per cercare nei suoi titoli.")
+                } else if (homeSearchResults.isEmpty()) {
+                    EmptyHint("Nessun risultato per “${query.trim()}”")
+                } else {
+                    Text("${homeSearchResults.size} risultati", color = glassForeground().copy(.62f), fontSize = 12.sp)
+                    val grouped = listOf(
+                        MediaKind.LIVE to "Live TV",
+                        MediaKind.MOVIE to "Film",
+                        MediaKind.SERIES to "Serie TV",
+                        MediaKind.EPISODE to "Episodi"
+                    )
+                    grouped.forEach { (kind, label) ->
+                        val resultGroup = homeSearchResults.filter { it.kind == kind }
+                        if (resultGroup.isNotEmpty()) Section(label, null) {
+                            androidx.compose.foundation.lazy.LazyRow(modifier = Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                items(resultGroup.take(16), key = { it.id }) { item -> MediaCard(item, vm.appFavorite(fav, item), onClick = { openLibraryItem(item) }, onToggleFavorite = { vm.toggleFavorite(item) }) }
+                            }
+                        }
+                    }
+                }
+            }
+            "continueWatching" -> ContinueWatchingSection(
+                app = vm.app,
+                cards = continueCards,
+                kindFilter = settings.homeContinueKind,
+                // Come iOS: il player chiede "Riprendi la visione?" con la posizione salvata.
+                        onResume = { card -> onPlay(card.playItem) },
+            )
+            "sourceCard" -> {
+                val activeName = sources.firstOrNull { it.id == activeSource }?.name
+                LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius = 22.dp, contentPadding = 18.dp) {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.size(46.dp).clip(RoundedCornerShape(15.dp)).background((if (activeName == null) Color(0xFF9ABEFF) else Color(0xFF54D6A0)).copy(.16f)), contentAlignment = Alignment.Center) {
+                                Icon(if (activeName == null) Icons.Default.AutoAwesome else Icons.Default.CheckCircle, null, tint = if (activeName == null) Color(0xFF9ABEFF).readable() else Color(0xFF54D6A0).readable(), modifier = Modifier.size(25.dp))
+                            }
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Text(if (activeName == null) "Inizia quando vuoi" else "Sorgente pronta", color = glassForeground(), fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                                Text(activeName ?: "Nessuna sorgente configurata", color = glassForeground().copy(.78f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text("${sources.size} sorgenti · ${catalog?.allItems?.size ?: 0} elementi", color = glassForeground().copy(.48f), fontSize = 12.sp)
+                            }
+                            if (sources.size > 1 && activeSource != null) {
+                                Box {
+                                    Surface(onClick = { sourceMenuOpen = true }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp), color = Color.Transparent, shape = RoundedCornerShape(50)) {
+                                        LiquidGlassPill {
+                                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                                Text("Cambia", color = glassForeground(), fontSize = 12.sp)
+                                                Icon(Icons.Default.ExpandMore, null, tint = glassForeground().copy(.7f), modifier = Modifier.size(16.dp))
+                                            }
+                                        }
+                                    }
+                                    DropdownMenu(sourceMenuOpen, { sourceMenuOpen = false }) {
+                                        sources.forEach { source ->
+                                            DropdownMenuItem(
+                                                text = { Text(source.name) },
+                                                leadingIcon = { Icon(Icons.Default.Storage, null) },
+                                                trailingIcon = { if (source.id == activeSource) Icon(Icons.Default.Check, null) },
+                                                onClick = { vm.setActive(source.id); sourceMenuOpen = false }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                            OutlinedButton(onClick = { onRoute("sources") }) { Text(if (activeName == null) "Aggiungi" else "Gestisci") }
+                        }
+                        if (activeName == null) Text("Aggiungi una playlist M3U o un account supportato dalle Impostazioni. Live TV, film e serie appariranno qui dopo il caricamento.", color = glassForeground().copy(.62f), fontSize = 13.sp)
+                    }
+                }
+            }
+            "sources" -> Section("Sorgenti", null) {
+                Surface(onClick = { onRoute("sources") }, color = Color.Transparent, shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 20.dp)) {
+                    LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius = 20.dp, contentPadding = 16.dp) {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Box(Modifier.size(42.dp).clip(RoundedCornerShape(13.dp)).background(Color(0xFF3478F6).copy(.15f)), contentAlignment = Alignment.Center) { Icon(Icons.Default.Layers, null, tint = Color(0xFF9ABEFF).readable(), modifier = Modifier.size(23.dp)) }
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Text("Sorgenti", color = glassForeground(), fontWeight = FontWeight.SemiBold)
+                                Text(if (sources.isEmpty()) "Nessuna sorgente configurata" else "${sources.size} sorgenti configurate", color = glassForeground().copy(.58f), fontSize = 12.sp)
+                            }
+                            Icon(Icons.Default.ChevronRight, null, tint = glassForeground().copy(.42f))
+                        }
+                    }
+                }
+            }
+            "liveTV" -> HomeDestinationCard("Live TV", if (activeSource == null) "Disponibile con una sorgente" else "${catalog?.live?.size ?: 0} canali disponibili", if (activeSource == null) "I canali appariranno qui" else "Canali in diretta dalla sorgente attiva", Icons.Default.LiveTv, Color(0xFFFF6961).readable(), "Apri Live TV") { onRoute("live") }
+            "guidaTV" -> HomeDestinationCard("Guida TV", "EPG e promemoria locali", "Consulta la programmazione e vai al canale che vuoi guardare.", Icons.Default.CalendarMonth, Color(0xFF9ABEFF).readable(), "Apri guida") { onRoute("epg") }
+            "favoriteChannels" -> {
+                val list = catalog?.byIds(MediaKind.LIVE, fav.live).orEmpty()
+                if (list.isNotEmpty()) Section("Canali preferiti", { homeMode = "live" }) {
+                    androidx.compose.foundation.lazy.LazyRow(modifier = Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) { items(list.take(20), key = { it.id }) { item -> MediaCard(item, true, onClick = { onPlay(item) }, onToggleFavorite = { vm.toggleFavorite(item) }) } }
+                }
+            }
+            "favoriteSeries" -> {
+                val list = catalog?.byIds(MediaKind.SERIES, fav.series).orEmpty()
+                if (list.isNotEmpty()) Section("Serie TV preferite", { homeMode = "series" }) {
+                    androidx.compose.foundation.lazy.LazyRow(modifier = Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) { items(list.take(20), key = { it.id }) { item -> MediaCard(item, true, onClick = { openLibraryItem(item) }, onToggleFavorite = { vm.toggleFavorite(item) }) } }
+                }
+            }
+            "favoriteMovies" -> {
+                val list = catalog?.byIds(MediaKind.MOVIE, fav.movies).orEmpty()
+                if (list.isNotEmpty()) Section("Film preferiti", { homeMode = "movies" }) {
+                    androidx.compose.foundation.lazy.LazyRow(modifier = Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) { items(list.take(20), key = { it.id }) { item -> MediaCard(item, true, onClick = { openLibraryItem(item) }, onToggleFavorite = { vm.toggleFavorite(item) }) } }
+                }
+            }
+            "onDemand" -> Section("On demand", null) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    HomeCompactDestinationCard("VOD", if (activeSource == null) "Disponibile con una sorgente" else "Film e contenuti on demand", Icons.Default.Movie, Color(0xFFB19CFF).readable(), Modifier.weight(1f)) { onRoute("movies") }
+                    HomeCompactDestinationCard("Serie TV", if (activeSource == null) "Disponibile con una sorgente" else "Scopri le tue serie", Icons.Default.Tv, Color(0xFF8CB7FF).readable(), Modifier.weight(1f)) { onRoute("series") }
+                }
+            }
+            "trendingSeries" -> HomeTrendingRail(
+                title = "Serie di tendenza",
+                isSeries = true,
+                apiKey = settings.tmdbApiKey,
+                tmdb = vm.app.tmdb,
+                onSelect = { trend -> openTrend(trend.toMetadata(), isSeries = true) },
+            )
+            "trendingMovies" -> HomeTrendingRail(
+                title = "Film di tendenza",
+                isSeries = false,
+                apiKey = settings.tmdbApiKey,
+                tmdb = vm.app.tmdb,
+                onSelect = { trend -> openTrend(trend.toMetadata(), isSeries = false) },
+            )
+            "featured" -> if (featuredEntries.isNotEmpty()) HomeFeaturedHero(
+                entries = featuredEntries,
+                isTelevision = remoteFirstDevice,
+                edgeToEdge = false,
+                onSelect = { openFeatured(it) },
+            )
+        }
+    }
+    // A tutta larghezza (come iOS): ricerca/intestazione iniziali e barra "Home" sopra l'immagine di "In evidenza".
+    val leadingTop = if (edgeToEdge) visibleOrder.takeWhile { it == "search" || it == "heading" } else emptyList()
+    val heroInTop = edgeToEdge && homeMode == "overview" && !searching && featuredEntries.isNotEmpty() &&
+        visibleOrder.getOrNull(leadingTop.size) == "featured"
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .then(if (edgeToEdge && homeMode != "overview") Modifier.padding(horizontal = homeHorizontalPadding, vertical = 18.dp) else Modifier),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        if (!edgeToEdge || homeMode != "overview") homeHeader()
 
         if (homeMode != "overview") {
             if (favoriteItems.isEmpty()) {
@@ -962,170 +1172,52 @@ private fun HomeScreen(
                     }
                 }
             }
-        } else {
+        } else if (!edgeToEdge) {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(20.dp),
                 contentPadding = PaddingValues(start = 2.dp, end = 2.dp, top = 2.dp, bottom = 48.dp)
             ) {
                 items(renderedOrder, key = { it }) { section ->
-                    Box(Modifier.animateItem()) {
-                    when (section) {
-                        "heading" -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                                Text("Tutto il tuo intrattenimento", color = glassForeground(), fontSize = 24.sp, fontWeight = FontWeight.Bold)
-                                Text(if (activeSource != null) "Scegli cosa guardare dalla sorgente attiva." else "Configura una sorgente dalle Impostazioni quando vuoi.", color = glassForeground().copy(.64f), fontSize = 14.sp)
-                            }
-                            androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                item { HomeActionChip("Live TV", Icons.Default.LiveTv) { onRoute("live") } }
-                                item { HomeActionChip("Film", Icons.Default.Movie) { onRoute("movies") } }
-                                item { HomeActionChip("Serie", Icons.Default.Tv) { onRoute("series") } }
-                                item { HomeActionChip("Guida TV", Icons.Default.CalendarMonth) { onRoute("epg") } }
-                            }
+                    Box(Modifier.animateItem()) { renderSection(section) }
+                }
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(20.dp),
+                contentPadding = PaddingValues(bottom = 48.dp)
+            ) {
+                item(key = "home-top") {
+                    val top: @Composable () -> Unit = {
+                        Column(
+                            Modifier.fillMaxWidth().padding(horizontal = homeHorizontalPadding).padding(top = 18.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            homeHeader()
+                            leadingTop.forEach { section -> if (section in renderedOrder) renderSection(section) }
                         }
-                        "search" -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            EpgStyleSearchField(
-                                value = query,
-                                onValueChange = { query = it },
-                                modifier = Modifier.fillMaxWidth(),
-                                placeholder = "Cerca Live TV, film e serie…"
-                            )
-                            if (!searching) {
-                                Text("Ricerca globale nella sorgente attiva", color = glassForeground().copy(.5f), fontSize = 12.sp)
-                            } else if (query.trim().length < 2) {
-                                Text("Digita almeno due caratteri", color = glassForeground().copy(.55f), fontSize = 12.sp)
-                            } else if (debouncedQuery != query.trim()) {
-                                Text("Ricerca in corso…", color = glassForeground().copy(.55f), fontSize = 12.sp)
-                            } else if (activeSource == null) {
-                                EmptyHint("Attiva una sorgente dalle Impostazioni per cercare nei suoi titoli.")
-                            } else if (homeSearchResults.isEmpty()) {
-                                EmptyHint("Nessun risultato per “${query.trim()}”")
-                            } else {
-                                Text("${homeSearchResults.size} risultati", color = glassForeground().copy(.62f), fontSize = 12.sp)
-                                val grouped = listOf(
-                                    MediaKind.LIVE to "Live TV",
-                                    MediaKind.MOVIE to "Film",
-                                    MediaKind.SERIES to "Serie TV",
-                                    MediaKind.EPISODE to "Episodi"
-                                )
-                                grouped.forEach { (kind, label) ->
-                                    val resultGroup = homeSearchResults.filter { it.kind == kind }
-                                    if (resultGroup.isNotEmpty()) Section(label, null) {
-                                        androidx.compose.foundation.lazy.LazyRow(modifier = Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                            items(resultGroup.take(16), key = { it.id }) { item -> MediaCard(item, vm.appFavorite(fav, item), onClick = { openLibraryItem(item) }, onToggleFavorite = { vm.toggleFavorite(item) }) }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        "continueWatching" -> ContinueWatchingSection(
-                            app = vm.app,
-                            cards = continueCards,
-                            kindFilter = settings.homeContinueKind,
-                            // Come iOS: il player chiede "Riprendi la visione?" con la posizione salvata.
-                                    onResume = { card -> onPlay(card.playItem) },
-                        )
-                        "sourceCard" -> {
-                            val activeName = sources.firstOrNull { it.id == activeSource }?.name
-                            LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius = 22.dp, contentPadding = 18.dp) {
-                                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                                        Box(Modifier.size(46.dp).clip(RoundedCornerShape(15.dp)).background((if (activeName == null) Color(0xFF9ABEFF) else Color(0xFF54D6A0)).copy(.16f)), contentAlignment = Alignment.Center) {
-                                            Icon(if (activeName == null) Icons.Default.AutoAwesome else Icons.Default.CheckCircle, null, tint = if (activeName == null) Color(0xFF9ABEFF).readable() else Color(0xFF54D6A0).readable(), modifier = Modifier.size(25.dp))
-                                        }
-                                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                            Text(if (activeName == null) "Inizia quando vuoi" else "Sorgente pronta", color = glassForeground(), fontWeight = FontWeight.Bold, fontSize = 17.sp)
-                                            Text(activeName ?: "Nessuna sorgente configurata", color = glassForeground().copy(.78f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                            Text("${sources.size} sorgenti · ${catalog?.allItems?.size ?: 0} elementi", color = glassForeground().copy(.48f), fontSize = 12.sp)
-                                        }
-                                        if (sources.size > 1 && activeSource != null) {
-                                            Box {
-                                                Surface(onClick = { sourceMenuOpen = true }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp), color = Color.Transparent, shape = RoundedCornerShape(50)) {
-                                                    LiquidGlassPill {
-                                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                                            Text("Cambia", color = glassForeground(), fontSize = 12.sp)
-                                                            Icon(Icons.Default.ExpandMore, null, tint = glassForeground().copy(.7f), modifier = Modifier.size(16.dp))
-                                                        }
-                                                    }
-                                                }
-                                                DropdownMenu(sourceMenuOpen, { sourceMenuOpen = false }) {
-                                                    sources.forEach { source ->
-                                                        DropdownMenuItem(
-                                                            text = { Text(source.name) },
-                                                            leadingIcon = { Icon(Icons.Default.Storage, null) },
-                                                            trailingIcon = { if (source.id == activeSource) Icon(Icons.Default.Check, null) },
-                                                            onClick = { vm.setActive(source.id); sourceMenuOpen = false }, modifier = Modifier.remoteFocusOutline(cornerRadius = 8.dp, includeDescendants = true)
-                                                        )
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        OutlinedButton(onClick = { onRoute("sources") }) { Text(if (activeName == null) "Aggiungi" else "Gestisci") }
-                                    }
-                                    if (activeName == null) Text("Aggiungi una playlist M3U o un account supportato dalle Impostazioni. Live TV, film e serie appariranno qui dopo il caricamento.", color = glassForeground().copy(.62f), fontSize = 13.sp)
-                                }
-                            }
-                        }
-                        "sources" -> Section("Sorgenti", null) {
-                            Surface(onClick = { onRoute("sources") }, color = Color.Transparent, shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth().remoteFocusOutline(cornerRadius = 20.dp)) {
-                                LiquidGlassSurface(Modifier.fillMaxWidth(), cornerRadius = 20.dp, contentPadding = 16.dp) {
-                                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                        Box(Modifier.size(42.dp).clip(RoundedCornerShape(13.dp)).background(Color(0xFF3478F6).copy(.15f)), contentAlignment = Alignment.Center) { Icon(Icons.Default.Layers, null, tint = Color(0xFF9ABEFF).readable(), modifier = Modifier.size(23.dp)) }
-                                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                            Text("Sorgenti", color = glassForeground(), fontWeight = FontWeight.SemiBold)
-                                            Text(if (sources.isEmpty()) "Nessuna sorgente configurata" else "${sources.size} sorgenti configurate", color = glassForeground().copy(.58f), fontSize = 12.sp)
-                                        }
-                                        Icon(Icons.Default.ChevronRight, null, tint = glassForeground().copy(.42f))
-                                    }
-                                }
-                            }
-                        }
-                        "liveTV" -> HomeDestinationCard("Live TV", if (activeSource == null) "Disponibile con una sorgente" else "${catalog?.live?.size ?: 0} canali disponibili", if (activeSource == null) "I canali appariranno qui" else "Canali in diretta dalla sorgente attiva", Icons.Default.LiveTv, Color(0xFFFF6961).readable(), "Apri Live TV") { onRoute("live") }
-                        "guidaTV" -> HomeDestinationCard("Guida TV", "EPG e promemoria locali", "Consulta la programmazione e vai al canale che vuoi guardare.", Icons.Default.CalendarMonth, Color(0xFF9ABEFF).readable(), "Apri guida") { onRoute("epg") }
-                        "favoriteChannels" -> {
-                            val list = catalog?.byIds(MediaKind.LIVE, fav.live).orEmpty()
-                            if (list.isNotEmpty()) Section("Canali preferiti", { homeMode = "live" }) {
-                                androidx.compose.foundation.lazy.LazyRow(modifier = Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) { items(list.take(20), key = { it.id }) { item -> MediaCard(item, true, onClick = { onPlay(item) }, onToggleFavorite = { vm.toggleFavorite(item) }) } }
-                            }
-                        }
-                        "favoriteSeries" -> {
-                            val list = catalog?.byIds(MediaKind.SERIES, fav.series).orEmpty()
-                            if (list.isNotEmpty()) Section("Serie TV preferite", { homeMode = "series" }) {
-                                androidx.compose.foundation.lazy.LazyRow(modifier = Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) { items(list.take(20), key = { it.id }) { item -> MediaCard(item, true, onClick = { openLibraryItem(item) }, onToggleFavorite = { vm.toggleFavorite(item) }) } }
-                            }
-                        }
-                        "favoriteMovies" -> {
-                            val list = catalog?.byIds(MediaKind.MOVIE, fav.movies).orEmpty()
-                            if (list.isNotEmpty()) Section("Film preferiti", { homeMode = "movies" }) {
-                                androidx.compose.foundation.lazy.LazyRow(modifier = Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) { items(list.take(20), key = { it.id }) { item -> MediaCard(item, true, onClick = { openLibraryItem(item) }, onToggleFavorite = { vm.toggleFavorite(item) }) } }
-                            }
-                        }
-                        "onDemand" -> Section("On demand", null) {
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                HomeCompactDestinationCard("VOD", if (activeSource == null) "Disponibile con una sorgente" else "Film e contenuti on demand", Icons.Default.Movie, Color(0xFFB19CFF).readable(), Modifier.weight(1f)) { onRoute("movies") }
-                                HomeCompactDestinationCard("Serie TV", if (activeSource == null) "Disponibile con una sorgente" else "Scopri le tue serie", Icons.Default.Tv, Color(0xFF8CB7FF).readable(), Modifier.weight(1f)) { onRoute("series") }
-                            }
-                        }
-                        "trendingSeries" -> HomeTrendingRail(
-                            title = "Serie di tendenza",
-                            isSeries = true,
-                            apiKey = settings.tmdbApiKey,
-                            tmdb = vm.app.tmdb,
-                            onSelect = { trend -> openTrend(trend.toMetadata(), isSeries = true) },
-                        )
-                        "trendingMovies" -> HomeTrendingRail(
-                            title = "Film di tendenza",
-                            isSeries = false,
-                            apiKey = settings.tmdbApiKey,
-                            tmdb = vm.app.tmdb,
-                            onSelect = { trend -> openTrend(trend.toMetadata(), isSeries = false) },
-                        )
                     }
+                    if (heroInTop) {
+                        HomeFeaturedHero(
+                            entries = featuredEntries,
+                            isTelevision = remoteFirstDevice,
+                            edgeToEdge = true,
+                            onSelect = { openFeatured(it) },
+                            horizontalPadding = homeHorizontalPadding,
+                            topContent = top,
+                        )
+                    } else {
+                        top()
                     }
+                }
+                items(renderedOrder.filter { it !in leadingTop && !(heroInTop && it == "featured") }, key = { it }) { section ->
+                    Box(Modifier.animateItem().padding(horizontal = homeHorizontalPadding)) { renderSection(section) }
                 }
             }
         }
     }
+
 
     trendingUnavailable?.let {
         // Stesso avviso di HomeView.swift.
@@ -2623,7 +2715,7 @@ private fun HomeCustomizationSheet(
         "series" -> s.seriesSectionOrder
         // The iOS Home layout has no playlist "Categorie" tile grid. That
         // configurable section belongs only to Live TV / Film / Serie TV.
-        else -> s.homeSectionOrder.filter { it in defaultHomeSections }
+        else -> normalizedHomeSectionOrder(s.homeSectionOrder)
     }.let { sectionIds -> if (isTv && scopeKey in setOf("live", "movies", "series")) sectionIds.filterNot { it == "categories" } else sectionIds }
     fun readHidden(s: AppSettings): Set<String> = when (scopeKey) {
         "live" -> s.hiddenLiveSections

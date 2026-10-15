@@ -537,6 +537,19 @@ class PlaybackController(
         }.build()
     }
 
+    /**
+     * Flusso VOD/Serie in riproduzione (indirizzo effettivo + header, User-Agent compreso) per le anteprime della
+     * timeline; null per la Live TV o senza contenuto.
+     */
+    fun thumbnailSource(): Pair<String, Map<String, String>>? {
+        val item = currentItem ?: return null
+        if (item.kind == MediaKind.LIVE) return null
+        val url = urlCandidates.getOrElse(urlIndex) { item.streamUrl }.takeIf { it.isNotBlank() } ?: return null
+        val headers = LinkedHashMap(streamHeaders)
+        headers["User-Agent"] = effectiveUserAgent()
+        return url to headers
+    }
+
     private fun loadControlSignature(value: AppSettings): String =
         "${value.minBufferSec}|${value.maxBufferSec}|${value.playerStartBufferSec}|${value.httpCache}|${value.asyncDecode}|${value.hardwareDecode}|${value.softwareDecode}|${value.videoDelayMs}"
 
@@ -946,13 +959,17 @@ class PlaybackController(
         // grow the buffer until the process runs out of memory.
         val am = context.getSystemService(android.content.Context.ACTIVITY_SERVICE) as? android.app.ActivityManager
         val heapMb = (am?.let { if ((context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_LARGE_HEAP) != 0) it.largeMemoryClass else it.memoryClass } ?: 128)
-        val bufferBytes = (heapMb / 4).coerceIn(16, 96) * 1024 * 1024
+        val forwardMb = (heapMb / 4).coerceIn(16, 96)
+        // Back buffer: la parte gia' vista resta in memoria (dal fotogramma chiave), cosi' tornare indietro
+        // nella parte scaricata e' istantaneo, senza riscaricare. Occupa lo stesso budget del buffer in avanti,
+        // quindi il tetto cresce in proporzione (mai oltre un terzo della memoria dell'app).
+        val bufferBytes = ((forwardMb * 7) / 4).coerceAtMost(maxOf(forwardMb, heapMb / 3)) * 1024 * 1024
 
         return DefaultLoadControl.Builder()
             .setAllocator(DefaultAllocator(true, 64 * 1024))
             .setBufferDurationsMs(minMs, maxMs, startMs, rebufferMs)
             .setTargetBufferBytes(bufferBytes)
-            .setBackBuffer(15_000, false)
+            .setBackBuffer(BACK_BUFFER_MS, true)
             .setPrioritizeTimeOverSizeThresholds(false)
             .build()
     }
@@ -1055,6 +1072,8 @@ class PlaybackController(
         const val MAX_RECOVERY_ROUNDS = 3
         const val FAST_START_MS = 1_500
         const val REBUFFER_MS = 2_000
+        /** Parte gia' vista tenuta in memoria per spostarsi indietro senza riscaricare. */
+        const val BACK_BUFFER_MS = 60_000
         const val LIVE_REBUFFER_MS = 5_000
         const val MAX_LOAD_RETRIES = 5
         const val MAX_NETWORK_RETRIES = 6
