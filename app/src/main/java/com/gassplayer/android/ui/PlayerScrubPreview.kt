@@ -45,6 +45,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.channels.Channel
 import java.util.concurrent.Executors
 import kotlin.math.roundToInt
 
@@ -54,60 +55,89 @@ import kotlin.math.roundToInt
 
 /**
  * Fotogrammi letti dallo stesso flusso del player (stesso indirizzo e header, User-Agent compreso) con
- * [MediaMetadataRetriever], su un thread dedicato. In cache a blocchi di 5 s. HLS non e' supportato dal
- * retriever: nessuna anteprima, resta il tempo.
+ * [MediaMetadataRetriever], su un thread dedicato. HLS non e' supportato dal retriever: resta il tempo.
  *
- * Reattivita': al primo trascinamento si apre il retriever e in background si prepara una griglia di
- * [PREFETCH_COUNT] fotogrammi distribuiti sulla durata. Durante lo scrubbing compare subito il fotogramma in
- * cache piu' vicino e, a ogni fotogramma pronto ([version]), l'anteprima si aggiorna da sola; le richieste
- * superate dal dito vengono saltate (resta solo l'ultima). Le richieste dell'utente passano sempre davanti
- * alla preparazione in background.
+ * Aggiornamento continuo mentre si trascina: un unico lavoratore decodifica, appena e' libero, SEMPRE
+ * l'ultimo punto sotto il dito (le posizioni gia' superate non vengono mai lette); nei momenti liberi
+ * riempie una griglia di [PREFETCH_COUNT] punti partendo da quelli vicini al dito. Ogni fotogramma pronto
+ * aggiorna subito l'anteprima ([version]), che mostra quello esatto o il piu' vicino disponibile.
+ * I blocchi sono di 5 s, piu' larghi sui contenuti lunghi (durata / [MAX_BUCKETS]): meno letture, piu'
+ * miniature gia' pronte mentre il dito si muove.
  */
 internal class PlayerThumbnailLoader(val url: String, private val headers: Map<String, String>) {
     private val dispatcher: ExecutorCoroutineDispatcher = Executors.newSingleThreadExecutor { runnable ->
-        Thread(runnable, "gass-thumbnails").apply { isDaemon = true; priority = Thread.NORM_PRIORITY - 1 }
+        Thread(runnable, "gass-thumbnails").apply { isDaemon = true; priority = Thread.NORM_PRIORITY }
     }.asCoroutineDispatcher()
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
     private val cache = object : LinkedHashMap<Long, ImageBitmap>(64, .75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, ImageBitmap>?): Boolean = size > CACHE_SIZE
     }
     private val failedBuckets = HashSet<Long>()
+    private val wakeUp = Channel<Unit>(Channel.CONFLATED)
     private var retriever: MediaMetadataRetriever? = null
-    private var warmJob: Job? = null
+    private var worker: Job? = null
+    private var grid: MutableList<Long> = mutableListOf()
     private var openFailures = 0
     private var consecutiveNullFrames = 0
     @Volatile private var unsupported = isHls(url)
     @Volatile var released = false
         private set
-    /** Punto (blocco da 5 s) sotto il dito: la griglia in background parte da li' e si allarga. */
-    @Volatile private var focusBucket: Long? = null
+    @Volatile private var bucketMs = BUCKET_MS
+    /** Ultimo punto sotto il dito (null = nessuno scrubbing). */
+    @Volatile private var wantedBucket: Long? = null
+    @Volatile private var lastFocus: Long? = null
 
     /** Cresce a ogni nuovo fotogramma in cache: l'anteprima mostrata si aggiorna. */
     val version = MutableStateFlow(0)
 
-    /** Apre il flusso e prepara la griglia di anteprime (una volta per sorgente). */
-    fun warmUp(durationMs: Long) {
-        if (unsupported || released || durationMs <= 0L || warmJob != null) return
-        warmJob = scope.launch {
-            val step = maxOf(durationMs / PREFETCH_COUNT, BUCKET_MS)
-            val grid = generateSequence(step / 2) { it + step }
-                .takeWhile { it < durationMs }
-                .map { it / BUCKET_MS }
-                .toMutableList()
-            while (isActive && !released && !unsupported && grid.isNotEmpty()) {
-                // Sempre il punto della griglia piu' vicino al dito: le miniature utili arrivano per prime.
-                val focus = focusBucket ?: grid.first()
-                val bucket = grid.minByOrNull { kotlin.math.abs(it - focus) } ?: break
-                grid.remove(bucket)
-                if (synchronized(cache) { cache[bucket] } == null) decode(bucket)
-                yield() // la richiesta esatta dell'utente, se in coda, passa prima del prossimo punto
+    private fun bucketOf(positionMs: Long): Long = positionMs.coerceAtLeast(0L) / bucketMs
+
+    /** Avvia il lavoratore (una volta per sorgente, solo dal primo trascinamento). */
+    fun start(durationMs: Long) {
+        if (worker != null || released || durationMs <= 0L) return
+        bucketMs = maxOf(BUCKET_MS, durationMs / MAX_BUCKETS)
+        val step = maxOf(durationMs / PREFETCH_COUNT, bucketMs)
+        grid = generateSequence(step / 2) { it + step }.takeWhile { it < durationMs }.map { it / bucketMs }.toMutableList()
+        if (unsupported) return
+        worker = scope.launch {
+            while (isActive && !released && !unsupported) {
+                val target = nextTarget()
+                if (target == null) {
+                    wakeUp.receive() // niente da fare: si attende il prossimo movimento del dito
+                    continue
+                }
+                decode(target)
             }
         }
     }
 
-    /** Punto sotto il dito (chiamato a ogni movimento, anche prima che parta la richiesta esatta). */
-    fun focus(positionMs: Long) {
-        focusBucket = positionMs.coerceAtLeast(0L) / BUCKET_MS
+    /** Punto sotto il dito, a ogni movimento. */
+    fun request(positionMs: Long) {
+        val bucket = bucketOf(positionMs)
+        wantedBucket = bucket
+        lastFocus = bucket
+        wakeUp.trySend(Unit)
+    }
+
+    /** Fine dello scrubbing: il lavoratore smette di inseguire il dito (la griglia continua). */
+    fun finish() {
+        wantedBucket = null
+    }
+
+    /** Solo sul thread delle anteprime: prima il punto sotto il dito, poi la griglia vicina al dito. */
+    private fun nextTarget(): Long? {
+        wantedBucket?.let { want ->
+            val cached = synchronized(cache) { cache.containsKey(want) }
+            if (!cached && want !in failedBuckets) return want
+        }
+        while (grid.isNotEmpty()) {
+            val focus = lastFocus ?: grid.first()
+            val next = grid.minByOrNull { kotlin.math.abs(it - focus) } ?: return null
+            grid.remove(next)
+            val cached = synchronized(cache) { cache.containsKey(next) }
+            if (!cached && next !in failedBuckets) return next
+        }
+        return null
     }
 
     /**
@@ -116,7 +146,7 @@ internal class PlayerThumbnailLoader(val url: String, private val headers: Map<S
      */
     fun seedCurrentFrame(positionMs: Long) {
         if (released) return
-        val bucket = positionMs.coerceAtLeast(0L) / BUCKET_MS
+        val bucket = bucketOf(positionMs)
         if (synchronized(cache) { cache[bucket] } != null) return
         PlayerThumbnailStore.captureVideoFrame(FRAME_WIDTH) { bitmap ->
             if (released) return@captureVideoFrame
@@ -127,25 +157,9 @@ internal class PlayerThumbnailLoader(val url: String, private val headers: Map<S
 
     /** Fotogramma gia' pronto piu' vicino a [positionMs] (immediato, senza rete). */
     fun nearest(positionMs: Long): ImageBitmap? {
-        val bucket = positionMs.coerceAtLeast(0L) / BUCKET_MS
+        val bucket = bucketOf(positionMs)
         return synchronized(cache) {
             cache[bucket] ?: cache.keys.minByOrNull { kotlin.math.abs(it - bucket) }?.let { cache[it] }
-        }
-    }
-
-    /**
-     * Fotogramma esatto per [positionMs]. Se la coroutine viene annullata mentre e' ancora in coda (il dito si
-     * e' gia' spostato) la lettura non parte nemmeno: si decodifica solo l'ultimo punto richiesto.
-     */
-    suspend fun frameAt(positionMs: Long): ImageBitmap? {
-        val bucket = (positionMs.coerceAtLeast(0L) / BUCKET_MS)
-        synchronized(cache) { cache[bucket] }?.let { return it }
-        if (unsupported || released) return null
-        focusBucket = bucket
-        return withContext(dispatcher) {
-            if (released || unsupported) return@withContext null
-            synchronized(cache) { cache[bucket] }?.let { return@withContext it }
-            decode(bucket)
         }
     }
 
@@ -164,7 +178,7 @@ internal class PlayerThumbnailLoader(val url: String, private val headers: Map<S
     private fun decode(bucket: Long): ImageBitmap? {
         if (bucket in failedBuckets) return null
         val r = openRetriever() ?: return null
-        val timeUs = (bucket * BUCKET_MS + BUCKET_MS / 2) * 1000L
+        val timeUs = (bucket * bucketMs + bucketMs / 2) * 1000L
         // Fotogramma chiave piu' vicino; se il contenitore non lo trova, quello precedente o successivo.
         val frame: Bitmap? = grab(r, timeUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
             ?: grab(r, timeUs, MediaMetadataRetriever.OPTION_PREVIOUS_SYNC)
@@ -202,7 +216,8 @@ internal class PlayerThumbnailLoader(val url: String, private val headers: Map<S
     fun release() {
         if (released) return
         released = true
-        warmJob?.cancel()
+        worker?.cancel()
+        wakeUp.close()
         // Chiusura sullo stesso thread delle letture: mai un release() durante getFrameAtTime().
         dispatcher.executor.execute {
             runCatching { retriever?.release() }
@@ -215,6 +230,7 @@ internal class PlayerThumbnailLoader(val url: String, private val headers: Map<S
 
     private companion object {
         const val BUCKET_MS = 5_000L
+        const val MAX_BUCKETS = 240L
         const val FRAME_WIDTH = 320
         const val FRAME_HEIGHT = 180
         const val CACHE_SIZE = 100
@@ -286,21 +302,25 @@ internal fun rememberPlayerThumbnail(
     val fallbackVersion = remember { MutableStateFlow(0) }
     val version by (loader?.version ?: fallbackVersion).collectAsState()
     val scrubbing = positionMs != null
-    // Inizio dello scrubbing: subito il fotogramma a schermo come prima anteprima.
+    // Inizio dello scrubbing: lavoratore avviato e subito il fotogramma a schermo come prima anteprima.
     LaunchedEffect(loader, scrubbing) {
-        // Il fotogramma a schermo e' quello della posizione di riproduzione (non del dito).
-        if (scrubbing) loader?.seedCurrentFrame(playbackPositionMs())
-    }
-    LaunchedEffect(loader, positionMs?.div(5_000L)) {
-        val target = positionMs ?: return@LaunchedEffect
         val current = loader ?: return@LaunchedEffect
-        current.focus(target)
-        // Flusso aperto e griglia preparata solo dal primo trascinamento (una volta per sorgente).
-        current.warmUp(durationMs)
-        current.frameAt(target)
+        if (scrubbing) {
+            current.start(durationMs)
+            // Il fotogramma a schermo e' quello della posizione di riproduzione (non del dito).
+            current.seedCurrentFrame(playbackPositionMs())
+        } else {
+            current.finish()
+        }
+    }
+    // Ogni movimento: il lavoratore insegue l'ultimo punto, senza annullare il fotogramma in lettura.
+    LaunchedEffect(loader, positionMs) {
+        val target = positionMs ?: return@LaunchedEffect
+        loader?.start(durationMs)
+        loader?.request(target)
     }
     // Sempre il fotogramma pronto piu' vicino (quello esatto appena arriva), aggiornato a ogni nuovo fotogramma.
-    return remember(loader, version, positionMs?.div(5_000L)) {
+    return remember(loader, version, positionMs) {
         if (positionMs == null) null else loader?.nearest(positionMs)
     }
 }

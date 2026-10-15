@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
@@ -25,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -294,10 +296,13 @@ internal fun HomeFeaturedHero(
 
     // Nessun cambio automatico: si scorre col dito, con SINISTRA/DESTRA o toccando i puntini.
 
+    // Altezza minima dello schermo, ma il riquadro cresce se serve: intestazione (Home, ricerca) e contenuto
+    // della scheda non si sovrappongono mai (prima su TV/schermi bassi badge e logo finivano sulla ricerca).
+    val homeBackground = MaterialTheme.colorScheme.background
     Box(
         modifier
             .fillMaxWidth()
-            .height(height)
+            .heightIn(min = height)
             .clip(shape)
             .pointerInput(entries.size) {
                 var dragged = 0f
@@ -315,7 +320,7 @@ internal fun HomeFeaturedHero(
             }
     ) {
         // Immagine in dissolvenza + sfumatura verso il basso (sfondo della Home sotto).
-        Crossfade(targetState = index, animationSpec = tween(600), label = "featured-artwork") { shown ->
+        Crossfade(targetState = index, animationSpec = tween(600), label = "featured-artwork", modifier = Modifier.matchParentSize()) { shown ->
             val entry = entries.getOrNull(shown) ?: return@Crossfade
             BoxWithConstraints(Modifier.fillMaxSize()) {
                 val wide = maxWidth > maxHeight * .9f
@@ -329,31 +334,38 @@ internal fun HomeFeaturedHero(
                 )
             }
         }
+        // Sfumatura: piu' scura in alto (intestazione leggibile) e, a tutta larghezza, fino al colore reale
+        // della Home in basso (come iOS: nessun bordo netto tra immagine e contenuto sotto).
         Box(
             Modifier
-                .fillMaxSize()
+                .matchParentSize()
                 .background(
                     Brush.verticalGradient(
-                        0f to Color.Black.copy(alpha = .38f),
-                        .2f to Color.Transparent,
-                        .46f to Color.Transparent,
-                        .66f to Color.Black.copy(alpha = .42f),
-                        .88f to Color.Black.copy(alpha = .72f),
-                        1f to if (edgeToEdge) Color.Transparent else Color.Black.copy(alpha = .78f),
+                        0f to Color.Black.copy(alpha = .55f),
+                        .22f to Color.Black.copy(alpha = .18f),
+                        .42f to Color.Transparent,
+                        .62f to Color.Black.copy(alpha = .42f),
+                        .84f to Color.Black.copy(alpha = .72f),
+                        1f to if (edgeToEdge) homeBackground else Color.Black.copy(alpha = .78f),
                     )
                 )
         )
 
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = height),
+            verticalArrangement = Arrangement.SpaceBetween,
+        ) {
         topContent?.let { content ->
-            Box(Modifier.align(Alignment.TopStart).fillMaxWidth()) { content() }
+            Box(Modifier.fillMaxWidth()) { content() }
         }
 
         Column(
             Modifier
-                .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .padding(horizontal = horizontalPadding)
-                .padding(bottom = 16.dp),
+                .padding(top = if (topContent != null) 20.dp else 0.dp, bottom = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Crossfade(targetState = index, animationSpec = tween(600), label = "featured-content") { shown ->
@@ -388,6 +400,7 @@ internal fun HomeFeaturedHero(
                     }
                 }
             }
+        }
         }
     }
 }
