@@ -1489,7 +1489,14 @@ private fun IosPlayerProgressSection(
     // Al rilascio anteprima e tempo spariscono (scrubPosition = null) e il timer dei controlli riparte.
     val scrubbingNow = scrubPosition != null
     LaunchedEffect(scrubbingNow) { onScrubbingChanged(scrubbingNow) }
-    DisposableEffect(Unit) { onDispose { onScrubbingChanged(false) } }
+    val latestScrub by rememberUpdatedState(scrubPosition)
+    DisposableEffect(Unit) {
+        onDispose {
+            // Controlli chiusi a meta' trascinamento: il player torna alla riproduzione normale.
+            latestScrub?.let { app.playback.endScrub(it) }
+            onScrubbingChanged(false)
+        }
+    }
     val position = scrubPosition ?: progressState.value.position
     // Proporzioni iOS (30/34/44) portate alla scala TV, con il minimo di 48 dp dei pulsanti del player.
     val scale = if (isTelevision) 1.45f else 1.2f
@@ -1515,9 +1522,14 @@ private fun IosPlayerProgressSection(
                     buffered = progressState.value.buffered.coerceIn(0L, duration),
                     duration = duration,
                     isTelevision = isTelevision,
-                    onScrub = { scrubPosition = it; onUserActivity() },
+                    onScrub = {
+                        scrubPosition = it
+                        onUserActivity()
+                        // Tempo reale: il player si sposta mentre si trascina (video e miniatura seguono il dito).
+                        app.playback.scrubTo(it)
+                    },
                     onCommit = { target ->
-                        onSeek(target)
+                        if (scrubPosition != null) app.playback.endScrub(target) else onSeek(target)
                         scrubPosition = null
                     },
                 )

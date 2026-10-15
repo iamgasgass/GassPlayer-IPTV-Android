@@ -302,6 +302,51 @@ class PlaybackController(
         player.seekTo(positionMs.coerceAtLeast(0L))
     }
 
+    // ---- Scrubbing in tempo reale (Film / Serie TV) ----
+    // Mentre si trascina la barra (dito o telecomando) il player stesso si sposta sul punto scelto: il video
+    // e l'anteprima mostrano subito il fotogramma (istantaneo dentro la parte gia' scaricata, avanti e
+    // indietro). "Scrubbing mode" di Media3 + fotogramma chiave piu' vicino: ricerche rapide e accorpate.
+    // Al rilascio: ricerca precisa sul punto finale e la riproduzione riprende se era in corso.
+
+    private var scrubActive = false
+    private var scrubWasPlaying = false
+    private var scrubSavedSeekParameters: SeekParameters? = null
+
+    fun beginScrub() {
+        if (scrubActive) return
+        scrubActive = true
+        scrubWasPlaying = player.playWhenReady
+        scrubSavedSeekParameters = player.seekParameters
+        player.setSeekParameters(SeekParameters.CLOSEST_SYNC)
+        setScrubbingMode(true)
+        player.pause()
+    }
+
+    fun scrubTo(positionMs: Long) {
+        if (!scrubActive) beginScrub()
+        player.seekTo(positionMs.coerceAtLeast(0L))
+    }
+
+    fun endScrub(positionMs: Long) {
+        if (!scrubActive) {
+            seekTo(positionMs)
+            return
+        }
+        scrubActive = false
+        setScrubbingMode(false)
+        scrubSavedSeekParameters?.let { player.setSeekParameters(it) }
+        scrubSavedSeekParameters = null
+        player.seekTo(positionMs.coerceAtLeast(0L))
+        if (scrubWasPlaying) player.play()
+    }
+
+    /** `ExoPlayer.setScrubbingModeEnabled` (Media3 1.8+), chiamato in modo tollerante. */
+    private fun setScrubbingMode(enabled: Boolean) {
+        runCatching {
+            player.javaClass.getMethod("setScrubbingModeEnabled", Boolean::class.javaPrimitiveType).invoke(player, enabled)
+        }
+    }
+
     fun setSpeed(speed: Float) {
         val safe = speed.coerceIn(0.25f, 3f)
         player.setPlaybackSpeed(safe)

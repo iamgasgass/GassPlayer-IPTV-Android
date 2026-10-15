@@ -40,6 +40,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -254,22 +255,23 @@ internal object PlayerThumbnailStore {
     @Volatile var videoSurface: java.lang.ref.WeakReference<android.view.View>? = null
 
     /** Fotogramma attualmente a schermo, ridotto a [width] px di larghezza. Thread principale. */
-    fun captureVideoFrame(width: Int, onFrame: (Bitmap) -> Unit) {
-        val view = videoSurface?.get() ?: return
-        if (view.width <= 0 || view.height <= 0) return
+    fun captureVideoFrame(width: Int, onFailure: () -> Unit = {}, onFrame: (Bitmap) -> Unit) {
+        val view = videoSurface?.get() ?: return onFailure()
+        if (view.width <= 0 || view.height <= 0) return onFailure()
         val height = (width * view.height / view.width).coerceAtLeast(1)
         when (view) {
-            is android.view.TextureView -> view.getBitmap(width, height)?.let(onFrame)
+            is android.view.TextureView -> view.getBitmap(width, height)?.let(onFrame) ?: onFailure()
             is android.view.SurfaceView -> {
-                if (Build.VERSION.SDK_INT < 24 || view is android.opengl.GLSurfaceView) return
-                val surface = view.holder?.surface?.takeIf { it.isValid } ?: return
+                if (Build.VERSION.SDK_INT < 24 || view is android.opengl.GLSurfaceView) return onFailure()
+                val surface = view.holder?.surface?.takeIf { it.isValid } ?: return onFailure()
                 val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
                 runCatching {
                     android.view.PixelCopy.request(surface, bitmap, { result ->
-                        if (result == android.view.PixelCopy.SUCCESS) onFrame(bitmap)
+                        if (result == android.view.PixelCopy.SUCCESS) onFrame(bitmap) else onFailure()
                     }, android.os.Handler(android.os.Looper.getMainLooper()))
-                }
+                }.onFailure { onFailure() }
             }
+            else -> onFailure()
         }
     }
 
@@ -288,8 +290,12 @@ internal object PlayerThumbnailStore {
 }
 
 /**
- * Fotogramma per [positionMs] (null senza scrubbing). Il flusso si apre solo al primo trascinamento
- * (nessuna connessione in piu' al server finche' non si usa la timeline).
+ * Anteprima per [positionMs] (null senza scrubbing), in tempo reale.
+ *
+ * Durante lo scrubbing il player stesso si sposta sul punto scelto ([com.gassplayer.android.media.PlaybackController.scrubTo]):
+ * qui si cattura ~10 volte al secondo il fotogramma che il video sta mostrando, quindi la miniatura segue il
+ * dito / il telecomando istante per istante, senza seconda connessione al server. Solo se la superficie
+ * video non si puo' catturare (video 360°, dispositivi che lo negano) si usa la lettura separata del flusso.
  */
 @Composable
 internal fun rememberPlayerThumbnail(
@@ -298,32 +304,51 @@ internal fun rememberPlayerThumbnail(
     durationMs: Long,
     playbackPositionMs: () -> Long,
 ): ImageBitmap? {
-    val loader = remember(source?.first) { source?.let { PlayerThumbnailStore.obtain(it.first, it.second) } }
-    val fallbackVersion = remember { MutableStateFlow(0) }
-    val version by (loader?.version ?: fallbackVersion).collectAsState()
     val scrubbing = positionMs != null
-    // Inizio dello scrubbing: lavoratore avviato e subito il fotogramma a schermo come prima anteprima.
-    LaunchedEffect(loader, scrubbing) {
-        val current = loader ?: return@LaunchedEffect
-        if (scrubbing) {
-            current.start(durationMs)
-            // Il fotogramma a schermo e' quello della posizione di riproduzione (non del dito).
-            current.seedCurrentFrame(playbackPositionMs())
-        } else {
-            current.finish()
+    var liveFrame by remember { mutableStateOf<ImageBitmap?>(null) }
+    var liveUnavailable by remember(source?.first) { mutableStateOf(false) }
+
+    LaunchedEffect(scrubbing, liveUnavailable) {
+        if (!scrubbing || liveUnavailable) {
+            if (!scrubbing) liveFrame = null
+            return@LaunchedEffect
+        }
+        var failures = 0
+        while (true) {
+            PlayerThumbnailStore.captureVideoFrame(
+                CAPTURE_WIDTH,
+                onFailure = { if (++failures >= 4) liveUnavailable = true },
+            ) { bitmap ->
+                failures = 0
+                liveFrame = bitmap.asImageBitmap()
+            }
+            delay(CAPTURE_INTERVAL_MS)
         }
     }
-    // Ogni movimento: il lavoratore insegue l'ultimo punto, senza annullare il fotogramma in lettura.
+
+    // Ripiego: lettura separata del flusso (solo se la cattura dal video non e' possibile).
+    val loader = remember(source?.first, liveUnavailable) {
+        if (liveUnavailable) source?.let { PlayerThumbnailStore.obtain(it.first, it.second) } else null
+    }
+    val fallbackVersion = remember { MutableStateFlow(0) }
+    val version by (loader?.version ?: fallbackVersion).collectAsState()
+    LaunchedEffect(loader, scrubbing) {
+        val current = loader ?: return@LaunchedEffect
+        if (scrubbing) current.start(durationMs) else current.finish()
+    }
     LaunchedEffect(loader, positionMs) {
         val target = positionMs ?: return@LaunchedEffect
         loader?.start(durationMs)
         loader?.request(target)
     }
-    // Sempre il fotogramma pronto piu' vicino (quello esatto appena arriva), aggiornato a ogni nuovo fotogramma.
-    return remember(loader, version, positionMs) {
+    val fallback = remember(loader, version, positionMs) {
         if (positionMs == null) null else loader?.nearest(positionMs)
     }
+    return if (!scrubbing) null else if (liveUnavailable) fallback else liveFrame
 }
+
+private const val CAPTURE_WIDTH = 320
+private const val CAPTURE_INTERVAL_MS = 90L
 
 /** Card dell'anteprima (fotogramma + tempo). */
 @Composable
