@@ -10,12 +10,16 @@ import coil3.svg.SvgDecoder
 import okhttp3.ConnectionSpec
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Dispatcher
+import okhttp3.Dns
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.Response
 import okio.Path.Companion.toOkioPath
 import java.io.IOException
 import java.io.InterruptedIOException
+import java.net.Inet4Address
+import java.net.Inet6Address
+import java.net.InetAddress
 import java.net.SocketTimeoutException
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
@@ -67,7 +71,12 @@ object ArtworkImageLoader {
         }
         val ssl = SSLContext.getInstance("TLS").apply { init(null, arrayOf(trustAll), SecureRandom()) }
         OkHttpClient.Builder()
-            .dispatcher(Dispatcher().apply { maxRequests = 32; maxRequestsPerHost = 6 })
+            // Più richieste in parallelo per playlist con molti poster, senza concentrare troppe
+            // connessioni sullo stesso provider.
+            .dispatcher(Dispatcher().apply { maxRequests = 48; maxRequestsPerHost = 8 })
+            // Conserva TUTTI gli indirizzi DNS IPv4 e IPv6. Alternare le famiglie aiuta il fallback
+            // Happy Eyeballs di OkHttp quando il DNS mette prima molti AAAA ma la rete IPv6 è assente/lenta.
+            .dns(ArtworkDns)
             // Timeouts PER TENTATIVO, come iOS (timeoutIntervalForRequest 30 s per richiesta). Prima un callTimeout
             // globale di 90 s copriva TUTTI i tentativi: su un server https lento la chiamata veniva chiusa
             // ("InterruptedIOException: timeout <- Socket closed") prima di arrivare al ripiego http.
@@ -86,6 +95,32 @@ object ArtworkImageLoader {
             .addInterceptor(HeadersInterceptor)
             .addInterceptor(RetryAndFallbackInterceptor)
             .build()
+    }
+
+    /**
+     * Usa il resolver di sistema (quindi DNS della rete/VPN e record locali inclusi), ma interleave
+     * gli indirizzi IPv4/IPv6 quando entrambi sono disponibili. In questo modo una rotta IPv6 non
+     * raggiungibile non fa attendere tutti gli indirizzi IPv4 successivi; OkHttp può tentare entrambe
+     * le famiglie tramite il proprio fallback rapido. Non forza IPv4 né elimina record IPv6.
+     */
+    private object ArtworkDns : Dns {
+        override fun lookup(hostname: String): List<InetAddress> {
+            val addresses = Dns.SYSTEM.lookup(hostname)
+            val ipv4 = addresses.filterIsInstance<Inet4Address>()
+            val ipv6 = addresses.filterIsInstance<Inet6Address>()
+            if (ipv4.isEmpty() || ipv6.isEmpty()) return addresses
+
+            val ipv6First = addresses.first() is Inet6Address
+            val first = if (ipv6First) ipv6 else ipv4
+            val second = if (ipv6First) ipv4 else ipv6
+            return buildList<InetAddress>(addresses.size) {
+                repeat(maxOf(first.size, second.size)) { index ->
+                    first.getOrNull(index)?.let(::add)
+                    second.getOrNull(index)?.let(::add)
+                }
+                addresses.filterNot { it is Inet4Address || it is Inet6Address }.forEach { add(it) }
+            }
+        }
     }
 
     private object HeadersInterceptor : Interceptor {
