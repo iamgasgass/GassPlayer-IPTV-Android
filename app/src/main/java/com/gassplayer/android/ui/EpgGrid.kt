@@ -651,6 +651,7 @@ internal fun EpgGridScreen(
                 expanded = categoryRailExpanded,
                 entryRoute = "live",
                 onRequestExpand = { categoryRailExpanded = true },
+                onRequestCollapse = { categoryRailExpanded = false },
                 entryFocusRequester = entryFocusRequester,
                 onSelect = { id ->
                     favoritesOnly = id == TV_CATEGORY_FAVORITES
@@ -685,7 +686,10 @@ internal fun EpgGridScreen(
             )
         }
         Column(
-            Modifier.weight(1f).fillMaxHeight().onPreviewKeyEvent { event ->
+            Modifier.weight(1f).fillMaxHeight()
+                // Telefono: toccando i contenuti la rail si chiude (come il focus che entra nei contenuti su TV).
+                .collapseRailOnTouch(enabled = tvCategoryMode && categoryRailExpanded) { categoryRailExpanded = false }
+                .onPreviewKeyEvent { event ->
                 if (tvCategoryMode && !categoryRailExpanded && event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft &&
                     focusedTileRowId == null
                 ) {
@@ -990,6 +994,7 @@ internal fun EpgGridScreen(
             expanded = categoryRailExpanded,
             entryRoute = "live",
             onRequestExpand = { categoryRailExpanded = true },
+                onRequestCollapse = { categoryRailExpanded = false },
             expandedWidth = mobileRailWidth,
             modifier = Modifier.align(Alignment.CenterStart).zIndex(30f),
             onSelect = { id ->

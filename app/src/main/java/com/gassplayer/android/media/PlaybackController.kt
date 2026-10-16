@@ -214,7 +214,6 @@ class PlaybackController(
      * for the "Riprendi la visione?" confirmation UI.
      */
     fun play(item: MediaItem, startPosition: Long = 0L, autoPlay: Boolean = true) {
-        val previousKind = currentItem?.kind
         zapJob?.cancel()
         cancelRecovery()
         networkRetries = 0
@@ -267,9 +266,9 @@ class PlaybackController(
             // connection would occupy one of the 1-2 slots most panels allow). Live is never probed.
             beginPreflight(positiveStart)
         } else {
-            // Channel surfing: collapse rapid zaps into the one the viewer stops on, so we never
-            // stack prepares (and codec re-inits) on a low-end box.
-            startPlayback(positiveStart, debounce = item.kind == MediaKind.LIVE && previousKind == MediaKind.LIVE)
+            // Avvio immediato come su iOS (KSPlayer apre subito il canale scelto): niente attesa di 250 ms
+            // tra un canale e l'altro. Lo stop del flusso precedente avviene gia' in stopCurrentForNewItem().
+            startPlayback(positiveStart)
         }
 
         runCatching {
@@ -1189,7 +1188,8 @@ class PlaybackController(
         const val REBUFFER_MS = 2_000
         /** Parte gia' vista tenuta in memoria per spostarsi indietro senza riscaricare. */
         const val BACK_BUFFER_MS = 60_000
-        const val LIVE_REBUFFER_MS = 5_000
+        /** Come iOS (KSOptions.preferredForwardBufferDuration = 3 s): ripartenza dopo un'interruzione. */
+        const val LIVE_REBUFFER_MS = 3_000
         const val MAX_LOAD_RETRIES = 5
         const val MAX_NETWORK_RETRIES = 6
         const val LIVE_MIN_OFFSET_MS = 3_000L

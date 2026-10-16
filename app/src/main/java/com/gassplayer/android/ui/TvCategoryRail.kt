@@ -28,6 +28,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.HorizontalDivider
@@ -45,6 +46,9 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
@@ -92,14 +96,20 @@ internal fun TvCategoryRail(
     entryRoute: String? = null,
     /** Asks the owning page to open the rail when it is collapsed. */
     onRequestExpand: (() -> Unit)? = null,
+    /** Touch: chiede alla pagina di chiudere la rail (trascinamento verso sinistra). */
+    onRequestCollapse: (() -> Unit)? = null,
 ) {
-    val width by animateDpAsState(if (expanded) expandedWidth else 0.dp, label = "tv-category-rail-width")
+    val remoteFirstDevice = LocalContext.current.isTvOrFireTvDevice()
+    // Telefono / tablet (touch): chiusa, la rail lascia una linguetta Liquid Glass sul bordo sinistro da
+    // toccare (o trascinare verso destra) per riaprirla, come SINISTRA sul telecomando. Su TV resta 0.
+    val touchHandle = !remoteFirstDevice && onRequestExpand != null
+    val collapsedWidth = if (touchHandle) RAIL_HANDLE_WIDTH else 0.dp
+    val width by animateDpAsState(if (expanded) expandedWidth else collapsedWidth, label = "tv-category-rail-width")
     val state = rememberLazyListState()
     val selectedOptionFocus = remember { FocusRequester() }
     // One focus requester per node: when the shell supplies its route-entry requester, the selected
     // category row serves both purposes instead of stacking competing FocusRequester modifiers.
     val targetFocusRequester = entryFocusRequester ?: selectedOptionFocus
-    val remoteFirstDevice = LocalContext.current.isTvOrFireTvDevice()
     val targetFocusId = options.firstOrNull { it.id == selectedId }?.id ?: options.firstOrNull()?.id
     var previousExpanded by remember { mutableStateOf(expanded) }
     var previousTargetId by remember { mutableStateOf(targetFocusId) }
@@ -107,7 +117,7 @@ internal fun TvCategoryRail(
     val currentOptions by rememberUpdatedState(options)
     val currentSelectedId by rememberUpdatedState(selectedId)
     val currentTarget by rememberUpdatedState(targetFocusRequester)
-    val currentContentVisible by rememberUpdatedState(width > 1.dp)
+    val currentContentVisible by rememberUpdatedState(width > collapsedWidth + 1.dp)
 
     // Scrolls the lazy rail to the selected group (so its row, which owns the requester, is composed)
     // and focuses it. Waits for options that are still being built on Dispatchers.IO on a slow Stick.
@@ -154,9 +164,20 @@ internal fun TvCategoryRail(
             .clipToBounds()
             .onFocusChanged { railHasFocus = it.hasFocus }
     ) {
-        if (width > 1.dp) {
+        if (touchHandle && !expanded && width <= collapsedWidth + 1.dp) {
+            RailTouchHandle(onOpen = { onRequestExpand?.invoke() }, modifier = Modifier.align(Alignment.CenterStart))
+        } else if (width > collapsedWidth + 1.dp) {
             LiquidGlassSurface(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().then(
+                    // Touch: trascinando la rail verso sinistra si chiude (come DESTRA verso i contenuti su TV).
+                    if (touchHandle) Modifier.pointerInput(Unit) {
+                        var dragged = 0f
+                        detectHorizontalDragGestures(
+                            onDragStart = { dragged = 0f },
+                            onDragEnd = { if (dragged < -48f) onRequestCollapse?.invoke() },
+                        ) { _, amount -> dragged += amount }
+                    } else Modifier
+                ),
                 cornerRadius = 22.dp,
                 contentPadding = 10.dp,
             ) {
@@ -242,6 +263,62 @@ internal fun TvCategoryRail(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+private val RAIL_HANDLE_WIDTH = 26.dp
+
+/** Linguetta della rail chiusa (solo touch): tocco o trascinamento verso destra la riaprono. */
+@Composable
+private fun RailTouchHandle(onOpen: () -> Unit, modifier: Modifier = Modifier) {
+    Surface(
+        onClick = onOpen,
+        modifier = modifier
+            .width(RAIL_HANDLE_WIDTH)
+            .height(86.dp)
+            .pointerInput(Unit) {
+                var dragged = 0f
+                detectHorizontalDragGestures(
+                    onDragStart = { dragged = 0f },
+                    onDragEnd = { if (dragged > 24f) onOpen() },
+                ) { _, amount -> dragged += amount }
+            },
+        shape = RoundedCornerShape(topEnd = 16.dp, bottomEnd = 16.dp, topStart = 8.dp, bottomStart = 8.dp),
+        color = Color.Transparent,
+    ) {
+        LiquidGlassSurface(
+            modifier = Modifier.fillMaxSize(),
+            cornerRadius = 14.dp,
+            contentPadding = 0.dp,
+            highlighted = true,
+            suppressTopHighlight = true,
+        ) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Icon(
+                    Icons.Default.ChevronRight,
+                    contentDescription = "Apri Categorie TV",
+                    tint = glassForeground(.85f),
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Touch (telefono / tablet): toccando o scorrendo i contenuti la rail delle categorie si chiude, come su TV
+ * quando il focus passa ai contenuti. Non consuma l'evento: il tocco arriva comunque al contenuto.
+ */
+internal fun Modifier.collapseRailOnTouch(enabled: Boolean, onCollapse: () -> Unit): Modifier = composed {
+    val remoteFirstDevice = LocalContext.current.isTvOrFireTvDevice()
+    val latest by rememberUpdatedState(onCollapse)
+    if (!enabled || remoteFirstDevice) this else this.pointerInput(Unit) {
+        awaitPointerEventScope {
+            while (true) {
+                val event = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                if (event.type == androidx.compose.ui.input.pointer.PointerEventType.Press) latest()
             }
         }
     }

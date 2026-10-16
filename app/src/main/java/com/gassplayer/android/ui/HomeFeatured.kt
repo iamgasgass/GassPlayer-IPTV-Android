@@ -41,6 +41,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -354,7 +356,11 @@ internal fun HomeFeaturedHero(
     topContent: (@Composable () -> Unit)? = null,
     /** Il focus del telecomando e' entrato nel pulsante o nei puntini della sezione. */
     onFocusInside: () -> Unit = {},
+    /** Focus del PRIMO puntino (GIU' dal pulsante, SU dalle sezioni sotto l'intestazione). */
+    firstDotFocusRequester: FocusRequester? = null,
 ) {
+    val localFirstDot = remember { FocusRequester() }
+    val firstDotFocus = firstDotFocusRequester ?: localFirstDot
     if (entries.isEmpty()) {
         topContent?.let { Box(modifier) { it() } }
         return
@@ -454,6 +460,10 @@ internal fun HomeFeaturedHero(
                         buttonFocused = it
                         if (it) onFocusInside()
                     },
+                    // GIU' dal pulsante: sempre il primo puntino (non quello piu' vicino in linea d'aria).
+                    onDown = {
+                        entries.size > 1 && runCatching { firstDotFocus.requestFocus(); true }.getOrDefault(false)
+                    },
                     onStep = { forward ->
                         if (entries.size < 2) false else {
                             // SINISTRA sulla prima scheda lascia uscire il focus (barra di navigazione).
@@ -477,6 +487,7 @@ internal fun HomeFeaturedHero(
                         Box(
                             Modifier
                                 .size(7.dp)
+                                .then(if (dot == 0) Modifier.focusRequester(firstDotFocus) else Modifier)
                                 .onFocusChanged { state ->
                                     dotFocused = state.isFocused
                                     if (state.isFocused) {
@@ -504,6 +515,7 @@ private fun HomeFeaturedSlide(
     onSelect: (HomeFeaturedEntry) -> Unit,
     onFocusChanged: (Boolean) -> Unit,
     onStep: (forward: Boolean) -> Boolean,
+    onDown: () -> Boolean = { false },
 ) {
     val logoMaxWidth = if (isTelevision) 380.dp else 270.dp
     val logoMaxHeight = if (isTelevision) 110.dp else 86.dp
@@ -570,6 +582,7 @@ private fun HomeFeaturedSlide(
                     if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                     when (event.key) {
                         Key.DirectionRight -> onStep(true)
+                        Key.DirectionDown -> onDown()
                         Key.DirectionLeft -> onStep(false)
                         else -> false
                     }

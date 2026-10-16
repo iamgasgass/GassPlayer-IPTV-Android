@@ -349,6 +349,21 @@ private fun AdaptiveShell(
     // doubles as the initial target, avoiding two FocusRequester nodes on the same control.
     val initialHomeFocusRequester = navFocusRequesters.getValue("home")
     var previousPlayerActive by remember { mutableStateOf(false) }
+    // Elemento che aveva il focus quando si e' aperto il player (e la sezione in cui si trovava).
+    val playerReturnFocus = remember { arrayOfNulls<FocusRequester>(1) }
+    val playerReturnRoute = remember { arrayOfNulls<String>(1) }
+    val playerSnapshotTaken = remember { booleanArrayOf(false) }
+    if (playerActive) {
+        // Copia presa nello stesso passaggio in cui il player compare, prima che i suoi pulsanti
+        // prendano il focus.
+        if (!playerSnapshotTaken[0]) {
+            playerReturnFocus[0] = RemoteFocusMemory.current()
+            playerReturnRoute[0] = route
+            playerSnapshotTaken[0] = true
+        }
+    } else {
+        playerSnapshotTaken[0] = false
+    }
     // Route-specific entry points make DPAD RIGHT from the selected navigation item predictable.
     // Pages without a registered entry point keep native Compose spatial focus traversal.
     val routeEntryFocusRequesters = remember {
@@ -537,6 +552,10 @@ private fun AdaptiveShell(
             // section's semantic entry after the page is visible again, rather than the first
             // arbitrary node reported by Compose's spatial-search algorithm.
             delay(180L)
+            // Prima di tutto: l'elemento da cui si e' aperto il player (canale, locandina, "Riproduci"...).
+            val origin = playerReturnFocus[0]?.takeIf { playerReturnRoute[0] == route }
+            playerReturnFocus[0] = null
+            if (origin != null && origin.requestFocusWithRetry(attempts = 10, delayMillis = 50L)) return@LaunchedEffect
             val navRoute = navigationRailDestination(route)
             val entry = routeEntryFocusRequesters[route] ?: routeEntryFocusRequesters[navRoute]
             val restored = entry?.requestFocusWithRetry(attempts = 8, delayMillis = 55L) ?: false
@@ -866,6 +885,9 @@ private fun HomeScreen(
         continueCards = continueCards,
         apiKey = settings.tmdbApiKey,
     )
+    // Telecomando: primo puntino di "In evidenza" (GIU' dal pulsante, SU dalle sezioni sotto l'intestazione).
+    val featuredFirstDotFocus = remember { FocusRequester() }
+    val featuredAboveHeading = visibleOrder.indexOf("featured").let { f -> f >= 0 && f < visibleOrder.indexOf("heading") }
     val detailFocusScope = rememberCoroutineScope()
     val closeHomeDetail: () -> Unit = {
         selectedDetail = null
@@ -985,7 +1007,17 @@ private fun HomeScreen(
                     Text("Tutto il tuo intrattenimento", color = glassForeground(), fontSize = 24.sp, fontWeight = FontWeight.Bold)
                     Text(if (activeSource != null) "Scegli cosa guardare dalla sorgente attiva." else "Configura una sorgente dalle Impostazioni quando vuoi.", color = glassForeground().copy(.64f), fontSize = 14.sp)
                 }
-                androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                androidx.compose.foundation.lazy.LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.onPreviewKeyEvent { event ->
+                        // SU dai tasti Live TV / Film / Serie / Guida TV: il primo puntino di "In evidenza".
+                        if (remoteFirstDevice && featuredAboveHeading && featuredEntries.size > 1 &&
+                            event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp
+                        ) {
+                            runCatching { featuredFirstDotFocus.requestFocus(); true }.getOrDefault(false)
+                        } else false
+                    }
+                ) {
                     item { HomeActionChip("Live TV", Icons.Default.LiveTv) { onRoute("live") } }
                     item { HomeActionChip("Film", Icons.Default.Movie) { onRoute("movies") } }
                     item { HomeActionChip("Serie", Icons.Default.Tv) { onRoute("series") } }
@@ -1134,6 +1166,7 @@ private fun HomeScreen(
                 isTelevision = remoteFirstDevice,
                 edgeToEdge = false,
                 onSelect = { openFeatured(it) },
+                firstDotFocusRequester = featuredFirstDotFocus,
             )
         }
     }
@@ -1212,6 +1245,7 @@ private fun HomeScreen(
                             onSelect = { openFeatured(it) },
                             horizontalPadding = homeHorizontalPadding,
                             topContent = top,
+                            firstDotFocusRequester = featuredFirstDotFocus,
                             onFocusInside = {
                                 edgeScrollScope.launch {
                                     // Dopo lo scorrimento automatico verso l'elemento con il focus.
@@ -1696,6 +1730,7 @@ private fun CatalogScreen(
                 expanded = categoryRailExpanded,
                 entryRoute = scopeKey,
                 onRequestExpand = { categoryRailExpanded = true },
+                onRequestCollapse = { categoryRailExpanded = false },
                 onSelect = { id ->
                     filter = when (id) { TV_CATEGORY_ALL -> null; TV_CATEGORY_FAVORITES -> TV_CATEGORY_FAVORITES; else -> id }
                     searchQuery = ""
@@ -1706,7 +1741,10 @@ private fun CatalogScreen(
             )
         }
         Column(
-            Modifier.weight(1f).fillMaxHeight().onPreviewKeyEvent { event ->
+            Modifier.weight(1f).fillMaxHeight()
+                // Telefono: toccando i contenuti la rail si chiude (come il focus che entra nei contenuti su TV).
+                .collapseRailOnTouch(enabled = tvCategoryMode && categoryRailExpanded) { categoryRailExpanded = false }
+                .onPreviewKeyEvent { event ->
                 if (tvCategoryMode && !categoryRailExpanded && event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft &&
                     // Every element opens the rail with LEFT, except covers that are not on the left edge
                     // (they navigate to the previous cover).
@@ -1886,6 +1924,7 @@ private fun CatalogScreen(
             expanded = categoryRailExpanded,
             entryRoute = scopeKey,
             onRequestExpand = { categoryRailExpanded = true },
+                onRequestCollapse = { categoryRailExpanded = false },
             expandedWidth = mobileRailWidth,
             modifier = Modifier.align(Alignment.CenterStart).zIndex(30f),
             entryFocusRequester = entryFocusRequester,
@@ -2054,6 +2093,7 @@ private fun SeriesScreen(
                 expanded = categoryRailExpanded,
                 entryRoute = "series",
                 onRequestExpand = { categoryRailExpanded = true },
+                onRequestCollapse = { categoryRailExpanded = false },
                 onSelect = { id ->
                     filter = when (id) { TV_CATEGORY_ALL -> null; else -> id }
                     searchQuery = ""
@@ -2064,7 +2104,10 @@ private fun SeriesScreen(
             )
         }
         Column(
-            Modifier.weight(1f).fillMaxHeight().onPreviewKeyEvent { event ->
+            Modifier.weight(1f).fillMaxHeight()
+                // Telefono: toccando i contenuti la rail si chiude (come il focus che entra nei contenuti su TV).
+                .collapseRailOnTouch(enabled = tvCategoryMode && categoryRailExpanded) { categoryRailExpanded = false }
+                .onPreviewKeyEvent { event ->
                 if (tvCategoryMode && !categoryRailExpanded && event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft &&
                     // Every element opens the rail with LEFT, except covers that are not on the left edge
                     // (they navigate to the previous cover).
@@ -2234,6 +2277,7 @@ private fun SeriesScreen(
             expanded = categoryRailExpanded,
             entryRoute = "series",
             onRequestExpand = { categoryRailExpanded = true },
+                onRequestCollapse = { categoryRailExpanded = false },
             expandedWidth = mobileRailWidth,
             modifier = Modifier.align(Alignment.CenterStart).zIndex(30f),
             entryFocusRequester = entryFocusRequester,

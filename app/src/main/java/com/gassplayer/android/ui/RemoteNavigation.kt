@@ -16,6 +16,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.compositionLocalOf
@@ -137,6 +138,21 @@ internal fun Modifier.pageFocusGuard(): Modifier = composed {
 }
 
 /**
+ * Ultimo elemento che ha avuto il focus del telecomando (ogni elemento con [remoteFocusOutline]).
+ * Aprendo il player se ne fa una copia; chiudendolo il focus torna ESATTAMENTE li' (il canale, la
+ * locandina, il pulsante "Riproduci"...), non al primo elemento della sezione.
+ */
+internal object RemoteFocusMemory {
+    private var last: java.lang.ref.WeakReference<FocusRequester>? = null
+
+    fun mark(requester: FocusRequester) {
+        last = java.lang.ref.WeakReference(requester)
+    }
+
+    fun current(): FocusRequester? = last?.get()
+}
+
+/**
  * Consistent, high-contrast focus feedback for D-pad/keyboard users. This is deliberately a
  * draw-only outline: it does not change measurement, card positions or the LiquidGlass artwork.
  */
@@ -148,9 +164,15 @@ internal fun Modifier.remoteFocusOutline(
     includeDescendants: Boolean = false,
 ): Modifier = composed {
     var focused by remember { mutableStateOf(false) }
+    // Permette di riportare il focus qui (es. all'uscita dal player).
+    val memoryRequester = remember { FocusRequester() }
     this
         .pageFocusGuard()
-        .onFocusChanged { focused = it.isFocused || (includeDescendants && it.hasFocus) }
+        .focusRequester(memoryRequester)
+        .onFocusChanged {
+            focused = it.isFocused || (includeDescendants && it.hasFocus)
+            if (it.isFocused) RemoteFocusMemory.mark(memoryRequester)
+        }
         .drawWithContent {
             drawContent()
             if (enabled && focused && size.width > 0f && size.height > 0f) {
