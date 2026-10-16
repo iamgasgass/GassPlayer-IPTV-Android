@@ -666,8 +666,11 @@ private fun AdaptiveShell(
                         ) {
                             if (customNavigation) {
                                 // Match HomeActionChip: the same section icons and the same LiquidGlass pill.
-                                // Only the focused destination reveals its label; all other destinations stay icon-only.
-                                LiquidGlassPill(modifier = if (focused) Modifier.fillMaxWidth() else Modifier) {
+                                // When the rail expands, reveal every label; when it collapses, center the icon pill.
+                                LiquidGlassPill(
+                                    modifier = if (railHasFocus) Modifier.fillMaxWidth()
+                                    else Modifier.wrapContentWidth(Alignment.CenterHorizontally)
+                                ) {
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(7.dp)
@@ -678,7 +681,7 @@ private fun AdaptiveShell(
                                             tint = Color(0xFF9ABEFF).readable(),
                                             modifier = Modifier.size(17.dp)
                                         )
-                                        if (focused) {
+                                        if (railHasFocus) {
                                             Text(
                                                 label,
                                                 color = glassForeground(),
