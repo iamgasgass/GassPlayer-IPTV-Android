@@ -200,8 +200,10 @@ internal fun EpgGridScreen(
     val context = LocalContext.current
     var categoryRailExpanded by remember(tvCategoryMode) { mutableStateOf(true) }
     BackHandler(enabled = screenActive && tvCategoryMode && !categoryRailExpanded) { categoryRailExpanded = true }
-    LaunchedEffect(playerActive, tvCategoryMode) {
-        if (tvCategoryMode && !playerActive) categoryRailExpanded = true
+    // La rail si apre all'ingresso in modalita' Categorie TV, NON all'uscita dal player: aprendola li' prendeva
+    // il focus (gruppo selezionato) invece di lasciarlo sul canale/programma da cui si era aperto il player.
+    LaunchedEffect(tvCategoryMode) {
+        if (tvCategoryMode) categoryRailExpanded = true
     }
     var previewChannelId by remember { mutableStateOf<String?>(null) }
     // Channel row whose programme tiles hold DPAD focus: there LEFT moves tile by tile (and then to the
@@ -1199,7 +1201,7 @@ private fun ChannelBanner(
                     selected -> Modifier.border(BorderStroke(1.2.dp, Color(0xFF8FB3FF)), RoundedCornerShape(if (compact) 14.dp else 16.dp))
                     else -> Modifier
                 })
-                .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() }
+                .focusReturnTarget().onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() }
                 .onPreviewKeyEvent { e -> e.type == KeyEventType.KeyDown && e.key == Key.DirectionLeft && onExitLeft() }
                 .combinedClickable(onClick = onClick, onLongClick = onLongClick)
         ) {
@@ -1403,7 +1405,7 @@ private fun EpgProgramTile(
     Box(
         Modifier.offset(x = startX, y = verticalInset).width(fullWidth).height(height)
             .pageFocusGuard()
-            .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() }
+            .focusReturnTarget().onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() }
             .onPreviewKeyEvent { e -> e.type == KeyEventType.KeyDown && e.key == Key.DirectionLeft && onExitLeft() }
             .combinedClickable(onClick = onClick, onLongClick = onClick)
     ) {

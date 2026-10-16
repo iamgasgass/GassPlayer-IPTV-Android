@@ -153,6 +153,18 @@ internal object RemoteFocusMemory {
 }
 
 /**
+ * Rende l'elemento un punto di ritorno del focus (vedi [RemoteFocusMemory]): da mettere PRIMA del suo
+ * focusable/clickable negli elementi che non usano [remoteFocusOutline] (banner dei canali della guida,
+ * programmi, episodi, card della Home...).
+ */
+internal fun Modifier.focusReturnTarget(): Modifier = composed {
+    val memoryRequester = remember { FocusRequester() }
+    this
+        .focusRequester(memoryRequester)
+        .onFocusChanged { if (it.isFocused) RemoteFocusMemory.mark(memoryRequester) }
+}
+
+/**
  * Consistent, high-contrast focus feedback for D-pad/keyboard users. This is deliberately a
  * draw-only outline: it does not change measurement, card positions or the LiquidGlass artwork.
  */

@@ -1363,7 +1363,7 @@ private fun TvPillSurface(
             .clip(RoundedCornerShape(50))
             .background(if (focused) Color.White else Color.White.copy(if (enabled) .13f else .06f))
             .border(BorderStroke(.8.dp, Color.White.copy(if (focused) 0f else .22f)), RoundedCornerShape(50))
-            .onFocusChanged { focused = it.isFocused }
+            .focusReturnTarget().onFocusChanged { focused = it.isFocused }
             .combinedClickableCompat(enabled = enabled, onClick = onClick, onLongClick = onLongClick)
             .padding(horizontal = 20.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -1419,7 +1419,7 @@ private fun TvCloseButton(onClick: () -> Unit, onMoveDown: () -> Boolean, modifi
         onClick = onClick,
         modifier = modifier.size(44.dp)
             .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
-            .onFocusChanged { focused = it.isFocused }
+            .focusReturnTarget().onFocusChanged { focused = it.isFocused }
             .onPreviewKeyEvent { event -> event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown && onMoveDown() },
         shape = CircleShape,
         color = if (focused) Color.White else Color.White.copy(.10f),
@@ -1477,7 +1477,7 @@ private fun TvEpisodeCard(
         modifier
             .width(286.dp)
             .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
-            .onFocusChanged { focused = it.isFocused }
+            .focusReturnTarget().onFocusChanged { focused = it.isFocused }
             .combinedClickableCompat(enabled = true, onClick = onPlay, onLongClick = onDownload),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
@@ -1543,7 +1543,7 @@ private fun TvCastRow(names: List<String>, people: List<MetadataCastMember>) {
                         .width(230.dp)
                         .clip(RoundedCornerShape(50))
                         .background(if (focused) Color.White.copy(.16f) else Color.Transparent)
-                        .onFocusChanged { focused = it.isFocused }
+                        .focusReturnTarget().onFocusChanged { focused = it.isFocused }
                         .focusable()
                         .padding(end = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -1580,7 +1580,7 @@ private fun TvRatingsBlock(tmdb: Double?, ratings: Ratings?, trakt: Double?) {
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
             .background(if (focused) Color.White.copy(.07f) else Color.Transparent)
-            .onFocusChanged { focused = it.isFocused }
+            .focusReturnTarget().onFocusChanged { focused = it.isFocused }
             .focusable()
             .padding(vertical = 8.dp)
     ) {

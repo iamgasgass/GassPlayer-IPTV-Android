@@ -306,6 +306,7 @@ private fun ContinueWatchingCardView(
         Column(
             Modifier
                 .width(288.dp)
+                .focusReturnTarget()
                 .onFocusChanged {
                     focused = it.isFocused
                     if (it.isFocused) onFocus()
@@ -461,6 +462,7 @@ private fun TrendingRailCard(item: TmdbTrendingItem, rank: Int, onClick: () -> U
         onClick = onClick,
         modifier = Modifier
             .width(200.dp)
+            .focusReturnTarget()
             .onFocusChanged {
                 focused = it.isFocused
                 if (it.isFocused) onFocus()
