@@ -3,6 +3,7 @@ package com.gassplayer.android.ui
 import com.gassplayer.android.ui.theme.gassPageBase
 import com.gassplayer.android.ui.theme.isGassLight
 import com.gassplayer.android.ui.theme.readable
+import android.graphics.Typeface as AndroidTypeface
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
@@ -98,6 +99,7 @@ private val PAST_MS = 30 * 60_000L
 private val FUTURE_MS = 180 * 60_000L
 
 private val DarkTileBase = Color(0.13f, 0.13f, 0.14f)
+private val qualityBadgeFontFamily = FontFamily(AndroidTypeface.create("sans-serif-rounded", AndroidTypeface.NORMAL))
 private val DarkBanner = Color(0.09f, 0.09f, 0.10f)
 private val PastelPalette = listOf(
     Color(0.86f, 0.32f, 0.36f), Color(0.88f, 0.45f, 0.32f), Color(0.85f, 0.65f, 0.26f), Color(0.32f, 0.70f, 0.52f),
@@ -1381,7 +1383,7 @@ private fun EpgProgramTile(
     val (baseName, quality) = remember(channel.title) { splitQuality(channel.title) }
     val textMeasurer = rememberTextMeasurer()
     val nameStyle = TextStyle(fontSize = if (compact) 13.sp else 11.sp, fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.SemiBold)
-    val badgeStyle = TextStyle(fontSize = if (compact) 11.sp else 10.sp, fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.SemiBold)
+    val badgeStyle = TextStyle(fontSize = if (compact) 11.sp else 10.sp, fontFamily = qualityBadgeFontFamily, fontWeight = FontWeight.SemiBold)
     // Text widths are invariant during a horizontal drag; memoising them avoids expensive
     // remeasurement on every scroll frame and keeps the sticky-name animation smooth.
     val measuredNamePx = remember(textMeasurer, baseName, nameStyle) {
@@ -1477,17 +1479,20 @@ private fun EpgProgramTile(
 @Composable
 private fun QualityBadge(text: String, compact: Boolean) {
     Text(
-        text,
-        color = glassForeground().copy(.65f),
+        text = text,
+        color = Color.White.copy(alpha = .65f),
         fontSize = if (compact) 11.sp else 10.sp,
-        fontFamily = FontFamily.SansSerif,
+        fontFamily = qualityBadgeFontFamily,
         fontWeight = FontWeight.SemiBold,
         maxLines = 1,
-        modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
-            .border(BorderStroke(1.dp, glassForeground(.45f)), RoundedCornerShape(5.dp))
+        softWrap = false,
+        // Match iOS Text.padding(...).overlay(strokeBorder(...)):
+        // the outline encloses the text plus its internal 5 dp / 1 dp padding.
+        modifier = Modifier
+            .border(BorderStroke(1.dp, Color.White.copy(alpha = .45f)), RoundedCornerShape(5.dp))
+            .padding(horizontal = 5.dp, vertical = 1.dp)
     )
 }
-
 @Composable
 private fun EpgTopBar(
     groupName: String, groups: List<Category>, counts: Map<String?, Int>, uncategorized: Int, onGroup: (String?) -> Unit,
