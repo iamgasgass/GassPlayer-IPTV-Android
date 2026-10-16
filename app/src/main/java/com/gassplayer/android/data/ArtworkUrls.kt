@@ -93,7 +93,7 @@ object ArtworkUrls {
             return text.filterNot { it.isWhitespace() }.takeIf { it.contains(',') && it.length > 32 }
         }
         // Fast path: an already valid absolute URL (the vast majority) is returned untouched.
-        if (isCleanAbsolute(text)) return text
+        if (isCleanAbsolute(text)) return knownHostFixes(text)
 
         text = text.replace("\\/", "/")
         if (!text.contains("://")) text = text.replace('\\', '/')
@@ -109,7 +109,37 @@ object ArtworkUrls {
             looksLikeHost(text) -> "http://$text"
             else -> resolveRelative(text, base) ?: return null
         }
-        return rebuild(text)
+        return rebuild(text)?.let(::knownHostFixes)
+    }
+
+    /**
+     * Correzioni per server immagini noti che rifiutano indirizzi altrimenti validi:
+     *  - Wikimedia (`upload.wikimedia.org/.../thumb/.../188px-x.jpg`): dal 2025-2026 le miniature di misura non
+     *    standard vengono rifiutate (HTTP 400/429, "Use thumbnail steps"). Si usa la misura standard successiva
+     *    (188 -> 250 px); oltre 3840 px l'immagine originale.
+     */
+    fun knownHostFixes(url: String): String =
+        if (url.contains("upload.wikimedia.org/", ignoreCase = true)) wikimediaStandardThumb(url) else url
+
+    /** Misure ammesse per le miniature Wikimedia (mediawiki.org "Common thumbnail sizes"). */
+    private val wikimediaSteps = intArrayOf(20, 40, 60, 120, 250, 330, 500, 960, 1280, 1920, 3840)
+    private val wikimediaThumb = Regex("^(https?://upload\\.wikimedia\\.org/.+?)/thumb/(.+)/([^/?#]+)$", RegexOption.IGNORE_CASE)
+    private val wikimediaSize = Regex("^((?:lossless-|lossy-)?(?:page\\d+-)?)(\\d+)px-(.+)$")
+
+    /** Miniatura Wikimedia alla misura standard piu' vicina per eccesso (invariata se gia' standard). */
+    fun wikimediaStandardThumb(url: String): String {
+        val match = wikimediaThumb.matchEntire(url) ?: return url
+        val size = wikimediaSize.matchEntire(match.groupValues[3]) ?: return url
+        val width = size.groupValues[2].toIntOrNull() ?: return url
+        if (width in wikimediaSteps) return url
+        val step = wikimediaSteps.firstOrNull { it >= width } ?: return wikimediaOriginal(url) ?: url
+        return "${match.groupValues[1]}/thumb/${match.groupValues[2]}/${size.groupValues[1]}${step}px-${size.groupValues[3]}"
+    }
+
+    /** Immagine originale di una miniatura Wikimedia (`.../thumb/a/ab/File.png/250px-File.png` -> `.../a/ab/File.png`). */
+    fun wikimediaOriginal(url: String): String? {
+        val match = wikimediaThumb.matchEntire(url) ?: return null
+        return "${match.groupValues[1]}/${match.groupValues[2]}"
     }
 
     /**

@@ -91,4 +91,32 @@ class ArtworkUrlsTest {
         assertEquals("https://thumb.example.pro/http/unsafe/600x0/filters:quality(80)/img.example.it/a/T_1.jpg", ArtworkUrls.clean(raw))
         assertEquals("https://h.com/600x0/a.jpg", ArtworkUrls.clean("https://h.com/{resolutionXY}/a.jpg"))
     }
+
+    @Test
+    fun wikimediaThumbnailsUseStandardSteps() {
+        // 188 px non e' una misura ammessa (HTTP 400/429): si passa alla successiva, 250 px.
+        assertEquals(
+            "https://upload.wikimedia.org/wikipedia/en/thumb/5/53/Ducktv-logo.jpg/250px-Ducktv-logo.jpg",
+            ArtworkUrls.clean("https://upload.wikimedia.org/wikipedia/en/thumb/5/53/Ducktv-logo.jpg/188px-Ducktv-logo.jpg")
+        )
+        // Misura gia' standard: invariata.
+        val standard = "https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab/Logo.svg/120px-Logo.svg.png"
+        assertEquals(standard, ArtworkUrls.clean(standard))
+        // SVG convertito in PNG, misura non standard.
+        assertEquals(
+            "https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab/Logo.svg/330px-Logo.svg.png",
+            ArtworkUrls.clean("https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab/Logo.svg/300px-Logo.svg.png")
+        )
+        // Oltre 3840 px: l'originale.
+        assertEquals(
+            "https://upload.wikimedia.org/wikipedia/commons/a/ab/Big.jpg",
+            ArtworkUrls.clean("https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab/Big.jpg/5000px-Big.jpg")
+        )
+        assertEquals(
+            "https://upload.wikimedia.org/wikipedia/en/5/53/Ducktv-logo.jpg",
+            ArtworkUrls.wikimediaOriginal("https://upload.wikimedia.org/wikipedia/en/thumb/5/53/Ducktv-logo.jpg/250px-Ducktv-logo.jpg")
+        )
+        // Altri server: invariati.
+        assertEquals("https://www.lyngsat-logo.com/logo/tv/rr/rtl_kockica_hr.png", ArtworkUrls.clean("https://www.lyngsat-logo.com/logo/tv/rr/rtl_kockica_hr.png"))
+    }
 }
