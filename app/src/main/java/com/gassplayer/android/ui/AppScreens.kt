@@ -18,6 +18,7 @@ import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateDpAsState
 import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -203,6 +204,7 @@ fun GassPlayerNavHost(vm: MainViewModel, app: GassPlayerApplication) {
         route = contentRoute,
         tv = tv,
         playerActive = playerActive,
+        uiSectionsStyle = settings.uiSectionsStyle,
         allowNavReturnFocus = customizationScope == null,
         loading = loading,
         message = message,
@@ -319,6 +321,7 @@ private fun AdaptiveShell(
     route: String,
     tv: Boolean,
     playerActive: Boolean,
+    uiSectionsStyle: String,
     allowNavReturnFocus: Boolean,
     loading: Boolean,
     message: String?,
@@ -342,6 +345,16 @@ private fun AdaptiveShell(
     val selectedTab = navigationRailDestination(route)
     var shellHasFocus by remember { mutableStateOf(true) }
     var railHasFocus by remember { mutableStateOf(false) }
+    val customNavigation = uiSectionsStyle == "custom"
+    val railWidth by animateDpAsState(
+        targetValue = when {
+            !customNavigation -> if (tv) 142.dp else 104.dp
+            railHasFocus -> if (tv) 168.dp else 156.dp
+            else -> 66.dp
+        },
+        animationSpec = tween(durationMillis = 220),
+        label = "navigation-rail-width"
+    )
     val navFocusRequesters = remember {
         destinations.associate { (id, _) -> id to FocusRequester() }
     }
@@ -603,7 +616,7 @@ private fun AdaptiveShell(
             LiquidGlassSurface(
                 modifier = Modifier
                     .fillMaxHeight()
-                    .width(if (tv) 142.dp else 104.dp),
+                    .width(railWidth),
                 cornerRadius = 26.dp,
                 contentPadding = 7.dp
             ) {
@@ -643,24 +656,53 @@ private fun AdaptiveShell(
                                         true
                                     } else false
                                 }
-                                .remoteFocusOutline(cornerRadius = 18.dp, enabled = tv)
+                                .remoteFocusOutline(cornerRadius = if (customNavigation) 50.dp else 18.dp, enabled = tv)
                                 .onFocusChanged { state ->
                                     focused = state.isFocused
                                     if (state.isFocused) railScope.launch { runCatching { bringIntoView.bringIntoView() } }
                                 },
-                            shape = RoundedCornerShape(18.dp),
+                            shape = RoundedCornerShape(if (customNavigation) 50.dp else 18.dp),
                             color = Color.Transparent
                         ) {
-                            LiquidGlassSurface(
-                                modifier = Modifier.fillMaxWidth(),
-                                cornerRadius = 18.dp,
-                                contentPadding = if (tv) 13.dp else 9.dp,
-                                highlighted = selectedTab == id || focused,
-                                suppressTopHighlight = true
-                            ) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                                    Icon(navIcon(id), null, tint = if (selectedTab == id) Color(0xFF9ABEFF).readable() else glassForeground(.75f), modifier = Modifier.size(if (tv) 25.dp else 22.dp))
-                                    Text(label, color = if (selectedTab == id) glassForeground() else glassForeground(.72f), fontSize = if (tv) 12.sp else 10.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = androidx.compose.ui.text.style.TextAlign.Center, fontWeight = if (selectedTab == id) FontWeight.SemiBold else FontWeight.Normal)
+                            if (customNavigation) {
+                                // Match HomeActionChip: the same section icons and the same LiquidGlass pill.
+                                // Only the focused destination reveals its label; all other destinations stay icon-only.
+                                LiquidGlassPill(modifier = if (focused) Modifier.fillMaxWidth() else Modifier) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(7.dp)
+                                    ) {
+                                        Icon(
+                                            navIcon(id),
+                                            contentDescription = label,
+                                            tint = Color(0xFF9ABEFF).readable(),
+                                            modifier = Modifier.size(17.dp)
+                                        )
+                                        if (focused) {
+                                            Text(
+                                                label,
+                                                color = glassForeground(),
+                                                fontSize = 13.sp,
+                                                maxLines = 1,
+                                                softWrap = false,
+                                                overflow = TextOverflow.Clip
+                                            )
+                                        }
+                                    }
+                                }
+                            } else {
+                                // Legacy layout deliberately remains identical in Default mode.
+                                LiquidGlassSurface(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    cornerRadius = 18.dp,
+                                    contentPadding = if (tv) 13.dp else 9.dp,
+                                    highlighted = selectedTab == id || focused,
+                                    suppressTopHighlight = true
+                                ) {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                                        Icon(navIcon(id), null, tint = if (selectedTab == id) Color(0xFF9ABEFF).readable() else glassForeground(.75f), modifier = Modifier.size(if (tv) 25.dp else 22.dp))
+                                        Text(label, color = if (selectedTab == id) glassForeground() else glassForeground(.72f), fontSize = if (tv) 12.sp else 10.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = androidx.compose.ui.text.style.TextAlign.Center, fontWeight = if (selectedTab == id) FontWeight.SemiBold else FontWeight.Normal)
+                                    }
                                 }
                             }
                         }

@@ -108,6 +108,8 @@ data class FavoriteState(val live: Set<String> = emptySet(), val movies: Set<Str
 data class AppSettings(
     val theme: String = "dark",
     val density: String = "comfortable",
+    /** Side navigation appearance: legacy rail by default, compact LiquidGlass pills when custom. */
+    val uiSectionsStyle: String = "default",
     val language: String = "system",
     val autoplayNextEpisode: Boolean = true,
     val resumePlayback: Boolean = true,

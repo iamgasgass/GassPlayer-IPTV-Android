@@ -160,6 +160,16 @@ internal fun SettingsHub(
                         HubChoice("Tema", themeLabel(local.theme), listOf("Sistema", "Chiaro", "Medio", "Scuro")) { save(local.copy(theme = when (it) { "Chiaro" -> "light"; "Medio" -> "medium"; "Scuro" -> "dark"; else -> "system" })) }
                         HubChoice("Lingua app", local.language, listOf("system", "it", "en", "es")) { save(local.copy(language = it)) }
                     } }
+                    item { HubSection("Navigazione", "Aspetto della barra laterale", Icons.Default.Menu) {
+                        HubChoice("Sezioni UI", if (local.uiSectionsStyle == "custom") "Custom" else "Default", listOf("Default", "Custom")) { selected ->
+                            save(local.copy(uiSectionsStyle = if (selected == "Custom") "custom" else "default"))
+                        }
+                        Text(
+                            if (local.uiSectionsStyle == "custom") "Solo icone: la barra si espande al focus e mostra la voce selezionata dal telecomando."
+                            else "Barra laterale classica con icone e testo, come nella versione attuale.",
+                            color = glassForeground().copy(.5f), fontSize = 12.sp
+                        )
+                    } }
                     item { HubSection("Libreria", "Griglia di canali, film e serie", Icons.Default.GridView) {
                         HubChoice("Densità griglia", when (local.density) { "compact" -> "Compatta"; "poster" -> "Poster"; else -> "Comoda" }, listOf("Compatta", "Comoda", "Poster")) { save(local.copy(density = when (it) { "Compatta" -> "compact"; "Poster" -> "poster"; else -> "comfortable" })) }
                         val groupChoices = listOf("Categorie TV", "Scorrevole", "Espansibile")
