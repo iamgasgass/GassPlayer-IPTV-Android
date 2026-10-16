@@ -47,6 +47,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -1439,7 +1440,7 @@ private fun EpgProgramTile(
             }
             if (compact) {
                 Column(Modifier.fillMaxSize().padding(horizontal = 10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Box(Modifier.fillMaxWidth().height(18.dp).clipToBounds()) {
+                    Box(Modifier.fillMaxWidth().height(20.dp).clipToBounds()) {
                         Row(
                             Modifier.offset(x = if (keepsNaturalCurrentPosition) 0.dp else pinnedNameX),
                             verticalAlignment = Alignment.CenterVertically,
@@ -1478,20 +1479,29 @@ private fun EpgProgramTile(
 
 @Composable
 private fun QualityBadge(text: String, compact: Boolean) {
-    Text(
-        text = text,
-        color = Color.White.copy(alpha = .65f),
-        fontSize = if (compact) 11.sp else 10.sp,
-        fontFamily = qualityBadgeFontFamily,
-        fontWeight = FontWeight.SemiBold,
-        maxLines = 1,
-        softWrap = false,
-        // Match iOS Text.padding(...).overlay(strokeBorder(...)):
-        // the outline encloses the text plus its internal 5 dp / 1 dp padding.
+    val badgeFontSize = if (compact) 11.sp else 10.sp
+    // Keep a controlled line box: Android's default font padding can make the compact
+    // badge taller than its EPG row and clip its stroke, unlike SwiftUI's rounded Text.
+    val badgeLineHeight = if (compact) 12.sp else 11.sp
+    Box(
         modifier = Modifier
+            // The outline is outside the padding, like SwiftUI padding(...).overlay(strokeBorder(...)).
             .border(BorderStroke(1.dp, Color.White.copy(alpha = .45f)), RoundedCornerShape(5.dp))
-            .padding(horizontal = 5.dp, vertical = 1.dp)
-    )
+            .padding(horizontal = 5.dp, vertical = 1.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = text,
+            color = Color.White.copy(alpha = .65f),
+            fontSize = badgeFontSize,
+            lineHeight = badgeLineHeight,
+            fontFamily = qualityBadgeFontFamily,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            softWrap = false,
+            style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false))
+        )
+    }
 }
 @Composable
 private fun EpgTopBar(

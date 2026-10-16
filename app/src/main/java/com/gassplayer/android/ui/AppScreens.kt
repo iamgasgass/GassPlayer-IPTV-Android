@@ -694,17 +694,43 @@ private fun AdaptiveShell(
                                     }
                                 }
                             } else {
-                                // Legacy layout deliberately remains identical in Default mode.
+                                // Default: icona sempre ancorata a sinistra e testo a destra,
+                                // con la stessa geometria per ogni destinazione della barra.
+                                val iconSize = if (tv) 25.dp else 22.dp
+                                val labelAreaHeight = if (tv) 32.dp else 30.dp
+                                val cardPadding = if (tv) 13.dp else 9.dp
+                                val cardHeight = labelAreaHeight + cardPadding + cardPadding
                                 LiquidGlassSurface(
-                                    modifier = Modifier.fillMaxWidth(),
+                                    modifier = Modifier.fillMaxWidth().height(cardHeight),
                                     cornerRadius = 18.dp,
-                                    contentPadding = if (tv) 13.dp else 9.dp,
+                                    contentPadding = cardPadding,
                                     highlighted = selectedTab == id || focused,
                                     suppressTopHighlight = true
                                 ) {
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                                        Icon(navIcon(id), null, tint = if (selectedTab == id) Color(0xFF9ABEFF).readable() else glassForeground(.75f), modifier = Modifier.size(if (tv) 25.dp else 22.dp))
-                                        Text(label, color = if (selectedTab == id) glassForeground() else glassForeground(.72f), fontSize = if (tv) 12.sp else 10.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = androidx.compose.ui.text.style.TextAlign.Center, fontWeight = if (selectedTab == id) FontWeight.SemiBold else FontWeight.Normal)
+                                    Row(
+                                        modifier = Modifier.fillMaxSize(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(if (tv) 10.dp else 8.dp)
+                                    ) {
+                                        Box(Modifier.size(iconSize), contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                navIcon(id),
+                                                contentDescription = label,
+                                                tint = if (selectedTab == id) Color(0xFF9ABEFF).readable() else glassForeground(.75f),
+                                                modifier = Modifier.size(iconSize)
+                                            )
+                                        }
+                                        Text(
+                                            label,
+                                            color = if (selectedTab == id) glassForeground() else glassForeground(.72f),
+                                            fontSize = if (tv) 12.sp else 10.sp,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis,
+                                            textAlign = androidx.compose.ui.text.style.TextAlign.Start,
+                                            lineHeight = if (tv) 15.sp else 12.sp,
+                                            modifier = Modifier.weight(1f),
+                                            fontWeight = if (selectedTab == id) FontWeight.SemiBold else FontWeight.Normal
+                                        )
                                     }
                                 }
                             }
@@ -2837,6 +2863,12 @@ private fun HomeCustomizationSheet(
         local = next
         vm.updateSettings(next)
     }
+    fun saveUiSectionsStyle(style: String) {
+        if (local.uiSectionsStyle == style) return
+        val next = local.copy(uiSectionsStyle = style)
+        local = next
+        vm.updateSettings(next)
+    }
 
     val completeOrder = remember(readOrder(local), defaults) { (readOrder(local) + defaults).distinct() }
     val hiddenSet = readHidden(local).intersect(completeOrder.toSet())
@@ -2881,6 +2913,66 @@ private fun HomeCustomizationSheet(
                     fontWeight = FontWeight.SemiBold,
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center
                 )
+            }
+            if (scopeKey == "home") {
+                item(key = "customization-ui-sections-card") {
+                    LiquidGlassSurface(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                        cornerRadius = 20.dp,
+                        contentPadding = 15.dp
+                    ) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(11.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(11.dp)) {
+                                Box(
+                                    Modifier.size(42.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFF8CB7FF).copy(.16f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(Icons.Default.Menu, null, tint = Color(0xFF9ABEFF).readable(), modifier = Modifier.size(23.dp))
+                                }
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                    Text("Sezioni UI", color = glassForeground(), fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                                    Text(
+                                        "Aspetto della barra laterale",
+                                        color = glassForeground().copy(.58f),
+                                        fontSize = 12.sp
+                                    )
+                                }
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(9.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                listOf("default" to "Default", "custom" to "Custom").forEach { (value, label) ->
+                                    val selectedStyle = local.uiSectionsStyle == value
+                                    Surface(
+                                        onClick = { saveUiSectionsStyle(value) },
+                                        modifier = Modifier.weight(1f).remoteFocusOutline(cornerRadius = 50.dp, enabled = isTv),
+                                        shape = RoundedCornerShape(50),
+                                        color = Color.Transparent
+                                    ) {
+                                        LiquidGlassPill(selected = selectedStyle, modifier = Modifier.fillMaxWidth()) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.Center
+                                            ) {
+                                                if (selectedStyle) {
+                                                    Icon(Icons.Default.Check, null, tint = Color(0xFF9ABEFF).readable(), modifier = Modifier.size(15.dp))
+                                                    Spacer(Modifier.width(5.dp))
+                                                }
+                                                Text(label, color = glassForeground(), fontSize = 13.sp, fontWeight = if (selectedStyle) FontWeight.SemiBold else FontWeight.Normal)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
             items(displayOrder, key = { it }) { id ->
                 val index = displayOrder.indexOf(id)
