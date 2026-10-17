@@ -283,6 +283,17 @@ class CatalogRepository(private val context: Context, private val prefs: AppPref
         fetched.map(ArtworkUrls::normalize)
     }
 
+    /** get_vod_info del film (solo sorgenti Xtream): base della scheda dettaglio come MovieDetailView.swift. */
+    suspend fun vodDetailSeed(item: MediaItem): XtreamDetailSeed? = withContext(Dispatchers.IO) {
+        if (item.kind != MediaKind.MOVIE) return@withContext null
+        val source = prefs.sourcesFlow.first().firstOrNull { it.id == item.sourceId } ?: return@withContext null
+        if (source.type != SourceType.XTREAM) return@withContext null
+        runCatching { xtream.vodDetailSeed(source, item.id.substringAfterLast(':')) }.getOrNull()
+    }
+
+    /** `info` di get_series_info letto dall'ultimo [loadSeriesEpisodes] della serie (nessuna richiesta in più). */
+    fun seriesDetailSeed(sourceId: String, seriesId: String): XtreamDetailSeed? = xtream.cachedSeriesDetailSeed(sourceId, seriesId)
+
     private fun deleteLegacyCaches() {
         runCatching { context.filesDir.listFiles()?.filter { it.name.startsWith("catalog_v2_") || it.name.startsWith("catalog_v3_") }?.forEach { it.delete() } }
     }

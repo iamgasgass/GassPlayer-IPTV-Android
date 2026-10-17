@@ -69,6 +69,8 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -119,6 +121,8 @@ fun MovieDetailScreen(
         true
     }
     var meta by remember(item.id) { mutableStateOf(initialMeta) }
+    // get_vod_info del pannello (MovieDetailView.swift: vodInfo -> MediaDetailSeed): base e riserva di TMDB.
+    var xtreamSeed by remember(item.id) { mutableStateOf<XtreamDetailSeed?>(null) }
     var ratings by remember(item.id) { mutableStateOf<Ratings?>(null) }
     var traktRating by remember(item.id) { mutableStateOf<Double?>(null) }
     var isLoadingDetail by remember(item.id) { mutableStateOf(true) }
@@ -137,8 +141,17 @@ fun MovieDetailScreen(
     val topProgress = detailTopProgress(scrollState)
     val tvLayout = isTvDetailLayout()
 
+    // Dati mostrati dalla scheda come MediaDetailLoader iOS: TMDB, poi il pannello (get_vod_info), poi il catalogo.
+    val heroItem = remember(item, xtreamSeed) { item.withDetailSeed(xtreamSeed) }
+    val castNames = detailCastNames(meta, xtreamSeed, item)
+    val detailRating = detailRating(meta, xtreamSeed, item)
+    val detailYear = meta?.year?.takeIf { it.isNotBlank() } ?: xtreamSeed?.year ?: item.year
+    val detailRuntime = (meta?.runtimeMinutes?.takeIf { it > 0 }?.let { it * 60L }
+        ?: xtreamSeed?.runtimeMinutes?.takeIf { it > 0 }?.let { it * 60L }
+        ?: item.durationSec?.takeIf { it > 0 })?.let(::formatRuntime)
+
     // Immagine di "Continua a guardare" allineata a quella della scheda (MovieDetailView.swift: updateImage).
-    val detailImage = meta?.backdropUrl ?: item.backdropUrl
+    val detailImage = meta?.backdropUrl ?: heroItem.backdropUrl
     LaunchedEffect(detailImage, currentWatch?.imageUrl) {
         val url = detailImage?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
         if (currentWatch != null && currentWatch.imageUrl != url) app.watch.updateImage(url) { it.contentId == item.id }
@@ -154,25 +167,31 @@ fun MovieDetailScreen(
 
     LaunchedEffect(item.id, settings.tmdbApiKey, settings.omdbApiKey, settings.traktClientId) {
         isLoadingDetail = true
-        val fetched = if (settings.tmdbApiKey.isBlank()) null else {
-            val direct = item.tmdbId?.takeIf { it.isNotBlank() }?.let { id -> runCatching { app.tmdb.details(id, settings.tmdbApiKey, false) }.getOrNull() }
-            direct ?: runCatching { app.tmdb.searchMovies(item.title, settings.tmdbApiKey).firstOrNull() }.getOrNull()?.let { found ->
-                runCatching { app.tmdb.details(found.id, settings.tmdbApiKey, false) }.getOrNull() ?: found
-            }
-        }
+        // MediaDetailLoader.load iOS: base Xtream (get_vod_info: trama, cast, anno, durata, voto, tmdb_id), poi TMDB
+        // con matching di precisione (tmdb_id verificato, titolo ripulito + anno, spareggio sul cast).
+        val seed = xtreamSeed ?: withTimeoutOrNull(8_000L) { app.catalog.vodDetailSeed(item) }
+        xtreamSeed = seed
+        val fetched = if (settings.tmdbApiKey.isBlank()) null else runCatching {
+            app.tmdb.fullDetails(
+                title = item.title,
+                isSeries = false,
+                apiKey = settings.tmdbApiKey,
+                year = seed?.year ?: item.year,
+                tmdbId = seed?.tmdbId ?: item.tmdbId ?: initialMeta?.id,
+                castNames = seed?.castNames?.takeIf { it.isNotEmpty() } ?: item.castNameList(),
+            )
+        }.getOrNull()
         // Keep the metadata already shown (e.g. from the trending card) if the request fails.
         meta = fetched ?: meta
         isLoadingDetail = false
-        // Ratings in parallel, after the main metadata: OMDb by IMDb id when TMDB provides it (exact),
-        // otherwise by the original title rather than the playlist name ("IT: Title [4K]").
+        // Ratings in parallel, after the main metadata: OMDb (IMDb / Rotten Tomatoes / Metacritic) and Trakt by the
+        // IMDb id TMDB provides (exact, as on iOS); OMDb falls back to the original title + year without it.
+        val imdbId = meta?.externalId?.takeIf { it.isNotBlank() }
         val omdbTitle = meta?.originalTitle?.takeIf { it.isNotBlank() } ?: meta?.title?.takeIf { it.isNotBlank() } ?: item.title
+        val omdbYear = meta?.year ?: seed?.year ?: item.year
         coroutineScope {
-            val omdb = async { runCatching { app.omdb.lookup(omdbTitle, settings.omdbApiKey, meta?.externalId) }.getOrNull() }
-            val trakt = async {
-                runCatching {
-                    app.trakt.ratings(item.title, settings.traktClientId, imdbId = meta?.externalId, isSeries = false)
-                }.getOrNull()
-            }
+            val omdb = async { runCatching { app.omdb.lookup(omdbTitle, settings.omdbApiKey, imdbId, omdbYear, series = false) }.getOrNull() }
+            val trakt = async { imdbId?.let { id -> runCatching { app.trakt.ratingsByImdb(id, series = false, clientId = settings.traktClientId) }.getOrNull() } }
             ratings = omdb.await()
             traktRating = trakt.await()
         }
@@ -201,17 +220,13 @@ fun MovieDetailScreen(
         val duration = currentWatch?.durationMs ?: 0L
         val watchedFraction = currentWatch?.watchedFraction()
         TvMediaDetailLayout(
-            item = item,
+            item = heroItem,
             meta = meta,
             listState = scrollState,
-            rating = meta?.rating ?: item.rating,
-            secondary = listOfNotNull(
-                meta?.year ?: item.year,
-                (meta?.runtimeMinutes?.takeIf { it > 0 }?.let { formatRuntime(it.toLong() * 60L) }
-                    ?: item.durationSec?.takeIf { it > 0 }?.let(::formatRuntime))
-            ).joinToString(" · ").ifBlank { null },
-            genres = metadataGenres(meta, item),
-            overview = meta?.overview?.takeIf { it.isNotBlank() } ?: item.plot?.takeIf { it.isNotBlank() },
+            rating = detailRating,
+            secondary = listOfNotNull(detailYear, detailRuntime).joinToString(" · ").ifBlank { null },
+            genres = metadataGenres(meta, item, xtreamSeed),
+            overview = meta?.overview?.takeIf { it.isNotBlank() } ?: heroItem.plot?.takeIf { it.isNotBlank() },
             loading = isLoadingDetail,
             playLabel = if (position > 0L) "Riprendi" else "Riproduci",
             playProgress = watchedFraction,
@@ -260,11 +275,11 @@ fun MovieDetailScreen(
             }
             item(key = "tv-cast-${item.id}") {
                 TvCastRow(
-                    names = meta?.cast?.takeIf { it.isNotEmpty() } ?: item.cast?.split(',', ';')?.map { it.trim() }?.filter { it.isNotBlank() }.orEmpty(),
+                    names = castNames,
                     people = meta?.castMembers.orEmpty()
                 )
             }
-            item(key = "tv-ratings-${item.id}") { TvRatingsBlock(meta?.rating ?: item.rating, ratings, traktRating) }
+            item(key = "tv-ratings-${item.id}") { TvRatingsBlock(detailRating, ratings, traktRating) }
         }
     } else Box(Modifier.fillMaxSize()) {
         LazyColumn(
@@ -273,7 +288,7 @@ fun MovieDetailScreen(
             contentPadding = PaddingValues(bottom = 42.dp),
             verticalArrangement = Arrangement.spacedBy(0.dp)
         ) {
-            item(key = "hero-${item.id}") { MediaDetailHero(item = item, meta = meta) }
+            item(key = "hero-${item.id}") { MediaDetailHero(item = heroItem, meta = meta) }
             item(key = "main-${item.id}") {
                 Column(
                     Modifier.fillMaxWidth().padding(horizontal = 22.dp),
@@ -281,13 +296,9 @@ fun MovieDetailScreen(
                 ) {
                     Spacer(Modifier.height(2.dp))
                     MediaDetailMetaRow(
-                        rating = meta?.rating ?: item.rating,
-                        secondary = listOfNotNull(
-                            meta?.year ?: item.year,
-                            (meta?.runtimeMinutes?.takeIf { it > 0 }?.let { formatRuntime(it.toLong() * 60L) }
-                                ?: item.durationSec?.takeIf { it > 0 }?.let(::formatRuntime))
-                        ).joinToString(" · ").ifBlank { null },
-                        genres = metadataGenres(meta, item)
+                        rating = detailRating,
+                        secondary = listOfNotNull(detailYear, detailRuntime).joinToString(" · ").ifBlank { null },
+                        genres = metadataGenres(meta, item, xtreamSeed)
                     )
                     Button(
                         onClick = { onPlay(item, currentWatch?.resumeFromMs() ?: 0L) },
@@ -347,7 +358,7 @@ fun MovieDetailScreen(
                         ) { showAlternates = true }
                     }
                     actionMessage?.let { Text(it, color = DetailAccent, fontSize = 12.sp) }
-                    val overview = meta?.overview?.takeIf { it.isNotBlank() } ?: item.plot?.takeIf { it.isNotBlank() }
+                    val overview = meta?.overview?.takeIf { it.isNotBlank() } ?: heroItem.plot?.takeIf { it.isNotBlank() }
                     if (!overview.isNullOrBlank()) {
                         Text(overview, color = DetailText.copy(.92f), fontSize = 14.sp, lineHeight = 21.sp)
                     } else if (isLoadingDetail) {
@@ -357,7 +368,7 @@ fun MovieDetailScreen(
             }
             item(key = "ratings-${item.id}") {
                 MediaDetailRatings(
-                    tmdb = meta?.rating ?: item.rating,
+                    tmdb = detailRating,
                     ratings = ratings,
                     trakt = traktRating,
                     modifier = Modifier.padding(top = 22.dp)
@@ -365,7 +376,7 @@ fun MovieDetailScreen(
             }
             item(key = "cast-${item.id}") {
                 MediaDetailCast(
-                    names = meta?.cast?.takeIf { it.isNotEmpty() } ?: item.cast?.split(',', ';')?.map { it.trim() }?.filter { it.isNotBlank() }.orEmpty(),
+                    names = castNames,
                     people = meta?.castMembers.orEmpty(),
                     modifier = Modifier.padding(top = 20.dp)
                 )
@@ -451,9 +462,12 @@ fun SeriesDetailScreen(
     var loadingEpisodes by remember(series.id) { mutableStateOf(false) }
     var loadError by remember(series.id) { mutableStateOf<String?>(null) }
     var meta by remember(series.id) { mutableStateOf(initialMeta) }
+    // `info` di get_series_info (SeriesEpisodesView.swift: seriesInfo -> MediaDetailSeed) e voti OMDb/Trakt.
+    var xtreamSeed by remember(series.id) { mutableStateOf<XtreamDetailSeed?>(null) }
+    var seriesInfoLoaded by remember(series.id) { mutableStateOf(false) }
+    var isLoadingDetail by remember(series.id) { mutableStateOf(true) }
     var ratings by remember(series.id) { mutableStateOf<Ratings?>(null) }
     var traktRating by remember(series.id) { mutableStateOf<Double?>(null) }
-    var isLoadingDetail by remember(series.id) { mutableStateOf(true) }
     var showAlternates by remember(series.id) { mutableStateOf(false) }
     var actionMessage by remember(series.id) { mutableStateOf<String?>(null) }
     var downloadWorkId by remember(series.id) { mutableStateOf<String?>(null) }
@@ -483,41 +497,38 @@ fun SeriesDetailScreen(
         result.onSuccess { fetched ->
             loadedEpisodes = (loadedEpisodes + fetched).filter { it.seriesId == seriesKey || it.seriesId == series.id }.distinctBy { it.id }
         }.onFailure { loadError = it.message ?: "Impossibile caricare gli episodi" }
+        app.catalog.seriesDetailSeed(series.sourceId, seriesKey)?.let { xtreamSeed = it }
+        seriesInfoLoaded = true
         loadingEpisodes = false
     }
 
     LaunchedEffect(series.id, settings.tmdbApiKey, settings.omdbApiKey, settings.traktClientId) {
         isLoadingDetail = true
-        val fetched = if (settings.tmdbApiKey.isBlank()) null else {
-            val direct = series.tmdbId?.takeIf { it.isNotBlank() }?.let { id ->
-                runCatching { app.tmdb.details(id, settings.tmdbApiKey, true) }.getOrNull()
-            }
-            direct ?: runCatching { app.tmdb.searchSeries(series.title, settings.tmdbApiKey).firstOrNull() }
-                .getOrNull()?.let { found ->
-                    runCatching { app.tmdb.details(found.id, settings.tmdbApiKey, true) }.getOrNull() ?: found
-                }
-        }
-        // Mantiene i metadati iniziali (ad esempio dalle rail TMDB) se il recupero completo non riesce.
-        meta = fetched ?: meta
-        val resolvedMeta = fetched ?: meta
-        val omdbTitle = resolvedMeta?.originalTitle?.takeIf { it.isNotBlank() }
-            ?: resolvedMeta?.title?.takeIf { it.isNotBlank() }
-            ?: series.title
+        // MediaDetailLoader.load iOS dopo get_series_info (tmdb_id, anno, cast del pannello), al massimo 8 s di attesa.
+        withTimeoutOrNull(8_000L) { snapshotFlow { seriesInfoLoaded }.first { it } }
+        val seed = xtreamSeed
+        val fetched = if (settings.tmdbApiKey.isBlank()) null else runCatching {
+            app.tmdb.fullDetails(
+                title = series.title,
+                isSeries = true,
+                apiKey = settings.tmdbApiKey,
+                year = seed?.year ?: series.year,
+                tmdbId = seed?.tmdbId ?: series.tmdbId ?: initialMeta?.id,
+                castNames = seed?.castNames?.takeIf { it.isNotEmpty() } ?: series.castNameList(),
+            )
+        }.getOrNull()
+        meta = fetched ?: meta // keep the metadata already shown if the request fails
+        isLoadingDetail = false
+        // Valutazioni come la scheda film: OMDb e Trakt per IMDb id (TMDB external_ids), OMDb per titolo senza id.
+        val imdbId = meta?.externalId?.takeIf { it.isNotBlank() }
+        val omdbTitle = meta?.originalTitle?.takeIf { it.isNotBlank() } ?: meta?.title?.takeIf { it.isNotBlank() } ?: series.title
+        val omdbYear = meta?.year ?: seed?.year ?: series.year
         coroutineScope {
-            val omdb = async {
-                runCatching {
-                    app.omdb.lookup(omdbTitle, settings.omdbApiKey, resolvedMeta?.externalId)
-                }.getOrNull()
-            }
-            val trakt = async {
-                runCatching {
-                    app.trakt.ratings(series.title, settings.traktClientId, imdbId = resolvedMeta?.externalId, isSeries = true)
-                }.getOrNull()
-            }
+            val omdb = async { runCatching { app.omdb.lookup(omdbTitle, settings.omdbApiKey, imdbId, omdbYear, series = true) }.getOrNull() }
+            val trakt = async { imdbId?.let { id -> runCatching { app.trakt.ratingsByImdb(id, series = true, clientId = settings.traktClientId) }.getOrNull() } }
             ratings = omdb.await()
             traktRating = trakt.await()
         }
-        isLoadingDetail = false
     }
     LaunchedEffect(series.id) { fetchEpisodes() }
     LaunchedEffect(meta?.id, season, settings.tmdbApiKey) {
@@ -552,8 +563,14 @@ fun SeriesDetailScreen(
         if (seasonFollowsResume && resumeSeason != null && resumeSeason in seasons.keys) season = resumeSeason
     }
 
+    // Dati mostrati dalla scheda come MediaDetailLoader iOS: TMDB, poi il pannello (get_series_info), poi il catalogo.
+    val heroSeries = remember(series, xtreamSeed) { series.withDetailSeed(xtreamSeed) }
+    val castNames = detailCastNames(meta, xtreamSeed, series)
+    val detailRating = detailRating(meta, xtreamSeed, series)
+    val detailYear = meta?.year?.takeIf { it.isNotBlank() } ?: xtreamSeed?.year ?: series.year
+
     // Immagine di "Continua a guardare" allineata a quella della scheda (SeriesEpisodesView.swift: updateImage).
-    val detailImage = meta?.backdropUrl ?: series.backdropUrl
+    val detailImage = meta?.backdropUrl ?: heroSeries.backdropUrl
     LaunchedEffect(detailImage, watch, sortedEpisodes) {
         val url = detailImage?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
         val episodeIds = sortedEpisodes.mapTo(HashSet()) { it.id }
@@ -575,18 +592,14 @@ fun SeriesDetailScreen(
             runCatching { episodesRowState.scrollToItem(index.coerceAtLeast(0)) }
         }
         TvMediaDetailLayout(
-            item = series,
+            item = heroSeries,
             meta = meta,
             listState = scrollState,
-            rating = meta?.rating ?: series.rating,
-            secondary = listOfNotNull(
-                meta?.year ?: series.year,
-                meta?.runtimeMinutes?.takeIf { it > 0 }?.let { "${it} min/episodio" },
-                seasons.size.takeIf { it > 0 }?.let { if (it == 1) "1 stagione" else "$it stagioni" }
-            ).joinToString(" · ").ifBlank { null },
-            genres = metadataGenres(meta, series),
-            overview = meta?.overview?.takeIf { it.isNotBlank() } ?: series.plot?.takeIf { it.isNotBlank() },
-            loading = isLoadingDetail || (meta == null && loadingEpisodes),
+            rating = detailRating,
+            secondary = listOfNotNull(detailYear, seasons.size.takeIf { it > 0 }?.let { if (it == 1) "1 stagione" else "$it stagioni" }).joinToString(" · ").ifBlank { null },
+            genres = metadataGenres(meta, series, xtreamSeed),
+            overview = meta?.overview?.takeIf { it.isNotBlank() } ?: heroSeries.plot?.takeIf { it.isNotBlank() },
+            loading = isLoadingDetail,
             playLabel = when {
                 resumeEpisode != null && (allWatch[resumeEpisode.id]?.resumeFromMs() ?: 0L) > 0L ->
                     "Riprendi S${resumeEpisode.seasonNumber ?: 1} E${resumeEpisode.episodeNumber ?: 1}"
@@ -675,11 +688,11 @@ fun SeriesDetailScreen(
             }
             item(key = "tv-series-cast-${series.id}") {
                 TvCastRow(
-                    names = meta?.cast?.takeIf { it.isNotEmpty() } ?: series.cast?.split(',', ';')?.map { it.trim() }?.filter { it.isNotBlank() }.orEmpty(),
+                    names = castNames,
                     people = meta?.castMembers.orEmpty()
                 )
             }
-            item(key = "tv-series-ratings-${series.id}") { TvRatingsBlock(meta?.rating ?: series.rating, ratings, traktRating) }
+            item(key = "tv-series-ratings-${series.id}") { TvRatingsBlock(detailRating, ratings, traktRating) }
         }
     } else Box(Modifier.fillMaxSize()) {
         LazyColumn(
@@ -688,17 +701,13 @@ fun SeriesDetailScreen(
             contentPadding = PaddingValues(bottom = 44.dp),
             verticalArrangement = Arrangement.spacedBy(0.dp)
         ) {
-            item(key = "series-hero-${series.id}") { MediaDetailHero(item = series, meta = meta) }
+            item(key = "series-hero-${series.id}") { MediaDetailHero(item = heroSeries, meta = meta) }
             item(key = "series-main-${series.id}") {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 22.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     MediaDetailMetaRow(
-                        rating = meta?.rating ?: series.rating,
-                        secondary = listOfNotNull(
-                            meta?.year ?: series.year,
-                            meta?.runtimeMinutes?.takeIf { it > 0 }?.let { "${it} min/episodio" },
-                            seasons.size.takeIf { it > 0 }?.let { if (it == 1) "1 stagione" else "$it stagioni" }
-                        ).joinToString(" · ").ifBlank { null },
-                        genres = metadataGenres(meta, series)
+                        rating = detailRating,
+                        secondary = detailYear,
+                        genres = metadataGenres(meta, series, xtreamSeed)
                     )
                     Button(
                         onClick = {
@@ -759,20 +768,17 @@ fun SeriesDetailScreen(
                         }
                     }
                     actionMessage?.let { Text(it, color = DetailAccent, fontSize = 12.sp) }
-                    val overview = meta?.overview?.takeIf { it.isNotBlank() } ?: series.plot?.takeIf { it.isNotBlank() }
-                    if (!overview.isNullOrBlank()) {
-                        Text(overview, color = DetailText.copy(.92f), fontSize = 14.sp, lineHeight = 21.sp)
-                    } else if (isLoadingDetail) {
-                        LinearProgressIndicator(Modifier.fillMaxWidth(), color = DetailAccent, trackColor = glassForeground(.1f))
-                    }
+                    val overview = meta?.overview?.takeIf { it.isNotBlank() } ?: heroSeries.plot?.takeIf { it.isNotBlank() }
+                    if (!overview.isNullOrBlank()) Text(overview, color = DetailText.copy(.92f), fontSize = 14.sp, lineHeight = 21.sp)
+                    else if (isLoadingDetail) LinearProgressIndicator(Modifier.fillMaxWidth(), color = DetailAccent, trackColor = glassForeground(.1f))
                 }
             }
             item(key = "series-ratings-${series.id}") {
-                MediaDetailRatings(meta?.rating ?: series.rating, ratings, traktRating, Modifier.padding(top = 22.dp))
+                MediaDetailRatings(detailRating, ratings, traktRating, Modifier.padding(top = 22.dp))
             }
             item(key = "series-cast-${series.id}") {
                 MediaDetailCast(
-                    names = meta?.cast?.takeIf { it.isNotEmpty() } ?: series.cast?.split(',', ';')?.map { it.trim() }?.filter { it.isNotBlank() }.orEmpty(),
+                    names = castNames,
                     people = meta?.castMembers.orEmpty(),
                     modifier = Modifier.padding(top = 20.dp)
                 )
@@ -857,65 +863,39 @@ private fun MediaDetailHero(item: MediaItem, meta: MetadataResult?, height: andr
     val screenBackground = gassPageBase()
     val light = isGassLight()
     Box(Modifier.fillMaxWidth().height(height).background(Color.Black)) {
-        val backdrop = meta?.backdropUrl ?: item.backdropUrl ?: item.posterUrl
-        if (!backdrop.isNullOrBlank()) ArtworkImage(backdrop, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-        // Gradiente scuro sul fondo per mantenere leggibili sia il poster sia il logo/titolo.
+        val image = meta?.backdropUrl ?: item.backdropUrl ?: item.posterUrl
+        if (!image.isNullOrBlank()) ArtworkImage(image, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        // SwiftUI uses a short fade at the bottom of the edge-to-edge hero, not a full-image dark veil.
         Box(
-            Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(190.dp).background(
-                if (light) Brush.verticalGradient(0f to Color.Transparent, .30f to Color.Black.copy(.52f), .70f to Color.Black.copy(.68f), 1f to screenBackground)
-                else Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(.30f), screenBackground.copy(.92f), screenBackground))
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(160.dp).background(
+                if (light) Brush.verticalGradient(0f to Color.Transparent, .45f to Color.Black.copy(.55f), .70f to Color.Black.copy(.35f), 1f to screenBackground)
+                else Brush.verticalGradient(listOf(Color.Transparent, screenBackground.copy(.4f), screenBackground.copy(.9f), screenBackground))
             )
         )
-        Row(
-            Modifier.align(Alignment.BottomCenter).fillMaxWidth()
-                .padding(horizontal = 22.dp)
-                .padding(bottom = if (light) 58.dp else 18.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-            verticalAlignment = Alignment.Bottom
+        Column(
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = if (light) 58.dp else 14.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            val poster = meta?.posterUrl ?: item.posterUrl
-            Box(
-                Modifier.width(82.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(9.dp))
-                    .background(Brush.linearGradient(listOf(Color(0xFF292929), Color(0xFF0C0C0C))))
-                    .border(BorderStroke(.7.dp, Color.White.copy(.24f)), RoundedCornerShape(9.dp)),
-                contentAlignment = Alignment.Center
-            ) {
-                if (!poster.isNullOrBlank()) {
-                    ArtworkImage(
-                        poster,
-                        contentDescription = "Poster ${meta?.title?.takeIf { it.isNotBlank() } ?: item.title}",
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop,
-                        fallback = {
-                            ArtworkImage(backdrop, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop,
-                                fallback = { Text(item.title.take(1).uppercase(), color = Color.White.copy(.78f), fontSize = 32.sp, fontWeight = FontWeight.Bold) })
-                        }
-                    )
-                } else {
-                    Text((meta?.title?.takeIf { it.isNotBlank() } ?: item.title).take(1).uppercase(), color = Color.White.copy(.78f), fontSize = 32.sp, fontWeight = FontWeight.Bold)
-                }
+            val logoUrl = meta?.logoUrl
+            // MediaHeroHeader iOS: logo TMDB; se manca o non si scarica, il titolo (mai un hero senza nome).
+            val fallbackTitle: @Composable () -> Unit = {
+                Text(
+                    meta?.title?.takeIf { it.isNotBlank() } ?: item.title,
+                    color = Color.White,
+                    fontSize = 32.sp,
+                    lineHeight = 36.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                )
             }
-            Column(
-                Modifier.weight(1f).padding(bottom = 2.dp),
-                horizontalAlignment = Alignment.Start,
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                val title = meta?.title?.takeIf { it.isNotBlank() } ?: item.title
-                val logoUrl = meta?.logoUrl
-                if (!logoUrl.isNullOrBlank()) {
-                    ArtworkImage(
-                        logoUrl,
-                        contentDescription = title,
-                        modifier = Modifier.fillMaxWidth().heightIn(max = 82.dp),
-                        contentScale = ContentScale.Fit,
-                        alignment = Alignment.CenterStart,
-                        fallback = {
-                            Text(title, color = Color.White, fontSize = 25.sp, lineHeight = 29.sp, fontWeight = FontWeight.ExtraBold, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                        }
-                    )
-                } else {
-                    Text(title, color = Color.White, fontSize = 25.sp, lineHeight = 29.sp, fontWeight = FontWeight.ExtraBold, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                }
+            if (!logoUrl.isNullOrBlank()) {
+                ArtworkImage(logoUrl, contentDescription = meta?.title, modifier = Modifier.fillMaxWidth(.72f).heightIn(max = 88.dp), contentScale = ContentScale.Fit,
+                    fallback = { fallbackTitle() })
+            } else {
+                fallbackTitle()
             }
         }
     }
@@ -1202,9 +1182,30 @@ private fun rememberDownloadWorkInfo(app: GassPlayerApplication, workId: String?
     return result
 }
 
-private fun metadataGenres(meta: MetadataResult?, item: MediaItem): List<String> =
+private fun metadataGenres(meta: MetadataResult?, item: MediaItem, seed: XtreamDetailSeed? = null): List<String> =
     meta?.genres?.takeIf { it.isNotEmpty() }
+        ?: seed?.genres?.takeIf { it.isNotEmpty() }
         ?: item.genre?.split(',', ';', '|')?.map { it.trim() }?.filter { it.isNotBlank() }.orEmpty()
+
+/** Nomi del cast dichiarati dal catalogo ("Attore Uno, Attore Due"). */
+private fun MediaItem.castNameList(): List<String> =
+    cast?.split(',', ';')?.map { it.trim() }?.filter { it.isNotBlank() }.orEmpty()
+
+/** Cast testuale di riserva (TMDB, poi pannello Xtream, poi catalogo); con TMDB si usano le persone con foto. */
+private fun detailCastNames(meta: MetadataResult?, seed: XtreamDetailSeed?, item: MediaItem): List<String> =
+    meta?.cast?.takeIf { it.isNotEmpty() } ?: seed?.castNames?.takeIf { it.isNotEmpty() } ?: item.castNameList()
+
+/** Voto della scheda come MediaDetailLoader iOS: TMDB se > 0, altrimenti il voto del pannello Xtream. */
+private fun detailRating(meta: MetadataResult?, seed: XtreamDetailSeed?, item: MediaItem): Double? =
+    meta?.rating?.takeIf { it > 0 } ?: seed?.rating?.takeIf { it > 0 } ?: item.rating?.takeIf { it > 0 }
+
+/** Il titolo del catalogo completato con trama/backdrop di get_vod_info / get_series_info quando mancano. */
+private fun MediaItem.withDetailSeed(seed: XtreamDetailSeed?): MediaItem {
+    if (seed == null) return this
+    val seededPlot = seed.plot?.takeIf { it.isNotBlank() } ?: plot
+    val seededBackdrop = backdropUrl?.takeIf { it.isNotBlank() } ?: seed.backdropUrl?.takeIf { it.isNotBlank() }
+    return if (seededPlot == plot && seededBackdrop == backdropUrl) this else copy(plot = seededPlot, backdropUrl = seededBackdrop)
+}
 
 private fun formatRuntime(seconds: Long): String {
     val totalMinutes = seconds / 60
