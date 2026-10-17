@@ -39,6 +39,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
@@ -68,6 +69,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 internal const val TV_CATEGORY_ALL = "__tv_all__"
 internal const val TV_CATEGORY_FAVORITES = "__tv_favorites__"
@@ -117,7 +119,9 @@ internal fun TvCategoryRail(
     val currentOptions by rememberUpdatedState(options)
     val currentSelectedId by rememberUpdatedState(selectedId)
     val currentTarget by rememberUpdatedState(targetFocusRequester)
+    val currentOnMoveRight by rememberUpdatedState(onMoveRight)
     val currentContentVisible by rememberUpdatedState(width > collapsedWidth + 1.dp)
+    val railScope = rememberCoroutineScope()
 
     // Scrolls the lazy rail to the selected group (so its row, which owns the requester, is composed)
     // and focuses it. Waits for options that are still being built on Dispatchers.IO on a slow Stick.
@@ -212,9 +216,27 @@ internal fun TvCategoryRail(
                                     .then(if (item.id == targetFocusId) Modifier.focusRequester(targetFocusRequester) else Modifier)
                                     .onFocusChanged { focused = it.isFocused }
                                     .onPreviewKeyEvent { event ->
-                                        event.type == KeyEventType.KeyDown &&
-                                            event.key == Key.DirectionRight &&
-                                            onMoveRight?.invoke() == true
+                                        if (event.type != KeyEventType.KeyDown || event.key != Key.DirectionRight) {
+                                            false
+                                        } else {
+                                            val moveRight = currentOnMoveRight
+                                            if (moveRight == null) {
+                                                false
+                                            } else if (remoteFirstDevice && item.id != currentSelectedId) {
+                                                // Su TV, DESTRA dalla categoria equivale a confermare la riga
+                                                // corrente e poi entrare nei contenuti di quella categoria.
+                                                // Differiamo l'ingresso di un breve intervallo perché la pagina
+                                                // aggiorni filtro e lista prima di calcolare il focus di destinazione.
+                                                onSelect(item.id)
+                                                railScope.launch {
+                                                    delay(70L)
+                                                    currentOnMoveRight?.invoke()
+                                                }
+                                                true
+                                            } else {
+                                                moveRight.invoke()
+                                            }
+                                        }
                                     }
                                     .remoteFocusOutline(cornerRadius = 14.dp),
                                 shape = RoundedCornerShape(14.dp),
