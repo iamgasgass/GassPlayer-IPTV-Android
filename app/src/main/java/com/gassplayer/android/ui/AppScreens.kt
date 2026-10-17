@@ -664,24 +664,29 @@ private fun AdaptiveShell(
                             shape = RoundedCornerShape(if (customNavigation) 50.dp else 18.dp),
                             color = Color.Transparent
                         ) {
+                            val iconSize = if (tv) 25.dp else 22.dp
+                            val labelAreaHeight = if (tv) 32.dp else 30.dp
+                            val cardPadding = if (tv) 13.dp else 9.dp
+                            val cardHeight = labelAreaHeight + cardPadding + cardPadding
                             if (customNavigation) {
-                                // Match HomeActionChip: the same section icons and the same LiquidGlass pill.
-                                // When the rail expands, reveal every label; when it collapses, center the icon pill.
+                                // Custom mantiene la propria grafica LiquidGlass, ma da compatta usa
+                                // esattamente la stessa dimensione disponibile della pillola Default.
+                                // In quel caso l'icona viene centrata anche nell'area interna della pillola.
                                 LiquidGlassPill(
                                     modifier = if (railHasFocus) Modifier.fillMaxWidth()
-                                    else Modifier.wrapContentWidth(Alignment.CenterHorizontally)
+                                    else Modifier.size(cardHeight)
                                 ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(7.dp)
-                                    ) {
-                                        Icon(
-                                            navIcon(id),
-                                            contentDescription = label,
-                                            tint = Color(0xFF9ABEFF).readable(),
-                                            modifier = Modifier.size(17.dp)
-                                        )
-                                        if (railHasFocus) {
+                                    if (railHasFocus) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(7.dp)
+                                        ) {
+                                            Icon(
+                                                navIcon(id),
+                                                contentDescription = label,
+                                                tint = Color(0xFF9ABEFF).readable(),
+                                                modifier = Modifier.size(17.dp)
+                                            )
                                             Text(
                                                 label,
                                                 color = glassForeground(),
@@ -691,15 +696,20 @@ private fun AdaptiveShell(
                                                 overflow = TextOverflow.Clip
                                             )
                                         }
+                                    } else {
+                                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                navIcon(id),
+                                                contentDescription = label,
+                                                tint = Color(0xFF9ABEFF).readable(),
+                                                modifier = Modifier.size(17.dp)
+                                            )
+                                        }
                                     }
                                 }
                             } else {
                                 // Default conserva la sua pillola LiquidGlass; larghezza e visibilità
-                                // seguono la stessa dinamica di Custom, con icona a sinistra da espansa.
-                                val iconSize = if (tv) 25.dp else 22.dp
-                                val labelAreaHeight = if (tv) 32.dp else 30.dp
-                                val cardPadding = if (tv) 13.dp else 9.dp
-                                val cardHeight = labelAreaHeight + cardPadding + cardPadding
+                                // seguono la stessa dinamica di espansione, con icona a sinistra da espansa.
                                 // In compact mode the glass control is square (width == height),
                                 // with zero inner padding so the icon is centered in the whole pill.
                                 // The expanded state retains the original horizontal padding/layout.
