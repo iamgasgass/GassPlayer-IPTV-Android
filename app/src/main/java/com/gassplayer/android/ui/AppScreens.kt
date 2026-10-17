@@ -700,45 +700,65 @@ private fun AdaptiveShell(
                                 val labelAreaHeight = if (tv) 32.dp else 30.dp
                                 val cardPadding = if (tv) 13.dp else 9.dp
                                 val cardHeight = labelAreaHeight + cardPadding + cardPadding
-                                LiquidGlassSurface(
-                                    modifier = if (railHasFocus) {
-                                        Modifier.fillMaxWidth().height(cardHeight)
-                                    } else {
-                                        Modifier.wrapContentWidth(Alignment.CenterHorizontally).height(cardHeight)
-                                    },
-                                    cornerRadius = 18.dp,
-                                    contentPadding = cardPadding,
-                                    highlighted = selectedTab == id || focused,
-                                    suppressTopHighlight = true
+                                // In compact mode the glass control is square (width == height),
+                                // with zero inner padding so the icon is centered in the whole pill.
+                                // The expanded state retains the original horizontal padding/layout.
+                                val expanded = railHasFocus
+                                Box(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    contentAlignment = Alignment.Center
                                 ) {
-                                    Row(
-                                        modifier = if (railHasFocus) Modifier.fillMaxSize() else Modifier,
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(if (tv) 10.dp else 8.dp)
+                                    LiquidGlassSurface(
+                                        modifier = if (expanded) {
+                                            Modifier.fillMaxWidth().height(cardHeight)
+                                        } else {
+                                            Modifier.size(cardHeight)
+                                        },
+                                        cornerRadius = 18.dp,
+                                        contentPadding = if (expanded) cardPadding else 0.dp,
+                                        highlighted = selectedTab == id || focused,
+                                        suppressTopHighlight = true
                                     ) {
-                                        Box(Modifier.size(iconSize), contentAlignment = Alignment.Center) {
-                                            Icon(
-                                                navIcon(id),
-                                                contentDescription = label,
-                                                tint = if (selectedTab == id) Color(0xFF9ABEFF).readable() else glassForeground(.75f),
-                                                modifier = Modifier.size(iconSize)
-                                            )
-                                        }
-                                        // Come in Custom: quando la barra ha il focus vengono
-                                        // mostrati contemporaneamente i testi di tutte le sezioni.
-                                        if (railHasFocus) {
-                                            Text(
-                                                label,
-                                                color = if (selectedTab == id) glassForeground() else glassForeground(.72f),
-                                                fontSize = if (tv) 12.sp else 10.sp,
-                                                maxLines = 1,
-                                                softWrap = false,
-                                                overflow = TextOverflow.Clip,
-                                                textAlign = androidx.compose.ui.text.style.TextAlign.Start,
-                                                lineHeight = if (tv) 15.sp else 12.sp,
-                                                modifier = Modifier.weight(1f),
-                                                fontWeight = if (selectedTab == id) FontWeight.SemiBold else FontWeight.Normal
-                                            )
+                                        if (!expanded) {
+                                            Box(
+                                                modifier = Modifier.fillMaxSize(),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(
+                                                    navIcon(id),
+                                                    contentDescription = label,
+                                                    tint = if (selectedTab == id) Color(0xFF9ABEFF).readable() else glassForeground(.75f),
+                                                    modifier = Modifier.size(iconSize)
+                                                )
+                                            }
+                                        } else {
+                                            Row(
+                                                modifier = Modifier.fillMaxSize(),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(if (tv) 10.dp else 8.dp)
+                                            ) {
+                                                Box(Modifier.size(iconSize), contentAlignment = Alignment.Center) {
+                                                    Icon(
+                                                        navIcon(id),
+                                                        contentDescription = label,
+                                                        tint = if (selectedTab == id) Color(0xFF9ABEFF).readable() else glassForeground(.75f),
+                                                        modifier = Modifier.size(iconSize)
+                                                    )
+                                                }
+                                                // When the rail has focus, show all section labels together.
+                                                Text(
+                                                    label,
+                                                    color = if (selectedTab == id) glassForeground() else glassForeground(.72f),
+                                                    fontSize = if (tv) 12.sp else 10.sp,
+                                                    maxLines = 1,
+                                                    softWrap = false,
+                                                    overflow = TextOverflow.Clip,
+                                                    textAlign = androidx.compose.ui.text.style.TextAlign.Start,
+                                                    lineHeight = if (tv) 15.sp else 12.sp,
+                                                    modifier = Modifier.weight(1f),
+                                                    fontWeight = if (selectedTab == id) FontWeight.SemiBold else FontWeight.Normal
+                                                )
+                                            }
                                         }
                                     }
                                 }
