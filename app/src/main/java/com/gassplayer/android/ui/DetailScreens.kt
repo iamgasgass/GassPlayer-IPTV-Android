@@ -168,7 +168,11 @@ fun MovieDetailScreen(
         val omdbTitle = meta?.originalTitle?.takeIf { it.isNotBlank() } ?: meta?.title?.takeIf { it.isNotBlank() } ?: item.title
         coroutineScope {
             val omdb = async { runCatching { app.omdb.lookup(omdbTitle, settings.omdbApiKey, meta?.externalId) }.getOrNull() }
-            val trakt = async { runCatching { app.trakt.ratings(item.title, settings.traktClientId) }.getOrNull() }
+            val trakt = async {
+                runCatching {
+                    app.trakt.ratings(item.title, settings.traktClientId, imdbId = meta?.externalId, isSeries = false)
+                }.getOrNull()
+            }
             ratings = omdb.await()
             traktRating = trakt.await()
         }
@@ -201,7 +205,11 @@ fun MovieDetailScreen(
             meta = meta,
             listState = scrollState,
             rating = meta?.rating ?: item.rating,
-            secondary = listOfNotNull(meta?.year ?: item.year, item.durationSec?.takeIf { it > 0 }?.let(::formatRuntime)).joinToString(" · ").ifBlank { null },
+            secondary = listOfNotNull(
+                meta?.year ?: item.year,
+                (meta?.runtimeMinutes?.takeIf { it > 0 }?.let { formatRuntime(it.toLong() * 60L) }
+                    ?: item.durationSec?.takeIf { it > 0 }?.let(::formatRuntime))
+            ).joinToString(" · ").ifBlank { null },
             genres = metadataGenres(meta, item),
             overview = meta?.overview?.takeIf { it.isNotBlank() } ?: item.plot?.takeIf { it.isNotBlank() },
             loading = isLoadingDetail,
@@ -274,7 +282,11 @@ fun MovieDetailScreen(
                     Spacer(Modifier.height(2.dp))
                     MediaDetailMetaRow(
                         rating = meta?.rating ?: item.rating,
-                        secondary = listOfNotNull(item.year, item.durationSec?.takeIf { it > 0 }?.let(::formatRuntime)).joinToString(" · ").ifBlank { null },
+                        secondary = listOfNotNull(
+                            meta?.year ?: item.year,
+                            (meta?.runtimeMinutes?.takeIf { it > 0 }?.let { formatRuntime(it.toLong() * 60L) }
+                                ?: item.durationSec?.takeIf { it > 0 }?.let(::formatRuntime))
+                        ).joinToString(" · ").ifBlank { null },
                         genres = metadataGenres(meta, item)
                     )
                     Button(
@@ -439,6 +451,9 @@ fun SeriesDetailScreen(
     var loadingEpisodes by remember(series.id) { mutableStateOf(false) }
     var loadError by remember(series.id) { mutableStateOf<String?>(null) }
     var meta by remember(series.id) { mutableStateOf(initialMeta) }
+    var ratings by remember(series.id) { mutableStateOf<Ratings?>(null) }
+    var traktRating by remember(series.id) { mutableStateOf<Double?>(null) }
+    var isLoadingDetail by remember(series.id) { mutableStateOf(true) }
     var showAlternates by remember(series.id) { mutableStateOf(false) }
     var actionMessage by remember(series.id) { mutableStateOf<String?>(null) }
     var downloadWorkId by remember(series.id) { mutableStateOf<String?>(null) }
@@ -471,13 +486,38 @@ fun SeriesDetailScreen(
         loadingEpisodes = false
     }
 
-    LaunchedEffect(series.id, settings.tmdbApiKey) {
-        meta = (if (settings.tmdbApiKey.isBlank()) null else {
-            val direct = series.tmdbId?.takeIf { it.isNotBlank() }?.let { id -> runCatching { app.tmdb.details(id, settings.tmdbApiKey, true) }.getOrNull() }
-            direct ?: runCatching { app.tmdb.searchSeries(series.title, settings.tmdbApiKey).firstOrNull() }.getOrNull()?.let { found ->
-                runCatching { app.tmdb.details(found.id, settings.tmdbApiKey, true) }.getOrNull() ?: found
+    LaunchedEffect(series.id, settings.tmdbApiKey, settings.omdbApiKey, settings.traktClientId) {
+        isLoadingDetail = true
+        val fetched = if (settings.tmdbApiKey.isBlank()) null else {
+            val direct = series.tmdbId?.takeIf { it.isNotBlank() }?.let { id ->
+                runCatching { app.tmdb.details(id, settings.tmdbApiKey, true) }.getOrNull()
             }
-        }) ?: meta // keep the metadata already shown if the request fails
+            direct ?: runCatching { app.tmdb.searchSeries(series.title, settings.tmdbApiKey).firstOrNull() }
+                .getOrNull()?.let { found ->
+                    runCatching { app.tmdb.details(found.id, settings.tmdbApiKey, true) }.getOrNull() ?: found
+                }
+        }
+        // Mantiene i metadati iniziali (ad esempio dalle rail TMDB) se il recupero completo non riesce.
+        meta = fetched ?: meta
+        val resolvedMeta = fetched ?: meta
+        val omdbTitle = resolvedMeta?.originalTitle?.takeIf { it.isNotBlank() }
+            ?: resolvedMeta?.title?.takeIf { it.isNotBlank() }
+            ?: series.title
+        coroutineScope {
+            val omdb = async {
+                runCatching {
+                    app.omdb.lookup(omdbTitle, settings.omdbApiKey, resolvedMeta?.externalId)
+                }.getOrNull()
+            }
+            val trakt = async {
+                runCatching {
+                    app.trakt.ratings(series.title, settings.traktClientId, imdbId = resolvedMeta?.externalId, isSeries = true)
+                }.getOrNull()
+            }
+            ratings = omdb.await()
+            traktRating = trakt.await()
+        }
+        isLoadingDetail = false
     }
     LaunchedEffect(series.id) { fetchEpisodes() }
     LaunchedEffect(meta?.id, season, settings.tmdbApiKey) {
@@ -539,10 +579,14 @@ fun SeriesDetailScreen(
             meta = meta,
             listState = scrollState,
             rating = meta?.rating ?: series.rating,
-            secondary = listOfNotNull(meta?.year ?: series.year, seasons.size.takeIf { it > 0 }?.let { if (it == 1) "1 stagione" else "$it stagioni" }).joinToString(" · ").ifBlank { null },
+            secondary = listOfNotNull(
+                meta?.year ?: series.year,
+                meta?.runtimeMinutes?.takeIf { it > 0 }?.let { "${it} min/episodio" },
+                seasons.size.takeIf { it > 0 }?.let { if (it == 1) "1 stagione" else "$it stagioni" }
+            ).joinToString(" · ").ifBlank { null },
             genres = metadataGenres(meta, series),
             overview = meta?.overview?.takeIf { it.isNotBlank() } ?: series.plot?.takeIf { it.isNotBlank() },
-            loading = meta == null && loadingEpisodes,
+            loading = isLoadingDetail || (meta == null && loadingEpisodes),
             playLabel = when {
                 resumeEpisode != null && (allWatch[resumeEpisode.id]?.resumeFromMs() ?: 0L) > 0L ->
                     "Riprendi S${resumeEpisode.seasonNumber ?: 1} E${resumeEpisode.episodeNumber ?: 1}"
@@ -635,7 +679,7 @@ fun SeriesDetailScreen(
                     people = meta?.castMembers.orEmpty()
                 )
             }
-            item(key = "tv-series-ratings-${series.id}") { TvRatingsBlock(meta?.rating ?: series.rating, null, null) }
+            item(key = "tv-series-ratings-${series.id}") { TvRatingsBlock(meta?.rating ?: series.rating, ratings, traktRating) }
         }
     } else Box(Modifier.fillMaxSize()) {
         LazyColumn(
@@ -649,7 +693,11 @@ fun SeriesDetailScreen(
                 Column(Modifier.fillMaxWidth().padding(horizontal = 22.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     MediaDetailMetaRow(
                         rating = meta?.rating ?: series.rating,
-                        secondary = series.year,
+                        secondary = listOfNotNull(
+                            meta?.year ?: series.year,
+                            meta?.runtimeMinutes?.takeIf { it > 0 }?.let { "${it} min/episodio" },
+                            seasons.size.takeIf { it > 0 }?.let { if (it == 1) "1 stagione" else "$it stagioni" }
+                        ).joinToString(" · ").ifBlank { null },
                         genres = metadataGenres(meta, series)
                     )
                     Button(
@@ -712,11 +760,15 @@ fun SeriesDetailScreen(
                     }
                     actionMessage?.let { Text(it, color = DetailAccent, fontSize = 12.sp) }
                     val overview = meta?.overview?.takeIf { it.isNotBlank() } ?: series.plot?.takeIf { it.isNotBlank() }
-                    if (!overview.isNullOrBlank()) Text(overview, color = DetailText.copy(.92f), fontSize = 14.sp, lineHeight = 21.sp)
+                    if (!overview.isNullOrBlank()) {
+                        Text(overview, color = DetailText.copy(.92f), fontSize = 14.sp, lineHeight = 21.sp)
+                    } else if (isLoadingDetail) {
+                        LinearProgressIndicator(Modifier.fillMaxWidth(), color = DetailAccent, trackColor = glassForeground(.1f))
+                    }
                 }
             }
             item(key = "series-ratings-${series.id}") {
-                MediaDetailRatings(meta?.rating ?: series.rating, null, null, Modifier.padding(top = 22.dp))
+                MediaDetailRatings(meta?.rating ?: series.rating, ratings, traktRating, Modifier.padding(top = 22.dp))
             }
             item(key = "series-cast-${series.id}") {
                 MediaDetailCast(
@@ -805,34 +857,65 @@ private fun MediaDetailHero(item: MediaItem, meta: MetadataResult?, height: andr
     val screenBackground = gassPageBase()
     val light = isGassLight()
     Box(Modifier.fillMaxWidth().height(height).background(Color.Black)) {
-        val image = meta?.backdropUrl ?: item.backdropUrl ?: item.posterUrl
-        if (!image.isNullOrBlank()) ArtworkImage(image, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-        // SwiftUI uses a short fade at the bottom of the edge-to-edge hero, not a full-image dark veil.
+        val backdrop = meta?.backdropUrl ?: item.backdropUrl ?: item.posterUrl
+        if (!backdrop.isNullOrBlank()) ArtworkImage(backdrop, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+        // Gradiente scuro sul fondo per mantenere leggibili sia il poster sia il logo/titolo.
         Box(
-            Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(160.dp).background(
-                if (light) Brush.verticalGradient(0f to Color.Transparent, .45f to Color.Black.copy(.55f), .70f to Color.Black.copy(.35f), 1f to screenBackground)
-                else Brush.verticalGradient(listOf(Color.Transparent, screenBackground.copy(.4f), screenBackground.copy(.9f), screenBackground))
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(190.dp).background(
+                if (light) Brush.verticalGradient(0f to Color.Transparent, .30f to Color.Black.copy(.52f), .70f to Color.Black.copy(.68f), 1f to screenBackground)
+                else Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(.30f), screenBackground.copy(.92f), screenBackground))
             )
         )
-        Column(
-            Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = if (light) 58.dp else 14.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(4.dp)
+        Row(
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                .padding(horizontal = 22.dp)
+                .padding(bottom = if (light) 58.dp else 18.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.Bottom
         ) {
-            val logoUrl = meta?.logoUrl
-            if (!logoUrl.isNullOrBlank()) {
-                ArtworkImage(logoUrl, contentDescription = meta?.title, modifier = Modifier.fillMaxWidth(.72f).heightIn(max = 88.dp), contentScale = ContentScale.Fit)
-            } else {
-                Text(
-                    meta?.title?.takeIf { it.isNotBlank() } ?: item.title,
-                    color = Color.White,
-                    fontSize = 32.sp,
-                    lineHeight = 36.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                )
+            val poster = meta?.posterUrl ?: item.posterUrl
+            Box(
+                Modifier.width(82.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(9.dp))
+                    .background(Brush.linearGradient(listOf(Color(0xFF292929), Color(0xFF0C0C0C))))
+                    .border(BorderStroke(.7.dp, Color.White.copy(.24f)), RoundedCornerShape(9.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                if (!poster.isNullOrBlank()) {
+                    ArtworkImage(
+                        poster,
+                        contentDescription = "Poster ${meta?.title?.takeIf { it.isNotBlank() } ?: item.title}",
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop,
+                        fallback = {
+                            ArtworkImage(backdrop, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop,
+                                fallback = { Text(item.title.take(1).uppercase(), color = Color.White.copy(.78f), fontSize = 32.sp, fontWeight = FontWeight.Bold) })
+                        }
+                    )
+                } else {
+                    Text((meta?.title?.takeIf { it.isNotBlank() } ?: item.title).take(1).uppercase(), color = Color.White.copy(.78f), fontSize = 32.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+            Column(
+                Modifier.weight(1f).padding(bottom = 2.dp),
+                horizontalAlignment = Alignment.Start,
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                val title = meta?.title?.takeIf { it.isNotBlank() } ?: item.title
+                val logoUrl = meta?.logoUrl
+                if (!logoUrl.isNullOrBlank()) {
+                    ArtworkImage(
+                        logoUrl,
+                        contentDescription = title,
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 82.dp),
+                        contentScale = ContentScale.Fit,
+                        alignment = Alignment.CenterStart,
+                        fallback = {
+                            Text(title, color = Color.White, fontSize = 25.sp, lineHeight = 29.sp, fontWeight = FontWeight.ExtraBold, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                        }
+                    )
+                } else {
+                    Text(title, color = Color.White, fontSize = 25.sp, lineHeight = 29.sp, fontWeight = FontWeight.ExtraBold, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                }
             }
         }
     }

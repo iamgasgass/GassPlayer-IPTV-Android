@@ -155,6 +155,8 @@ class TmdbService(private val api: NetworkApi) {
             id = id,
             title = stringOrNull("title") ?: stringOrNull("name") ?: "",
             year = (stringOrNull("release_date") ?: stringOrNull("first_air_date"))?.take(4)?.takeIf { y -> y.length == 4 && y.all { it.isDigit() } },
+            runtimeMinutes = this["runtime"]?.jsonPrimitive?.intOrNull
+                ?: this["episode_run_time"]?.jsonArray?.firstNotNullOfOrNull { it.jsonPrimitive.intOrNull },
             rating = doubleOrNull("vote_average"),
             posterUrl = stringOrNull("poster_path")?.let { "https://image.tmdb.org/t/p/w780$it" },
             backdropUrl = stringOrNull("backdrop_path")?.let { "https://image.tmdb.org/t/p/w1280$it" },
@@ -197,7 +199,27 @@ class OpenSubtitlesService(private val api: NetworkApi) {
 }
 
 class TraktService(private val api: NetworkApi) {
-    suspend fun ratings(title: String, clientId: String): Double? = withContext(Dispatchers.IO) { if (clientId.isBlank()) return@withContext null; val o = api.getJson("https://api.trakt.tv/search/movie?query=${URLEncoder.encode(title, "UTF-8")}&limit=1", mapOf("trakt-api-version" to "2", "trakt-api-key" to clientId)).jsonArray.firstOrNull()?.jsonObject ?: return@withContext null; o["score"]?.jsonPrimitive?.doubleOrNull?.times(10) }
+    /** Voto community Trakt, come in iOS: usa l'IMDb ID TMDB/OMDb quando disponibile e l'endpoint ratings pubblico. */
+    suspend fun ratings(title: String, clientId: String, imdbId: String? = null, isSeries: Boolean = false): Double? = withContext(Dispatchers.IO) {
+        if (clientId.isBlank()) return@withContext null
+        val headers = mapOf("trakt-api-version" to "2", "trakt-api-key" to clientId)
+        val mediaPath = if (isSeries) "shows" else "movies"
+        val exactImdbId = imdbId?.trim()?.takeIf { it.startsWith("tt", ignoreCase = true) }
+            ?: runCatching {
+                val searchPath = if (isSeries) "show" else "movie"
+                val results = api.getJson(
+                    "https://api.trakt.tv/search/$searchPath?query=${URLEncoder.encode(title, "UTF-8")}&limit=1",
+                    headers
+                ).jsonArray
+                val result = results.firstOrNull()?.jsonObject ?: return@runCatching null
+                val mediaKey = if (isSeries) "show" else "movie"
+                result[mediaKey]?.jsonObject?.get("ids")?.jsonObject?.get("imdb")?.jsonPrimitive?.contentOrNull
+                    ?.takeIf { it.startsWith("tt", ignoreCase = true) }
+            }.getOrNull()
+            ?: return@withContext null
+        val response = api.getJson("https://api.trakt.tv/$mediaPath/${URLEncoder.encode(exactImdbId, "UTF-8")}/ratings", headers)
+        response.jsonObject["rating"]?.jsonPrimitive?.doubleOrNull?.times(10)
+    }
     suspend fun deviceCode(clientId: String, clientSecret: String): TraktDeviceCode? = withContext(Dispatchers.IO) { if (clientId.isBlank() || clientSecret.isBlank()) return@withContext null; val o = api.postJson("https://trakt.tv/oauth/device/code", JsonStore.json.encodeToString(kotlinx.serialization.json.buildJsonObject { put("client_id", clientId); }), mapOf("Content-Type" to "application/json")); TraktDeviceCode(o.jsonObject["device_code"]?.jsonPrimitive?.contentOrNull.orEmpty(), o.jsonObject["user_code"]?.jsonPrimitive?.contentOrNull.orEmpty(), o.jsonObject["verification_url"]?.jsonPrimitive?.contentOrNull.orEmpty(), o.jsonObject["expires_in"]?.jsonPrimitive?.intOrNull ?: 600) }
     suspend fun pollDevice(clientId: String, clientSecret: String, deviceCode: String): TraktAccount? = withContext(Dispatchers.IO) { if (clientId.isBlank() || clientSecret.isBlank() || deviceCode.isBlank()) return@withContext null; val o = api.postJson("https://trakt.tv/oauth/device/token", JsonStore.json.encodeToString(buildJsonObject { put("code", deviceCode); put("client_id", clientId); put("client_secret", clientSecret) })); val access=o.jsonObject["access_token"]?.jsonPrimitive?.contentOrNull ?: return@withContext null; TraktAccount(access, o.jsonObject["refresh_token"]?.jsonPrimitive?.contentOrNull.orEmpty(), "") }
     suspend fun scrobbleStart(account: TraktAccount, clientId: String, item: MediaItem, progress: Double) { scrobble("start", account, clientId, item, progress) }
@@ -221,6 +243,8 @@ data class MetadataResult(
     val logoUrl: String? = null,
     /** Release / first-air year from TMDB, used to match trending titles to the playlist accurately. */
     val year: String? = null,
+    /** Runtime dei film o durata tipica degli episodi per le serie, in minuti. */
+    val runtimeMinutes: Int? = null,
     /** Locandina verticale senza testo (Home "In evidenza"); null se TMDB non la ha. */
     val textlessPosterUrl: String? = null,
     /** Immagine orizzontale senza testo (Home "In evidenza" su schermi larghi). */
