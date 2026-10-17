@@ -1253,14 +1253,34 @@ private fun TvMediaDetailLayoutContent(
                                 logoUrl, contentDescription = title,
                                 modifier = Modifier.widthIn(max = 380.dp).heightIn(max = 92.dp),
                                 contentScale = ContentScale.Fit,
-                                alignment = Alignment.CenterStart
+                                alignment = Alignment.CenterStart,
+                                // Come nella scheda mobile iOS: se il logo TMDB esiste ma non si scarica,
+                                // il titolo resta visibile invece di lasciare vuoto il blocco hero.
+                                fallback = {
+                                    Text(
+                                        title,
+                                        color = Color.White,
+                                        fontSize = 34.sp,
+                                        lineHeight = 38.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
                             )
                         } else {
                             Text(title, color = Color.White, fontSize = 34.sp, lineHeight = 38.sp, fontWeight = FontWeight.ExtraBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         }
                         TvDetailMetaLine(rating = rating, secondary = secondary, genres = genres)
                         if (!overview.isNullOrBlank()) {
-                            Text(overview, color = DetailText.copy(.9f), fontSize = 15.sp, lineHeight = 22.sp, maxLines = 5, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 640.dp))
+                            // Mostra tutta la trama TMDB/Xtream come nella scheda mobile, senza troncarla a 5 righe.
+                            Text(
+                                overview,
+                                color = DetailText.copy(.9f),
+                                fontSize = 15.sp,
+                                lineHeight = 22.sp,
+                                modifier = Modifier.widthIn(max = 640.dp)
+                            )
                         } else if (loading) {
                             LinearProgressIndicator(Modifier.width(260.dp), color = DetailAccent, trackColor = Color.White.copy(.1f))
                         }
