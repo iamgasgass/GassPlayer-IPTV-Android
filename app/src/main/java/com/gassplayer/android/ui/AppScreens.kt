@@ -346,12 +346,12 @@ private fun AdaptiveShell(
     var shellHasFocus by remember { mutableStateOf(true) }
     var railHasFocus by remember { mutableStateOf(false) }
     val customNavigation = uiSectionsStyle == "custom"
+    // Default conserva il proprio stile delle pillole, ma usa la stessa identica
+    // dinamica di espansione di Custom: rail compatto senza focus, largo con focus.
     val railWidth by animateDpAsState(
-        targetValue = when {
-            !customNavigation -> if (tv) 142.dp else 104.dp
-            railHasFocus -> if (tv) 168.dp else 156.dp
-            else -> 66.dp
-        },
+        targetValue = if (railHasFocus) {
+            if (tv) 168.dp else 156.dp
+        } else 66.dp,
         animationSpec = tween(durationMillis = 220),
         label = "navigation-rail-width"
     )
@@ -694,21 +694,25 @@ private fun AdaptiveShell(
                                     }
                                 }
                             } else {
-                                // Default: icona sempre ancorata a sinistra e testo a destra,
-                                // con la stessa geometria per ogni destinazione della barra.
+                                // Default conserva la sua pillola LiquidGlass; larghezza e visibilità
+                                // seguono la stessa dinamica di Custom, con icona a sinistra da espansa.
                                 val iconSize = if (tv) 25.dp else 22.dp
                                 val labelAreaHeight = if (tv) 32.dp else 30.dp
                                 val cardPadding = if (tv) 13.dp else 9.dp
                                 val cardHeight = labelAreaHeight + cardPadding + cardPadding
                                 LiquidGlassSurface(
-                                    modifier = Modifier.fillMaxWidth().height(cardHeight),
+                                    modifier = if (railHasFocus) {
+                                        Modifier.fillMaxWidth().height(cardHeight)
+                                    } else {
+                                        Modifier.wrapContentWidth(Alignment.CenterHorizontally).height(cardHeight)
+                                    },
                                     cornerRadius = 18.dp,
                                     contentPadding = cardPadding,
                                     highlighted = selectedTab == id || focused,
                                     suppressTopHighlight = true
                                 ) {
                                     Row(
-                                        modifier = Modifier.fillMaxSize(),
+                                        modifier = if (railHasFocus) Modifier.fillMaxSize() else Modifier,
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(if (tv) 10.dp else 8.dp)
                                     ) {
@@ -720,17 +724,22 @@ private fun AdaptiveShell(
                                                 modifier = Modifier.size(iconSize)
                                             )
                                         }
-                                        Text(
-                                            label,
-                                            color = if (selectedTab == id) glassForeground() else glassForeground(.72f),
-                                            fontSize = if (tv) 12.sp else 10.sp,
-                                            maxLines = 2,
-                                            overflow = TextOverflow.Ellipsis,
-                                            textAlign = androidx.compose.ui.text.style.TextAlign.Start,
-                                            lineHeight = if (tv) 15.sp else 12.sp,
-                                            modifier = Modifier.weight(1f),
-                                            fontWeight = if (selectedTab == id) FontWeight.SemiBold else FontWeight.Normal
-                                        )
+                                        // Come in Custom: quando la barra ha il focus vengono
+                                        // mostrati contemporaneamente i testi di tutte le sezioni.
+                                        if (railHasFocus) {
+                                            Text(
+                                                label,
+                                                color = if (selectedTab == id) glassForeground() else glassForeground(.72f),
+                                                fontSize = if (tv) 12.sp else 10.sp,
+                                                maxLines = 1,
+                                                softWrap = false,
+                                                overflow = TextOverflow.Clip,
+                                                textAlign = androidx.compose.ui.text.style.TextAlign.Start,
+                                                lineHeight = if (tv) 15.sp else 12.sp,
+                                                modifier = Modifier.weight(1f),
+                                                fontWeight = if (selectedTab == id) FontWeight.SemiBold else FontWeight.Normal
+                                            )
+                                        }
                                     }
                                 }
                             }

@@ -1393,8 +1393,11 @@ private fun EpgProgramTile(
     val measuredBadgePx = remember(textMeasurer, quality, badgeStyle) {
         quality?.let { textMeasurer.measure(AnnotatedString(it), style = badgeStyle, maxLines = 1).size.width } ?: 0
     }
+    // Nell'EPG compatto il badge include 5 dp per lato e il bordo da 1 dp.
+    // Contiamo anche i 6 dp tra nome e badge, altrimenti l'orario può invadere
+    // il bordo destro del badge di qualche dp.
     val labelWidth = with(LocalDensity.current) { measuredNamePx.toDp() } +
-        (if (quality != null) with(LocalDensity.current) { measuredBadgePx.toDp() } + 10.dp else 0.dp)
+        (if (quality != null) 6.dp + with(LocalDensity.current) { measuredBadgePx.toDp() } + 12.dp else 0.dp)
     val finalTimeX = labelWidth + 6.dp
     val timeOffset = when {
         pinnedNameX < 0.dp && keepsNaturalCurrentPosition -> finalTimeX
