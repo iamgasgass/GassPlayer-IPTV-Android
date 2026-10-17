@@ -345,16 +345,29 @@ private fun AdaptiveShell(
     val selectedTab = navigationRailDestination(route)
     var shellHasFocus by remember { mutableStateOf(true) }
     var railHasFocus by remember { mutableStateOf(false) }
+    // Sui telefoni il tocco non assegna sempre il focus Compose come fa il D-pad su TV.
+    // Mantiene l'espansione mentre si interagisce con la rail e la richiude al primo
+    // tocco nell'area dei contenuti; focus da tastiera/telecomando resta prioritario.
+    var mobileRailTouchOverride by remember { mutableStateOf<Boolean?>(null) }
     val customNavigation = uiSectionsStyle == "custom"
-    // Default conserva il proprio stile delle pillole, ma usa la stessa identica
-    // dinamica di espansione di Custom: rail compatto senza focus, largo con focus.
+    val railExpanded = if (!tv && mobileRailTouchOverride != null) {
+        mobileRailTouchOverride == true
+    } else {
+        railHasFocus
+    }
+    // Default e Custom condividono la stessa espansione: focus sulla rail = larga,
+    // focus/tocco nei contenuti = compatta. Su telefono si attiva anche col tocco.
     val railWidth by animateDpAsState(
-        targetValue = if (railHasFocus) {
+        targetValue = if (railExpanded) {
             if (tv) 168.dp else 156.dp
         } else 66.dp,
         animationSpec = tween(durationMillis = 220),
         label = "navigation-rail-width"
     )
+    val currentRailWidth by rememberUpdatedState(railWidth)
+    LaunchedEffect(tv, allowNavReturnFocus, playerActive) {
+        if (tv || !allowNavReturnFocus || playerActive) mobileRailTouchOverride = null
+    }
     val navFocusRequesters = remember {
         destinations.associate { (id, _) -> id to FocusRequester() }
     }
@@ -598,6 +611,20 @@ private fun AdaptiveShell(
     LiquidGlassBackdrop(Modifier.fillMaxSize()) {
         Row(
             Modifier.fillMaxSize()
+                .pointerInput(tv, allowNavReturnFocus, playerActive) {
+                    if (!tv && allowNavReturnFocus && !playerActive) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val event = awaitPointerEvent(PointerEventPass.Initial)
+                                val down = event.changes.firstOrNull { it.pressed && !it.previousPressed }
+                                if (down != null) {
+                                    // Coordinate locali alla shell: la rail occupa il lato sinistro.
+                                    mobileRailTouchOverride = down.position.x < currentRailWidth.toPx()
+                                }
+                            }
+                        }
+                    }
+                }
                 .onPreviewKeyEvent { event ->
                     // Runs before any child handler: a new key press cancels a pending automatic focus
                     // move first; a side-navigation OK/RIGHT then starts its own entry.
@@ -632,7 +659,14 @@ private fun AdaptiveShell(
                                 ) FocusRequester.Cancel else FocusRequester.Default
                             }
                         }
-                        .onFocusChanged { railHasFocus = it.hasFocus }
+                        .onFocusChanged {
+                            railHasFocus = it.hasFocus
+                            // Su telefono, non cancellare l'override compatto quando il focus esce
+                            // dalla sidebar: un tocco sulle rail dei contenuti deve mantenere
+                            // visibili soltanto le icone. Quando il focus rientra nella sidebar,
+                            // torna invece a comandare il normale comportamento dinamico.
+                            if (it.hasFocus) mobileRailTouchOverride = null
+                        }
                         .focusGroup().verticalScroll(railScrollState).padding(vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(7.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
@@ -673,10 +707,10 @@ private fun AdaptiveShell(
                                 // esattamente la stessa dimensione disponibile della pillola Default.
                                 // In quel caso l'icona viene centrata anche nell'area interna della pillola.
                                 LiquidGlassPill(
-                                    modifier = if (railHasFocus) Modifier.fillMaxWidth()
+                                    modifier = if (railExpanded) Modifier.fillMaxWidth()
                                     else Modifier.size(cardHeight)
                                 ) {
-                                    if (railHasFocus) {
+                                    if (railExpanded) {
                                         Row(
                                             verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.spacedBy(7.dp)
@@ -713,7 +747,7 @@ private fun AdaptiveShell(
                                 // In compact mode the glass control is square (width == height),
                                 // with zero inner padding so the icon is centered in the whole pill.
                                 // The expanded state retains the original horizontal padding/layout.
-                                val expanded = railHasFocus
+                                val expanded = railExpanded
                                 Box(
                                     modifier = Modifier.fillMaxWidth(),
                                     contentAlignment = Alignment.Center
