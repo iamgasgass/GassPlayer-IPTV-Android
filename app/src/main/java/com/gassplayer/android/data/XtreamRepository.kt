@@ -329,7 +329,9 @@ class XtreamRepository(private val api: NetworkApi) {
 
     fun streamUrl(creds: XtreamCredentials, id: String, kind: MediaKind, extension: String = "ts"): String {
         val base = serverBase(creds.host)
-        val u = enc(creds.username); val p = enc(creds.password)
+        // Segmenti di percorso: spazio = %20 (come iOS `appendingPathComponent`), non "+" che il server leggerebbe
+        // come un "+" letterale (password con spazi rifiutate).
+        val u = encPath(creds.username); val p = encPath(creds.password)
         val cleanId = id.trim()
         val safeExt = extension.trim().trimStart('.').ifBlank { if (kind == MediaKind.LIVE) "ts" else "mp4" }
         return when (kind) {
@@ -387,6 +389,7 @@ class XtreamRepository(private val api: NetworkApi) {
     }
 
     private fun enc(v: String) = URLEncoder.encode(v, "UTF-8")
+    private fun encPath(v: String) = URLEncoder.encode(v, "UTF-8").replace("+", "%20")
 
     private fun JsonObject.toLiveOrNull(source: MediaSourceConfig, creds: XtreamCredentials): MediaItem? {
         val sid = stringOrNull("stream_id") ?: stringOrNull("id") ?: return null

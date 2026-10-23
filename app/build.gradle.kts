@@ -31,6 +31,8 @@ android {
         }
     }
     packaging.resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
+    // libVLC e i decoder FFmpeg portano librerie native: se piu' AAR includono lo stesso runtime C++ se ne tiene uno.
+    packaging.jniLibs.pickFirsts += "**/libc++_shared.so"
     buildTypes {
         getByName("release") {
             isMinifyEnabled = true
@@ -65,6 +67,12 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer-smoothstreaming:1.11.1")
     implementation("androidx.media3:media3-ui:1.11.1")
     implementation("androidx.media3:media3-session:1.11.1")
+    // Decoder FFmpeg per Media3 (stessa versione 1.11.1): audio AC3/E-AC3/DTS/TrueHD/MP2/FLAC/Opus/ALAC e video
+    // H.264/HEVC/MPEG-2/VP8/VP9/AV1 in software quando il dispositivo non ha il decoder (iOS: KSPlayer/FFmpeg).
+    implementation("io.github.anilbeesetti:nextlib-media3ext:1.11.1-0.16.0")
+    // Secondo motore (libVLC 3.x, FFmpeg + live555): RTMP/MMS/RTP/SRT/UDP, AVI/DivX/Xvid, WMV/ASF/VC-1, RealMedia
+    // e qualunque flusso che ExoPlayer non riesce a decodificare.
+    implementation("org.videolan.android:libvlc-all:3.6.5")
     implementation("androidx.work:work-runtime-ktx:2.12.0")
     implementation("androidx.datastore:datastore-preferences:1.2.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")

@@ -25,4 +25,13 @@ class XtreamUrlTest {
         assertEquals("http://provider.test:8080/movie/u/p/33.mp4", method.invoke(repo, c, "33", MediaKind.MOVIE, "mp4"))
         assertEquals("http://provider.test:8080/series/u/p/44.mp4", method.invoke(repo, c, "44", MediaKind.EPISODE, "mp4"))
     }
+
+    @Test fun encodesSpacesInCredentialsAsPathSegments() {
+        val repo = XtreamRepository(NetworkApi())
+        val c = XtreamCredentials("http://provider.test:8080", "mario rossi", "a+b c")
+        val method = repo::class.java.getDeclaredMethod("streamUrl", XtreamCredentials::class.java, String::class.java, MediaKind::class.java, String::class.java)
+        method.isAccessible = true
+        // Come iOS (appendingPathComponent): spazio = %20, "+" letterale = %2B.
+        assertEquals("http://provider.test:8080/live/mario%20rossi/a%2Bb%20c/7.ts", method.invoke(repo, c, "7", MediaKind.LIVE, "ts"))
+    }
 }

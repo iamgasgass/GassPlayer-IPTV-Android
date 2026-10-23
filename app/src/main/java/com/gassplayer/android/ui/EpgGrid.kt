@@ -215,6 +215,12 @@ internal fun EpgGridScreen(
     val previewHttpFactory = remember(context) { DefaultHttpDataSource.Factory().setUserAgent(app.network.userAgent) }
     val previewPlayer = remember(context, tvCategoryMode) {
         if (!tvCategoryMode) null else ExoPlayer.Builder(context)
+            // Decoder FFmpeg di riserva anche per l'anteprima dei canali (audio/video che il dispositivo non decodifica).
+            .setRenderersFactory(
+                io.github.anilbeesetti.nextlib.media3ext.ffdecoder.NextRenderersFactory(context)
+                    .setExtensionRendererMode(androidx.media3.exoplayer.DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
+                    .setEnableDecoderFallback(true)
+            )
             .setMediaSourceFactory(DefaultMediaSourceFactory(context).setDataSourceFactory(previewHttpFactory))
             .build().apply { volume = 0f }
     }

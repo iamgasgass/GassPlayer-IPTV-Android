@@ -42,6 +42,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.NextRenderersFactory
 import okhttp3.ConnectionSpec
 import okhttp3.OkHttpClient
 import java.io.File
@@ -131,8 +132,27 @@ class PlaybackController(
     /** Movies/episodes get longer timeouts (the server often has to seek the file first), like iOS (30 s vs 15 s). */
     @Volatile private var vodMode = false
 
-    val player: ExoPlayer
-        get() = ensurePlayer()
+    // --- Secondo motore (libVLC), come il doppio motore di iOS (FFmpeg + AVFoundation) ---
+    private enum class Engine { EXO, VLC }
+    private var engine = Engine.EXO
+    private var vlcInstance: VlcPlayer? = null
+    private var vlcUnavailable = false
+    /** VLC gia' provato per il contenuto attuale (non si rimbalza all'infinito fra i due motori). */
+    private var vlcTriedForItem = false
+    /** Riaperture di VLC dopo un'interruzione a flusso gia' avviato (Live TV, rete instabile). */
+    private var vlcRestarts = 0
+    /** ExoPlayer gia' provato per il contenuto attuale. */
+    private var exoTriedForItem = false
+
+    /**
+     * Il motore attivo, come [Player] di Media3: ExoPlayer (con decoder FFmpeg di riserva) oppure libVLC.
+     * La schermata del player si ricollega da sola quando cambia ([playerEpoch]).
+     */
+    val player: Player
+        get() = if (engine == Engine.VLC) (vlcInstance ?: ensurePlayer()) else ensurePlayer()
+
+    /** true mentre il contenuto e' riprodotto da libVLC. */
+    val isUsingVlc: Boolean get() = engine == Engine.VLC && vlcInstance != null
 
     private val _current = MutableStateFlow<MediaItem?>(null)
     val current: StateFlow<MediaItem?> = _current
@@ -181,6 +201,17 @@ class PlaybackController(
                 previous.videoDelayMs != value.videoDelayMs ||
                 previous.customUserAgent != value.customUserAgent
 
+            if (engine == Engine.VLC && currentItem != null && rebuildRequired) {
+                // Contenuto su VLC: ExoPlayer verra' ricreato con le nuove impostazioni al prossimo uso; VLC si riapre
+                // dalla posizione attuale (decodifica hardware/software e User-Agent aggiornati).
+                releasePlayerOnly()
+                val position = (vlcInstance?.currentPosition ?: 0L).coerceAtLeast(0L)
+                requestedAutoplay = vlcInstance?.playWhenReady ?: requestedAutoplay
+                startVlc(position, "impostazioni di riproduzione aggiornate")
+                // La schermata attende una nuova istanza per rimontare la superficie video.
+                _playerEpoch.value++
+                return@launch
+            }
             val existing = playerInstance
             val activeItem = currentItem
             if (existing != null && activeItem != null && rebuildRequired) {
@@ -220,6 +251,14 @@ class PlaybackController(
         loadGeneration++
         if (forceSoftware) { forceSoftware = false; releasePlayerOnly() } // new item: back to the user's decoder choice
         stopCurrentForNewItem()
+        vlcTriedForItem = false
+        exoTriedForItem = false
+        vlcRestarts = 0
+        if (engine == Engine.VLC) {
+            // Nuovo contenuto: si riparte da ExoPlayer (VLC solo se serve), la schermata si ricollega.
+            engine = Engine.EXO
+            _playerEpoch.value++
+        }
         _error.value = null
         _current.value = item
         currentItem = item
@@ -318,6 +357,8 @@ class PlaybackController(
     fun previewPlayer(): ExoPlayer? {
         val item = currentItem ?: return null
         if (item.kind == MediaKind.LIVE) return null
+        // Contenuto su VLC: ExoPlayer non sa leggerlo e aprirebbe solo una connessione in piu' verso il provider.
+        if (isUsingVlc) return null
         val url = urlCandidates.getOrElse(urlIndex) { item.streamUrl }.takeIf { it.isNotBlank() } ?: return null
         previewPlayerInstance?.let { existing ->
             if (previewPlayerUrl == url) return existing
@@ -392,7 +433,8 @@ class PlaybackController(
      * basta all'anteprima e non disturba mai il video principale. Se manca, ripiego sull'hardware.
      */
     private fun previewRenderersFactory(): androidx.media3.exoplayer.DefaultRenderersFactory =
-        androidx.media3.exoplayer.DefaultRenderersFactory(context)
+        NextRenderersFactory(context)
+            .setExtensionRendererMode(androidx.media3.exoplayer.DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
             .setEnableDecoderFallback(true)
             .setMediaCodecSelector(androidx.media3.exoplayer.mediacodec.MediaCodecSelector { mime, secure, tunneling ->
                 androidx.media3.exoplayer.mediacodec.MediaCodecSelector.DEFAULT
@@ -433,6 +475,15 @@ class PlaybackController(
     }
 
     fun selectTrack(group: Tracks.Group, trackIndex: Int) {
+        if (isUsingVlc) {
+            // VLC: una sola traccia video; audio/sottotitoli scelti dal loro identificativo.
+            val id = group.getTrackFormat(trackIndex).id.orEmpty()
+            when {
+                id.startsWith("vlc:a:") -> vlcInstance?.selectAudioToken(id)
+                id.startsWith("vlc:s:") -> vlcInstance?.selectSubtitle(id)
+            }
+            return
+        }
         trackSelector.parameters = trackSelector.buildUponParameters()
             .addOverride(
                 TrackSelectionOverride(group.mediaTrackGroup, listOf(trackIndex))
@@ -441,6 +492,7 @@ class PlaybackController(
     }
 
     fun selectAudio(language: String?) {
+        if (isUsingVlc) { vlcInstance?.selectAudioLanguage(language); return }
         trackSelector.parameters = trackSelector.buildUponParameters()
             .setPreferredAudioLanguage(language?.takeIf { it.isNotBlank() })
             .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false)
@@ -448,6 +500,7 @@ class PlaybackController(
     }
 
     fun selectSubtitle(language: String?) {
+        if (isUsingVlc) { vlcInstance?.selectSubtitle(language); return }
         trackSelector.parameters = trackSelector.buildUponParameters()
             .setPreferredTextLanguage(language?.takeIf { it.isNotBlank() })
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, language.isNullOrBlank())
@@ -455,13 +508,14 @@ class PlaybackController(
     }
 
     fun setSubtitleEnabled(enabled: Boolean) {
+        if (isUsingVlc) { vlcInstance?.setSubtitlesEnabled(enabled); return }
         trackSelector.parameters = trackSelector.buildUponParameters()
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !enabled)
             .build()
     }
 
     fun setAccurateSeek(enabled: Boolean) {
-        player.setSeekParameters(if (enabled) SeekParameters.EXACT else SeekParameters.CLOSEST_SYNC)
+        playerInstance?.setSeekParameters(if (enabled) SeekParameters.EXACT else SeekParameters.CLOSEST_SYNC)
     }
 
     fun startSleepTimer(minutes: Int) {
@@ -499,6 +553,8 @@ class PlaybackController(
         sleepTimerAt = null
         _sleepRemainingMinutes.value = null
         playerInstance?.stop()
+        vlcInstance?.stopPlayback()
+        engine = Engine.EXO
         releasePreviewPlayer()
         _current.value = null
         currentItem = null
@@ -515,6 +571,9 @@ class PlaybackController(
         _current.value = null
         currentItem = null
         releasePlayerOnly()
+        vlcInstance?.release()
+        vlcInstance = null
+        engine = Engine.EXO
     }
 
     fun handoffExternal(context: Context, url: String): Boolean {
@@ -568,9 +627,23 @@ class PlaybackController(
 
                     override fun onTracksChanged(tracks: Tracks) {
                         enforceSubtitlePolicy(tracks)
+                        unsupportedTracksReason(tracks)?.let { reason ->
+                            // ExoPlayer apre il flusso ma non sa decodificare il video o l'audio (nessun errore:
+                            // immagine nera o muto). VLC/FFmpeg come su iOS.
+                            val position = playerInstance?.currentPosition?.coerceAtLeast(0L) ?: lastStartPosition
+                            scope.launch { if (engine == Engine.EXO && !vlcTriedForItem && currentItem != null) startVlc(position, reason) }
+                        }
                     }
 
                     override fun onPlayerError(error: PlaybackException) {
+                        if (engine != Engine.EXO) return
+                        if (isDecodeOrFormatError(error) && !vlcTriedForItem && vlcAvailable()) {
+                            // I dati arrivano ma ExoPlayer non sa leggerli: motore VLC (FFmpeg), senza sondare il provider.
+                            val position = if (currentItem?.kind == MediaKind.LIVE) 0L
+                                else (playerInstance?.currentPosition ?: lastStartPosition).coerceAtLeast(0L)
+                            startVlc(position, describeError(error))
+                            return
+                        }
                         if (tryResolvePlaybackError(error)) return
                         // Quick local fixes exhausted: probe the provider to find the REAL cause and retry
                         // with another format / User-Agent / decoder (or show the verified cause).
@@ -587,6 +660,7 @@ class PlaybackController(
 
     private fun stopCurrentForNewItem() {
         releasePreviewPlayer()
+        vlcInstance?.stopPlayback()
         playerInstance?.apply {
             stop()
             clearMediaItems()
@@ -840,6 +914,18 @@ class PlaybackController(
     }
 
     private fun startPlayback(position: Long, debounce: Boolean = false) {
+        val target = urlCandidates.getOrElse(urlIndex) { requestedUrl }
+        if (!vlcTriedForItem && VlcRouting.prefersVlc(target, currentItem?.streamMimeType?.takeIf { target == currentItem?.streamUrl }) && vlcAvailable()) {
+            // Protocollo/contenitore che ExoPlayer non gestisce (RTMP, MMS, UDP, AVI, WMV...): subito VLC.
+            startVlc(position, "protocollo/formato ${VlcRouting.extensionOf(target).ifBlank { VlcRouting.schemeOf(target) }.uppercase()}")
+            return
+        }
+        if (engine == Engine.VLC) {
+            engine = Engine.EXO
+            vlcInstance?.stopPlayback()
+            _playerEpoch.value++
+        }
+        exoTriedForItem = true
         val generation = ++loadGeneration
         hasEverStarted = false
         if (debounce) {
@@ -900,6 +986,11 @@ class PlaybackController(
 
         recoveryRounds++
         if (recoveryRounds > MAX_RECOVERY_ROUNDS || !requestedUrl.startsWith("http", ignoreCase = true)) {
+            if (!vlcTriedForItem && vlcAvailable()) {
+                val position = if (currentItem?.kind == MediaKind.LIVE) 0L else (playerInstance?.currentPosition ?: lastStartPosition).coerceAtLeast(0L)
+                startVlc(position, description)
+                return
+            }
             _status.value = null
             _error.value = description
             return
@@ -933,6 +1024,11 @@ class PlaybackController(
         when (diagnosis) {
             is StreamDiagnosis.Unplayable, is StreamDiagnosis.Inconclusive -> {
                 val message = (diagnosis as? StreamDiagnosis.Unplayable)?.message ?: (diagnosis as StreamDiagnosis.Inconclusive).message
+                if (diagnosis is StreamDiagnosis.Inconclusive && !vlcTriedForItem && vlcAvailable()) {
+                    // La sonda non decide: si prova il secondo motore prima di mostrare l'errore.
+                    startVlc(position, engineError)
+                    return
+                }
                 diagnostics.log("ERROR", "player", "Diagnosi provider: $message")
                 _status.value = null
                 _error.value = message
@@ -952,11 +1048,16 @@ class PlaybackController(
                         startPlayback(position)
                     }
 
+                    !vlcTriedForItem && vlcAvailable() -> {
+                        // Il provider serve il file: il problema e' la decodifica. Motore VLC (FFmpeg), come iOS.
+                        startVlc(position, engineError)
+                    }
+
                     s.hardwareDecode && !s.softwareDecode && !didSoftwareFallback -> {
                         // The provider serves the file: the problem is the hardware decoder.
                         didSoftwareFallback = true
                         forceSoftware = true
-                        _status.value = "Passo alla decodifica software…"
+                        _status.value = "Passo alla decodifica software (FFmpeg)…"
                         releasePlayerOnly()
                         ensurePlayer()
                         startPlayback(position)
@@ -1049,6 +1150,159 @@ class PlaybackController(
         }
     }
 
+    // ---------------------------------------------------------------------------------------------
+    // Motore VLC
+    // ---------------------------------------------------------------------------------------------
+
+    private fun vlcAvailable(): Boolean = !vlcUnavailable && ensureVlc() != null
+
+    private fun ensureVlc(): VlcPlayer? {
+        vlcInstance?.let { return it }
+        if (vlcUnavailable) return null
+        val created = VlcPlayer.create(context)
+        if (created == null) {
+            vlcUnavailable = true
+            diagnostics.log("ERROR", "player", "Motore VLC non disponibile su questo dispositivo (librerie native)")
+            return null
+        }
+        created.addListener(object : Player.Listener {
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (engine != Engine.VLC) return
+                if (playbackState == Player.STATE_READY) {
+                    _status.value = null
+                    isRecovering = false
+                    markStarted()
+                }
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                if (engine == Engine.VLC) handleVlcFailure(error.message ?: "Errore VLC")
+            }
+        })
+        vlcInstance = created
+        return created
+    }
+
+    /** Apre il contenuto attuale con VLC dall'indirizzo/User-Agent gia' verificati. */
+    private fun startVlc(position: Long, reason: String) {
+        val item = currentItem ?: return
+        val vlc = ensureVlc() ?: run {
+            _status.value = null
+            _error.value = reason
+            return
+        }
+        zapJob?.cancel()
+        watchdogJob?.cancel()
+        loadGeneration++
+        isRecovering = false
+        hasEverStarted = false
+        vlcTriedForItem = true
+        // La connessione aperta da ExoPlayer occuperebbe uno degli 1-2 slot del provider.
+        playerInstance?.apply { stop(); clearMediaItems() }
+        releasePreviewPlayer()
+        val url = urlCandidates.getOrElse(urlIndex) { requestedUrl }.ifBlank { item.streamUrl }
+        val live = item.kind == MediaKind.LIVE
+        val s = settings.value
+        diagnostics.log("WARN", "player", "Motore VLC per $url ($reason)")
+        _status.value = "Apro il flusso con il motore VLC…"
+        val switched = engine != Engine.VLC
+        engine = Engine.VLC
+        vlc.open(
+            url = url,
+            mediaId = item.id,
+            title = item.title,
+            userAgent = effectiveUserAgent(),
+            headers = streamHeaders,
+            live = live,
+            startPositionMs = if (live) 0L else position,
+            autoPlay = requestedAutoplay,
+            hardwareDecode = !((s.softwareDecode && !s.hardwareDecode) || forceSoftware),
+            networkCachingMs = if (live) maxOf(1_500, s.playerStartBufferSec.coerceIn(1, 10) * 1000) else 3_000,
+        )
+        if (!live) vlc.setPlaybackSpeed(s.preferredPlaybackSpeed.coerceIn(0.25f, 3f))
+        if (switched) _playerEpoch.value++
+        startVlcWatchdog()
+    }
+
+    /** VLC non parte entro 25 s: fallito come su iOS (stesso tempo del watchdog di ExoPlayer). */
+    private fun startVlcWatchdog() {
+        watchdogJob?.cancel()
+        val generation = loadGeneration
+        watchdogJob = scope.launch {
+            delay(25_000)
+            if (generation != loadGeneration || hasEverStarted || engine != Engine.VLC || currentItem == null || !requestedAutoplay) return@launch
+            handleVlcFailure("Timeout: nessun dato valido ricevuto dal provider entro 25 secondi.")
+        }
+    }
+
+    private fun handleVlcFailure(description: String) {
+        val item = currentItem ?: return
+        watchdogJob?.cancel()
+        diagnostics.log("ERROR", "player", "Errore motore VLC: $description")
+        val url = urlCandidates.getOrElse(urlIndex) { requestedUrl }
+        val position = if (item.kind == MediaKind.LIVE) 0L else (vlcInstance?.currentPosition ?: lastStartPosition).coerceAtLeast(0L)
+        vlcInstance?.stopPlayback()
+        if (hasEverStarted && vlcRestarts < MAX_VLC_RESTARTS) {
+            // Il flusso andava e si e' interrotto (rete, provider): si riapre dallo stesso punto, come la
+            // riconnessione automatica di FFmpeg su iOS.
+            vlcRestarts++
+            _status.value = "Riconnessione…"
+            val generation = loadGeneration
+            scope.launch {
+                delay(1_000L * vlcRestarts)
+                if (generation == loadGeneration && engine == Engine.VLC && currentItem === item) startVlc(position, "riconnessione $vlcRestarts/$MAX_VLC_RESTARTS")
+            }
+            return
+        }
+        if (!exoTriedForItem && VlcRouting.exoCanOpen(url)) {
+            // VLC scelto per primo (RTSP/UDP/AVI...): ExoPlayer come riserva prima di arrendersi.
+            _status.value = "Riprovo con il motore principale…"
+            engine = Engine.EXO
+            _playerEpoch.value++
+            exoTriedForItem = true
+            ensurePlayer()
+            loadGeneration++
+            hasEverStarted = false
+            setCurrentUrlAndPrepare(position)
+            startWatchdog()
+            return
+        }
+        _status.value = null
+        _error.value = if (exoTriedForItem) {
+            "Il flusso non e' riproducibile né con il motore principale né con VLC.\n\nDettaglio: $description\n\nProva «Apri con un altro player»."
+        } else {
+            "Impossibile aprire il flusso (${VlcRouting.schemeOf(url).uppercase().ifBlank { "URL" }}).\n\nDettaglio: $description"
+        }
+    }
+
+    /** Errori che indicano un formato/codec che ExoPlayer non sa gestire (i dati arrivano correttamente). */
+    private fun isDecodeOrFormatError(error: PlaybackException): Boolean = error.errorCode in setOf(
+        PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
+        PlaybackException.ERROR_CODE_DECODER_QUERY_FAILED,
+        PlaybackException.ERROR_CODE_DECODING_FAILED,
+        PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES,
+        PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
+        PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED,
+        PlaybackException.ERROR_CODE_PARSING_MANIFEST_UNSUPPORTED,
+        PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED,
+    ) && findHttpCode(error) == null
+
+    /** Video o audio presenti ma nessuna traccia decodificabile da ExoPlayer (neppure con FFmpeg). */
+    private fun unsupportedTracksReason(tracks: Tracks): String? {
+        if (tracks.isEmpty) return null
+        val video = tracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO }
+        val audio = tracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
+        val videoUnsupported = video.isNotEmpty() && video.none { it.isSupported } && !settings.value.audioOnly
+        val audioUnsupported = audio.isNotEmpty() && audio.none { it.isSupported }
+        if (!videoUnsupported && !audioUnsupported) return null
+        fun mimes(groups: List<Tracks.Group>) = groups.mapNotNull { g -> g.mediaTrackGroup.getFormat(0).let { it.codecs ?: it.sampleMimeType } }.distinct().joinToString()
+        return buildString {
+            append("Tracce non supportate da ExoPlayer: ")
+            if (videoUnsupported) append("video ").append(mimes(video)).append(' ')
+            if (audioUnsupported) append("audio ").append(mimes(audio))
+        }.trim()
+    }
+
     private fun reprepareAtCurrentPosition() {
         val position = player.currentPosition.coerceAtLeast(0L)
         setCurrentUrlAndPrepare(position)
@@ -1092,7 +1346,9 @@ class PlaybackController(
     private fun createRenderersFactory(): androidx.media3.exoplayer.DefaultRenderersFactory {
         val s = settings.value
         val delayMs = s.videoDelayMs.coerceIn(-2_000, 2_000)
-        val factory = object : androidx.media3.exoplayer.DefaultRenderersFactory(context) {
+        // NextRenderersFactory = DefaultRenderersFactory + decoder FFmpeg (audio AC3/E-AC3/DTS/TrueHD/MP2/FLAC/Opus...,
+        // video H.264/HEVC/MPEG-2/VP8/VP9/AV1 in software): il motore FFmpeg di iOS, dentro ExoPlayer.
+        val factory = object : NextRenderersFactory(context) {
             // "A/V delay": a real audio-timeline shift instead of a dead number in the settings.
             override fun buildAudioSink(context: Context, enableFloatOutput: Boolean, enableAudioTrackPlaybackParams: Boolean): androidx.media3.exoplayer.audio.AudioSink? =
                 if (delayMs == 0) super.buildAudioSink(context, enableFloatOutput, enableAudioTrackPlaybackParams)
@@ -1103,7 +1359,14 @@ class PlaybackController(
             // If the preferred decoder fails to initialise, try the next one instead of erroring out.
             .setEnableDecoderFallback(true)
         if (s.asyncDecode) factory.forceEnableMediaCodecAsynchronousQueueing()
-        if ((s.softwareDecode && !s.hardwareDecode) || forceSoftware) {
+        val preferSoftware = (s.softwareDecode && !s.hardwareDecode) || forceSoftware
+        // ON: decoder del dispositivo per primi, FFmpeg quando mancano o falliscono. PREFER (decodifica software
+        // scelta o fallback dopo un errore): FFmpeg per primo, come la decodifica software di iOS.
+        factory.setExtensionRendererMode(
+            if (preferSoftware) androidx.media3.exoplayer.DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
+            else androidx.media3.exoplayer.DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
+        )
+        if (preferSoftware) {
             factory.setMediaCodecSelector(androidx.media3.exoplayer.mediacodec.MediaCodecSelector { mime, secure, tunneling ->
                 androidx.media3.exoplayer.mediacodec.MediaCodecSelector.DEFAULT
                     .getDecoderInfos(mime, secure, tunneling)
@@ -1184,6 +1447,7 @@ class PlaybackController(
     private companion object {
         const val ZAP_DEBOUNCE_MS = 250L
         const val MAX_RECOVERY_ROUNDS = 3
+        const val MAX_VLC_RESTARTS = 3
         const val FAST_START_MS = 1_500
         const val REBUFFER_MS = 2_000
         /** Parte gia' vista tenuta in memoria per spostarsi indietro senza riscaricare. */
