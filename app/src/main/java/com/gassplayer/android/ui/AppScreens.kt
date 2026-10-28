@@ -2829,14 +2829,18 @@ fun AddSourceDialog(app: GassPlayerApplication, vm: MainViewModel, onDismiss: ()
 @Composable private fun BackupScreen(app: GassPlayerApplication, entryFocusRequester: FocusRequester? = null) {
     val context=LocalContext.current; val scope=rememberCoroutineScope(); var status by remember{mutableStateOf("")}
     val create=rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")){uri-> if(uri!=null) scope.launch{val text=app.backup.fullExport(); context.contentResolver.openOutputStream(uri)?.use{it.write(text.toByteArray())};status="Backup esportato"}}
-    val pick=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()){uri-> if(uri!=null) scope.launch{val text=context.contentResolver.openInputStream(uri)?.bufferedReader()?.readText().orEmpty();runCatching{app.backup.importAny(text)};status="Import completato o parziale"}}
+    val pick=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()){uri-> if(uri!=null) scope.launch{val text=context.contentResolver.openInputStream(uri)?.bufferedReader()?.readText().orEmpty();status=runCatching{app.backup.importAny(text)}.fold({"Import completato"},{"Importazione non riuscita: ${it.message}"})}}
+    val createIosPrefs=rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")){uri-> if(uri!=null) scope.launch{val text=app.backup.exportPreferencesForIos(); context.contentResolver.openOutputStream(uri)?.use{it.write(text.toByteArray())};status="Preferenze esportate nel formato iOS"}}
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Button(
             onClick = { create.launch("gassplayer-backup.json") },
             modifier = Modifier.then(entryFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier).remoteFocusOutline(cornerRadius = 50.dp),
         ) { Text("Esporta sorgenti + preferenze") }
-        OutlinedButton(onClick = { pick.launch(arrayOf("application/json", "text/*")) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp)) { Text("Importa JSON") }
-        Button(onClick = { scope.launch { app.cloud.requestBackup(); status = "Richiesta Auto Backup inviata" } }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp)) { Text("Sincronizza con backup Android") }
+        OutlinedButton(onClick = { pick.launch(arrayOf("application/json", "text/*")) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp)) { Text("Importa JSON (Android o iOS)") }
+        OutlinedButton(onClick = { createIosPrefs.launch("gassplayer-preferenze-ios.json") }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp)) { Text("Esporta preferenze per iPhone/iPad") }
+        // CloudSyncService.swift: "Sincronizza" invia sorgenti + preferiti, "Ripristina" aggiunge le sorgenti mancanti.
+        Button(onClick = { scope.launch { runCatching { app.cloud.syncToCloud() }.onSuccess { status = "Sorgenti e preferiti sincronizzati con il backup Android." }.onFailure { status = "Sincronizzazione non riuscita: ${it.message}" } } }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp)) { Text("Sincronizza con backup Android") }
+        OutlinedButton(onClick = { scope.launch { status = runCatching { app.cloud.restoreSources() }.getOrElse { "Ripristino non riuscito: ${it.message}" } } }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp)) { Text("Ripristina dal backup Android") }
         Text(status, color = glassForeground())
     }
 }
@@ -2852,11 +2856,13 @@ private fun TraktScreen(app: GassPlayerApplication, settings: AppSettings, vm: M
     LaunchedEffect(device?.deviceCode) {
         val code = device ?: return@LaunchedEffect
         val started = System.currentTimeMillis()
+        // iOS TraktAccountManager.poll: attesa = `interval` restituito da Trakt (minimo 1 s), fino alla scadenza del codice.
         while (System.currentTimeMillis() - started < code.expiresInSec * 1000L) {
-            kotlinx.coroutines.delay(5000)
+            kotlinx.coroutines.delay(code.intervalSec.coerceAtLeast(1) * 1000L)
             val token = runCatching { app.trakt.pollDevice(local.traktClientId, local.traktClientSecret, code.deviceCode) }.getOrNull()
             if (token != null) { app.prefs.saveTrakt(token); device = null; message = "Trakt collegato"; break }
         }
+        if (device?.deviceCode == code.deviceCode) { device = null; message = "Codice scaduto prima dell'autorizzazione. Riprova la connessione." }
     }
     LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 40.dp)) {
         item { Text("Collega Trakt.tv", color = glassForeground(), fontSize = 20.sp, fontWeight = FontWeight.Bold) }

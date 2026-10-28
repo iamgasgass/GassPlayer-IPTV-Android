@@ -503,7 +503,8 @@ private fun SourceManageView(
         if (current.type == SourceType.XTREAM && !current.username.isNullOrBlank() && !current.password.isNullOrBlank()) {
             accountLoading = true
             accountError = null
-            val result = runCatching { app.xtream.authenticate(XtreamCredentials(current.host, current.username.orEmpty(), current.password.orEmpty())) }
+            // iOS SourceManageView: fetchAccountInfo (stato reale anche se scaduto/disabilitato), non authenticate.
+            val result = runCatching { app.xtream.fetchAccountInfo(XtreamCredentials(current.host, current.username.orEmpty(), current.password.orEmpty())) }
             result.onSuccess { account = it }.onFailure { accountError = it.message ?: "Errore account Xtream" }
             accountLoading = false
         }

@@ -16,7 +16,20 @@ import java.net.URL
 
 class DownloadRepository(private val context: Context) {
     fun enqueue(item: MediaItem, wifiOnly: Boolean): String {
-        val request = OneTimeWorkRequestBuilder<MediaDownloadWorker>().setInputData(workDataOf("url" to item.streamUrl, "id" to item.id, "title" to item.title)).setConstraints(Constraints.Builder().setRequiredNetworkType(if (wifiOnly) NetworkType.UNMETERED else NetworkType.CONNECTED).build()).addTag("gass_download").build()
+        // Header di richiesta: quelli della playlist (`|User-Agent=...`, `streamHeaders`), altrimenti lo stesso
+        // User-Agent usato per riprodurre (personalizzato o VLC). Prima partiva il "Dalvik/..." di sistema, che molti
+        // pannelli rifiutano, e l'URL con il suffisso `|User-Agent=` veniva passato così com'era.
+        val headers = linkedMapOf<String, String>().apply {
+            putAll(NetworkApi.extractInlineHeaders(item.streamUrl))
+            putAll(item.streamHeaders)
+            if (keys.none { it.equals("User-Agent", true) }) put("User-Agent", com.gassplayer.android.media.StreamUserAgents.vlc)
+        }
+        val request = OneTimeWorkRequestBuilder<MediaDownloadWorker>().setInputData(workDataOf(
+            "url" to NetworkApi.stripInlineHeaders(item.streamUrl),
+            "id" to item.id,
+            "title" to item.title,
+            "headers" to JsonStore.json.encodeToString<Map<String, String>>(headers)
+        )).setConstraints(Constraints.Builder().setRequiredNetworkType(if (wifiOnly) NetworkType.UNMETERED else NetworkType.CONNECTED).build()).addTag("gass_download").build()
         WorkManager.getInstance(context).enqueue(request); return request.id.toString()
     }
     fun outputDir(): File = context.filesDir.resolve("downloads").also { it.mkdirs() }
@@ -28,7 +41,14 @@ class MediaDownloadWorker(appContext: Context, params: WorkerParameters) : Corou
         val id = inputData.getString("id") ?: return androidx.work.ListenableWorker.Result.failure()
         val out = applicationContext.filesDir.resolve("downloads").also { it.mkdirs() }.resolve("$id.mp4")
         return try {
-            val connection = URL(url).openConnection().apply { connectTimeout = 12_000; readTimeout = 60_000; useCaches = false }
+            val headers = inputData.getString("headers")?.let { raw ->
+                runCatching { JsonStore.json.decodeFromString<Map<String, String>>(raw) }.getOrNull()
+            }.orEmpty()
+            val connection = URL(NetworkApi.stripInlineHeaders(url)).openConnection().apply {
+                connectTimeout = 12_000; readTimeout = 60_000; useCaches = false
+                headers.forEach { (k, v) -> setRequestProperty(k, v) }
+                if (headers.keys.none { it.equals("User-Agent", true) }) setRequestProperty("User-Agent", com.gassplayer.android.media.StreamUserAgents.DEFAULT_VLC)
+            }
             connection.getInputStream().use { input ->
                 out.outputStream().use { output ->
                     val buf = ByteArray(64 * 1024)

@@ -19,12 +19,32 @@ class XtreamRepository(private val api: NetworkApi) {
         if (auth == 0) error("Credenziali Xtream non valide")
         if (status.equals("Disabled", true) || status.equals("Banned", true)) error("Account Xtream non attivo ($status)")
         if (status.equals("Expired", true)) error("Account Xtream scaduto")
+        return accountInfoOf(obj, info)
+    }
+
+    /**
+     * iOS `XtreamAPIService.fetchAccountInfo`: legge `user_info` + `server_info` SENZA imporre che l'account sia
+     * attivo, così "Gestisci sorgente" mostra lo stato reale (scaduto, disabilitato...), connessioni e scadenza.
+     */
+    suspend fun fetchAccountInfo(creds: XtreamCredentials): XtreamAccountInfo {
+        val obj = api.getJson(playerApi(creds, emptyMap())) as? JsonObject ?: error("Risposta Xtream non valida")
+        val info = obj["user_info"] as? JsonObject ?: error("Il pannello non ha restituito le informazioni account")
+        return accountInfoOf(obj, info)
+    }
+
+    private fun accountInfoOf(root: JsonObject, info: JsonObject): XtreamAccountInfo {
+        val server = root["server_info"] as? JsonObject
         return XtreamAccountInfo(
             info.stringOrNull("username").orEmpty(),
-            status,
+            info.stringOrNull("status").orEmpty(),
             info.longOrNull("exp_date"),
             info.intOrNull("active_cons"),
-            info.intOrNull("max_connections")
+            info.intOrNull("max_connections"),
+            serverUrl = server?.stringOrNull("url"),
+            serverPort = server?.stringOrNull("port"),
+            isTrial = info.stringOrNull("is_trial")?.let { it == "1" || it.equals("true", true) },
+            createdAt = info.longOrNull("created_at"),
+            serverTimezone = server?.stringOrNull("timezone"),
         )
     }
 
@@ -401,7 +421,10 @@ class XtreamRepository(private val api: NetworkApi) {
 
     fun streamUrl(creds: XtreamCredentials, id: String, kind: MediaKind, extension: String = "ts"): String {
         val base = serverBase(creds.host)
-        val u = enc(creds.username); val p = enc(creds.password)
+        // iOS `buildStreamingURL` (appendingPathComponent): credenziali codificate come SEGMENTI di percorso
+        // (spazio → %20, '+' '@' ':' invariati). Prima URLEncoder trasformava lo spazio in '+' e '@' in %40:
+        // il pannello riceveva un utente/password diversi da quelli che riceve dall'app iOS.
+        val u = pathSegment(creds.username); val p = pathSegment(creds.password)
         val cleanId = id.trim()
         val safeExt = extension.trim().trimStart('.').ifBlank { if (kind == MediaKind.LIVE) "ts" else "mp4" }
         return when (kind) {
@@ -443,6 +466,23 @@ class XtreamRepository(private val api: NetworkApi) {
             }
             return "$scheme://$authority${if (path.isBlank()) "" else "/${path.trim('/')}"}".trimEnd('/')
         }
+
+        /**
+         * Codifica di un segmento di percorso come `URL.appendingPathComponent` su iOS: restano in chiaro le
+         * lettere/cifre ASCII e `-._~!$&'()*+,;=:@`, tutto il resto (spazio, `/`, `?`, `#`, `%`, non ASCII) diventa
+         * `%XX` sui byte UTF-8.
+         */
+        fun pathSegment(value: String): String {
+            val out = StringBuilder(value.length + 8)
+            for (byte in value.toByteArray(Charsets.UTF_8)) {
+                val c = byte.toInt() and 0xFF
+                val ch = c.toChar()
+                if (c < 0x80 && (ch.isLetterOrDigit() || ch in PATH_SAFE)) out.append(ch)
+                else out.append('%').append("0123456789ABCDEF"[c shr 4]).append("0123456789ABCDEF"[c and 0x0F])
+            }
+            return out.toString()
+        }
+        private const val PATH_SAFE = "-._~!$&'()*+,;=:@"
 
         /** Extracts username/password when the user pasted a full `get.php?username=..&password=..` URL. */
         fun credentialsFromUrl(rawHost: String): Pair<String, String>? {

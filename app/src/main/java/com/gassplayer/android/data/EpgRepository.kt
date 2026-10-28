@@ -156,7 +156,9 @@ class EpgRepository(private val context: Context, private val api: NetworkApi) {
         val c = XtreamCredentials(XtreamRepository.serverBase(source.host), source.username.orEmpty(), source.password.orEmpty())
         val durationMin = ((endMs - startMs) / 60_000L).coerceAtLeast(1)
         val fmt = java.text.SimpleDateFormat("yyyy-MM-dd:HH-mm", Locale.US)
-        return "${c.host.trimEnd('/')}/timeshift/${enc(c.username)}/${enc(c.password)}/$durationMin/${fmt.format(java.util.Date(startMs))}/$streamId.$extension"
+        // iOS EPGService.catchupURL: /timeshift/{user}/{pass}/{durata}/{yyyy-MM-dd:HH-mm}/{id}.ts, segmenti di percorso.
+        val seg: (String) -> String = { XtreamRepository.pathSegment(it) }
+        return "${c.host.trimEnd('/')}/timeshift/${seg(c.username)}/${seg(c.password)}/$durationMin/${seg(fmt.format(java.util.Date(startMs)))}/${seg(streamId)}.$extension"
     }
 
     private fun parse(root: JsonElement, streamId: String): List<EpgProgram> {

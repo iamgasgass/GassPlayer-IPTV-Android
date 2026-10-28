@@ -29,7 +29,19 @@ data class MediaSourceConfig(
 data class XtreamCredentials(val host: String, val username: String, val password: String)
 
 @Serializable
-data class XtreamAccountInfo(val username: String = "", val status: String = "", val expDate: Long? = null, val activeConnections: Int? = null, val maxConnections: Int? = null)
+data class XtreamAccountInfo(
+    val username: String = "",
+    val status: String = "",
+    val expDate: Long? = null,
+    val activeConnections: Int? = null,
+    val maxConnections: Int? = null,
+    /** `server_info.url` / `server_info.port` (iOS `XtreamAuthResponse.ServerInfo`). */
+    val serverUrl: String? = null,
+    val serverPort: String? = null,
+    val isTrial: Boolean? = null,
+    val createdAt: Long? = null,
+    val serverTimezone: String? = null,
+)
 
 @Serializable
 data class Category(val id: String, val name: String, val sourceId: String = "")
@@ -265,7 +277,15 @@ data class DiagnosticEntry(val at: Long = System.currentTimeMillis(), val level:
 data class SearchHistory(val terms: List<String> = emptyList())
 
 @Serializable
-data class TraktAccount(val accessToken: String = "", val refreshToken: String = "", val username: String = "")
+data class TraktAccount(
+    val accessToken: String = "",
+    val refreshToken: String = "",
+    val username: String = "",
+    /** Durata del token dichiarata da Trakt (iOS `TraktToken.expiresIn`). */
+    val expiresInSec: Int? = null,
+    /** Momento del collegamento (iOS `connectedAt`). */
+    val connectedAt: Long? = null
+)
 
 
 /**

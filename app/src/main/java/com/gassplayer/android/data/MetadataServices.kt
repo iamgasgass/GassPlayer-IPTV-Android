@@ -383,7 +383,8 @@ class OmdbService(private val api: NetworkApi) {
 }
 
 class OpenSubtitlesService(private val api: NetworkApi) {
-    suspend fun search(query: String, apiKey: String): List<SubtitleResult> = withContext(Dispatchers.IO) { if (apiKey.isBlank()) return@withContext emptyList(); val root = api.getJson("https://api.opensubtitles.com/api/v1/subtitles?query=${URLEncoder.encode(query, "UTF-8")}", mapOf("Api-Key" to apiKey, "Accept" to "application/json")); root.jsonObject["data"]?.jsonArray?.mapNotNull { el -> val o = el.jsonObject; val id = o["id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null; SubtitleResult(id, o["attributes"]?.jsonObject?.get("language")?.jsonPrimitive?.contentOrNull.orEmpty(), o["attributes"]?.jsonObject?.get("release")?.jsonPrimitive?.contentOrNull.orEmpty()) } ?: emptyList() }
+    /** iOS `OpenSubtitlesService.search(query:language:)`: `query` + `languages` (predefinita "it"), header `Api-Key`. */
+    suspend fun search(query: String, apiKey: String, language: String = "it"): List<SubtitleResult> = withContext(Dispatchers.IO) { if (apiKey.isBlank()) return@withContext emptyList(); val root = api.getJson("https://api.opensubtitles.com/api/v1/subtitles?query=${URLEncoder.encode(query, "UTF-8")}&languages=${URLEncoder.encode(language.ifBlank { "it" }, "UTF-8")}", mapOf("Api-Key" to apiKey, "Accept" to "application/json")); root.jsonObject["data"]?.jsonArray?.mapNotNull { el -> val o = el.jsonObject; val id = o["id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null; SubtitleResult(id, o["attributes"]?.jsonObject?.get("language")?.jsonPrimitive?.contentOrNull.orEmpty(), o["attributes"]?.jsonObject?.get("release")?.jsonPrimitive?.contentOrNull.orEmpty()) } ?: emptyList() }
 }
 
 class TraktService(private val api: NetworkApi) {
@@ -402,8 +403,46 @@ class TraktService(private val api: NetworkApi) {
         val rating = o["rating"]?.jsonPrimitive?.doubleOrNull ?: return@withContext null
         TraktRatings(rating, o["votes"]?.jsonPrimitive?.intOrNull ?: 0)
     }
-    suspend fun deviceCode(clientId: String, clientSecret: String): TraktDeviceCode? = withContext(Dispatchers.IO) { if (clientId.isBlank() || clientSecret.isBlank()) return@withContext null; val o = api.postJson("https://trakt.tv/oauth/device/code", JsonStore.json.encodeToString(kotlinx.serialization.json.buildJsonObject { put("client_id", clientId); }), mapOf("Content-Type" to "application/json")); TraktDeviceCode(o.jsonObject["device_code"]?.jsonPrimitive?.contentOrNull.orEmpty(), o.jsonObject["user_code"]?.jsonPrimitive?.contentOrNull.orEmpty(), o.jsonObject["verification_url"]?.jsonPrimitive?.contentOrNull.orEmpty(), o.jsonObject["expires_in"]?.jsonPrimitive?.intOrNull ?: 600) }
-    suspend fun pollDevice(clientId: String, clientSecret: String, deviceCode: String): TraktAccount? = withContext(Dispatchers.IO) { if (clientId.isBlank() || clientSecret.isBlank() || deviceCode.isBlank()) return@withContext null; val o = api.postJson("https://trakt.tv/oauth/device/token", JsonStore.json.encodeToString(buildJsonObject { put("code", deviceCode); put("client_id", clientId); put("client_secret", clientSecret) })); val access=o.jsonObject["access_token"]?.jsonPrimitive?.contentOrNull ?: return@withContext null; TraktAccount(access, o.jsonObject["refresh_token"]?.jsonPrimitive?.contentOrNull.orEmpty(), "") }
+    /**
+     * iOS `TraktService.requestDeviceCode`: POST `https://api.trakt.tv/oauth/device/code` con `{"client_id"}`.
+     * (Prima Android usava `trakt.tv/oauth/device/code` e ignorava `interval`.)
+     */
+    suspend fun deviceCode(clientId: String, clientSecret: String): TraktDeviceCode? = withContext(Dispatchers.IO) {
+        if (clientId.isBlank() || clientSecret.isBlank()) return@withContext null
+        val o = api.postJson(
+            "$TRAKT_API/oauth/device/code",
+            JsonStore.json.encodeToString(buildJsonObject { put("client_id", clientId) }),
+            mapOf("Content-Type" to "application/json")
+        ).jsonObject
+        TraktDeviceCode(
+            o["device_code"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            o["user_code"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            o["verification_url"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            o["expires_in"]?.jsonPrimitive?.intOrNull ?: 600,
+            o["interval"]?.jsonPrimitive?.intOrNull ?: 5
+        )
+    }
+
+    /**
+     * iOS `TraktService.pollForToken`: POST `https://api.trakt.tv/oauth/device/token` con code, client_id e
+     * client_secret. `null` finché l'utente non ha autorizzato (Trakt risponde 400 "pending").
+     */
+    suspend fun pollDevice(clientId: String, clientSecret: String, deviceCode: String): TraktAccount? = withContext(Dispatchers.IO) {
+        if (clientId.isBlank() || clientSecret.isBlank() || deviceCode.isBlank()) return@withContext null
+        val o = api.postJson(
+            "$TRAKT_API/oauth/device/token",
+            JsonStore.json.encodeToString(buildJsonObject { put("code", deviceCode); put("client_id", clientId); put("client_secret", clientSecret) }),
+            mapOf("Content-Type" to "application/json")
+        ).jsonObject
+        val access = o["access_token"]?.jsonPrimitive?.contentOrNull ?: return@withContext null
+        TraktAccount(
+            accessToken = access,
+            refreshToken = o["refresh_token"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            username = "",
+            expiresInSec = o["expires_in"]?.jsonPrimitive?.intOrNull,
+            connectedAt = System.currentTimeMillis()
+        )
+    }
     suspend fun scrobbleStart(account: TraktAccount, clientId: String, item: MediaItem, progress: Double) { scrobble("start", account, clientId, item, progress) }
     suspend fun scrobbleStop(account: TraktAccount, clientId: String, item: MediaItem, progress: Double) { scrobble("stop", account, clientId, item, progress) }
     private suspend fun scrobble(action:String, account:TraktAccount, clientId:String, item:MediaItem, progress:Double){ if(account.accessToken.isBlank()||clientId.isBlank()) return; api.postJson("https://api.trakt.tv/scrobble/$action", buildJsonObject { put("progress", progress.coerceIn(0.0,100.0)); put(if(item.kind==MediaKind.MOVIE)"movie" else "episode", buildJsonObject { put("title", item.title); item.tmdbId?.let{put("ids", buildJsonObject{put("tmdb", it.toIntOrNull() ?: 0)})} }) }.toString(), mapOf("Content-Type" to "application/json","trakt-api-key" to clientId,"trakt-api-version" to "2","Authorization" to "Bearer ${account.accessToken}")) }
@@ -481,4 +520,6 @@ data class OmdbRatings(val imdbScore: Double?, val rottenTomatoesPercent: Int?, 
 /** iOS `TraktRatings`: voto medio community (base 10) e numero di voti. */
 data class TraktRatings(val rating: Double, val votes: Int)
 data class SubtitleResult(val id: String, val language: String, val release: String)
-data class TraktDeviceCode(val deviceCode: String, val userCode: String, val verificationUrl: String, val expiresInSec: Int)
+data class TraktDeviceCode(val deviceCode: String, val userCode: String, val verificationUrl: String, val expiresInSec: Int, val intervalSec: Int = 5)
+
+private const val TRAKT_API = "https://api.trakt.tv"

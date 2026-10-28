@@ -252,7 +252,7 @@ class NetworkApi {
             // credentials) and never when the caller pinned a User-Agent explicitly.
             val explicit = headers.keys.any { it.equals("User-Agent", true) } ||
                 splitInlineHeaders(url).second.keys.any { it.equals("User-Agent", true) }
-            if (e.code !in intArrayOf(403, 406, 451) || explicit || url.contains("player_api.php")) throw e
+            if (e.code !in intArrayOf(403, 406, 451) || explicit || url.contains("player_api.php") || isExactOnlyHost(host)) throw e
             var last: HttpStatusException = e
             for (ua in com.gassplayer.android.media.StreamUserAgents.ladder) {
                 if (ua == first) continue
@@ -369,11 +369,24 @@ class NetworkApi {
 
         fun extractInlineHeaders(raw: String): Map<String, String> = splitInlineHeaders(raw).second
 
+        /**
+         * Servizi esterni (metadati, account): come su iOS si contatta SOLO l'indirizzo esatto. Senza questa
+         * regola un errore di rete faceva ritentare `http://` sulle porte 80/443, cioè la chiave API TMDB/OMDb,
+         * il Client Secret Trakt o la chiave OpenSubtitles potevano partire in chiaro.
+         */
+        private val exactOnlyHosts = setOf(
+            "api.themoviedb.org", "www.omdbapi.com", "omdbapi.com", "api.trakt.tv", "trakt.tv",
+            "api.opensubtitles.com", "1.1.1.1", "8.8.8.8"
+        )
+
+        fun isExactOnlyHost(host: String?): Boolean = host?.lowercase()?.let { it in exactOnlyHosts } == true
+
         fun candidateUrls(raw: String): List<String> {
             val normalized = normalizeUrl(raw)
             val uri = runCatching { URI(normalized) }.getOrNull() ?: return listOf(normalized)
             val scheme = uri.scheme?.lowercase() ?: return listOf(normalized)
             if (scheme != "https" && scheme != "http") return listOf(normalized)
+            if (isExactOnlyHost(uri.host)) return listOf(normalized)
 
             val result = linkedSetOf<String>()
             result += normalized
