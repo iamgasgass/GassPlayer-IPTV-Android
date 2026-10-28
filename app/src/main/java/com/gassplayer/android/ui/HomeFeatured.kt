@@ -278,9 +278,8 @@ private suspend fun buildHomeFeaturedEntries(
 
     // 2. Per te: consigliati TMDB dall'ultimo titolo visto.
     result.firstOrNull()?.let { seed ->
-        val found = runCatching {
-            if (seed.isSeries) app.tmdb.searchSeries(seed.title, apiKey) else app.tmdb.searchMovies(seed.title, apiKey)
-        }.getOrNull()?.firstOrNull()
+        // Matching di precisione come iOS (TMDBService.lookup), non il primo risultato della ricerca.
+        val found = runCatching { app.tmdb.lookup(seed.title, seed.isSeries, apiKey) }.getOrNull()
         if (found != null) {
             val recommended = runCatching { app.tmdb.recommendations(found.id, apiKey, seed.isSeries) }.getOrDefault(emptyList())
             var added = 0
@@ -325,9 +324,7 @@ private suspend fun enrichHomeFeaturedEntry(app: GassPlayerApplication, entry: H
     val tmdbId = entry.tmdbId ?: entry.item.tmdbId?.takeIf { it.isNotBlank() }
     val details = tmdbId?.let { id -> runCatching { app.tmdb.details(id, apiKey, entry.isSeries) }.getOrNull() }
         ?: run {
-            val found = runCatching {
-                if (entry.isSeries) app.tmdb.searchSeries(entry.title, apiKey) else app.tmdb.searchMovies(entry.title, apiKey)
-            }.getOrNull()?.firstOrNull() ?: return null
+            val found = runCatching { app.tmdb.lookup(entry.title, entry.isSeries, apiKey, entry.year) }.getOrNull() ?: return null
             runCatching { app.tmdb.details(found.id, apiKey, entry.isSeries) }.getOrNull() ?: found
         }
     return entry.copy(

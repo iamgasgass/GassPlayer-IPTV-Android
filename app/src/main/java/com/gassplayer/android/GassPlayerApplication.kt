@@ -37,6 +37,8 @@ class GassPlayerApplication : Application(), SingletonImageLoader.Factory {
     lateinit var tmdb: TmdbService
     lateinit var omdb: OmdbService
     lateinit var trakt: TraktService
+    /** Port di MediaDetailLoader (MediaDetail.swift): Xtream + TMDB + OMDb + Trakt per le schede dettaglio. */
+    lateinit var mediaDetails: MediaDetailLoader
     lateinit var subtitles: OpenSubtitlesService
     lateinit var cloud: AndroidCloudSync
     lateinit var reminders: ReminderScheduler
@@ -64,6 +66,7 @@ class GassPlayerApplication : Application(), SingletonImageLoader.Factory {
         tmdb = TmdbService(network)
         omdb = OmdbService(network)
         trakt = TraktService(network)
+        mediaDetails = MediaDetailLoader(tmdb, omdb, trakt)
         subtitles = OpenSubtitlesService(network)
         cloud = AndroidCloudSync(this, prefs)
         reminders = ReminderScheduler(this)

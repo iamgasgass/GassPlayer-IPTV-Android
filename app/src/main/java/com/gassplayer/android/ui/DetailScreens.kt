@@ -70,7 +70,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.withTimeoutOrNull
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -121,8 +120,6 @@ fun MovieDetailScreen(
         true
     }
     var meta by remember(item.id) { mutableStateOf(initialMeta) }
-    // get_vod_info del pannello (MovieDetailView.swift: vodInfo -> MediaDetailSeed): base e riserva di TMDB.
-    var xtreamSeed by remember(item.id) { mutableStateOf<XtreamDetailSeed?>(null) }
     var ratings by remember(item.id) { mutableStateOf<Ratings?>(null) }
     var traktRating by remember(item.id) { mutableStateOf<Double?>(null) }
     var isLoadingDetail by remember(item.id) { mutableStateOf(true) }
@@ -141,17 +138,8 @@ fun MovieDetailScreen(
     val topProgress = detailTopProgress(scrollState)
     val tvLayout = isTvDetailLayout()
 
-    // Dati mostrati dalla scheda come MediaDetailLoader iOS: TMDB, poi il pannello (get_vod_info), poi il catalogo.
-    val heroItem = remember(item, xtreamSeed) { item.withDetailSeed(xtreamSeed) }
-    val castNames = detailCastNames(meta, xtreamSeed, item)
-    val detailRating = detailRating(meta, xtreamSeed, item)
-    val detailYear = meta?.year?.takeIf { it.isNotBlank() } ?: xtreamSeed?.year ?: item.year
-    val detailRuntime = (meta?.runtimeMinutes?.takeIf { it > 0 }?.let { it * 60L }
-        ?: xtreamSeed?.runtimeMinutes?.takeIf { it > 0 }?.let { it * 60L }
-        ?: item.durationSec?.takeIf { it > 0 })?.let(::formatRuntime)
-
     // Immagine di "Continua a guardare" allineata a quella della scheda (MovieDetailView.swift: updateImage).
-    val detailImage = meta?.backdropUrl ?: heroItem.backdropUrl
+    val detailImage = meta?.backdropUrl ?: item.backdropUrl
     LaunchedEffect(detailImage, currentWatch?.imageUrl) {
         val url = detailImage?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
         if (currentWatch != null && currentWatch.imageUrl != url) app.watch.updateImage(url) { it.contentId == item.id }
@@ -165,36 +153,30 @@ fun MovieDetailScreen(
         }
     }
 
+    // MovieDetailView.loadDetail (iOS): get_vod_info del pannello → MediaDetailSeed → MediaDetailLoader
+    // (TMDB fullDetails con matching di precisione, poi OMDb + Trakt dall'IMDb id).
     LaunchedEffect(item.id, settings.tmdbApiKey, settings.omdbApiKey, settings.traktClientId) {
         isLoadingDetail = true
-        // MediaDetailLoader.load iOS: base Xtream (get_vod_info: trama, cast, anno, durata, voto, tmdb_id), poi TMDB
-        // con matching di precisione (tmdb_id verificato, titolo ripulito + anno, spareggio sul cast).
-        val seed = xtreamSeed ?: withTimeoutOrNull(8_000L) { app.catalog.vodDetailSeed(item) }
-        xtreamSeed = seed
-        val fetched = if (settings.tmdbApiKey.isBlank()) null else runCatching {
-            app.tmdb.fullDetails(
-                title = item.title,
-                isSeries = false,
-                apiKey = settings.tmdbApiKey,
-                year = seed?.year ?: item.year,
-                tmdbId = seed?.tmdbId ?: item.tmdbId ?: initialMeta?.id,
-                castNames = seed?.castNames?.takeIf { it.isNotEmpty() } ?: item.castNameList(),
-            )
-        }.getOrNull()
-        // Keep the metadata already shown (e.g. from the trending card) if the request fails.
-        meta = fetched ?: meta
+        val vodInfo = loadXtreamVodInfo(app, item)
+        val seed = MediaDetailSeed(
+            title = item.title,
+            isSeries = false,
+            overview = vodInfo?.plot ?: item.plot,
+            backdropUrl = vodInfo?.backdropUrl ?: item.backdropUrl ?: item.posterUrl,
+            genreNames = vodInfo?.genreNames?.takeIf { it.isNotEmpty() } ?: splitProviderList(item.genre),
+            castNames = vodInfo?.castNames?.takeIf { it.isNotEmpty() } ?: splitProviderList(item.cast),
+            year = vodInfo?.year ?: item.year,
+            runtimeMinutes = vodInfo?.runtimeMinutes ?: item.durationSec?.takeIf { it > 0 }?.let { (it / 60).toInt() },
+            xtreamRating = vodInfo?.ratingValue ?: item.rating,
+            tmdbId = vodInfo?.tmdbIdValue?.toString() ?: item.tmdbId,
+        )
+        val detail = runCatching { app.mediaDetails.load(seed, settings.tmdbApiKey, settings.omdbApiKey, settings.traktClientId) }
+            .getOrElse { MediaDetail(overview = seed.overview, backdropUrl = seed.backdropUrl, genres = seed.genreNames, year = seed.year, runtimeMinutes = seed.runtimeMinutes) }
+        // I dati già mostrati (es. card "di tendenza") restano dove la scheda completa non ha nulla.
+        meta = detail.toMetadataResult(item.title, meta)
+        ratings = detail.ratings.toRatings()
+        traktRating = detail.ratings.traktPercent?.toDouble()
         isLoadingDetail = false
-        // Ratings in parallel, after the main metadata: OMDb (IMDb / Rotten Tomatoes / Metacritic) and Trakt by the
-        // IMDb id TMDB provides (exact, as on iOS); OMDb falls back to the original title + year without it.
-        val imdbId = meta?.externalId?.takeIf { it.isNotBlank() }
-        val omdbTitle = meta?.originalTitle?.takeIf { it.isNotBlank() } ?: meta?.title?.takeIf { it.isNotBlank() } ?: item.title
-        val omdbYear = meta?.year ?: seed?.year ?: item.year
-        coroutineScope {
-            val omdb = async { runCatching { app.omdb.lookup(omdbTitle, settings.omdbApiKey, imdbId, omdbYear, series = false) }.getOrNull() }
-            val trakt = async { imdbId?.let { id -> runCatching { app.trakt.ratingsByImdb(id, series = false, clientId = settings.traktClientId) }.getOrNull() } }
-            ratings = omdb.await()
-            traktRating = trakt.await()
-        }
     }
 
     val toggleFavorite: () -> Unit = { scope.launch { app.favorites.toggle(item) } }
@@ -220,13 +202,13 @@ fun MovieDetailScreen(
         val duration = currentWatch?.durationMs ?: 0L
         val watchedFraction = currentWatch?.watchedFraction()
         TvMediaDetailLayout(
-            item = heroItem,
+            item = item,
             meta = meta,
             listState = scrollState,
-            rating = detailRating,
-            secondary = listOfNotNull(detailYear, detailRuntime).joinToString(" · ").ifBlank { null },
-            genres = metadataGenres(meta, item, xtreamSeed),
-            overview = meta?.overview?.takeIf { it.isNotBlank() } ?: heroItem.plot?.takeIf { it.isNotBlank() },
+            rating = meta?.rating ?: item.rating,
+            secondary = listOfNotNull(meta?.year ?: item.year, movieRuntimeLabel(meta, item)).joinToString(" · ").ifBlank { null },
+            genres = metadataGenres(meta, item),
+            overview = meta?.overview?.takeIf { it.isNotBlank() } ?: item.plot?.takeIf { it.isNotBlank() },
             loading = isLoadingDetail,
             playLabel = if (position > 0L) "Riprendi" else "Riproduci",
             playProgress = watchedFraction,
@@ -275,11 +257,11 @@ fun MovieDetailScreen(
             }
             item(key = "tv-cast-${item.id}") {
                 TvCastRow(
-                    names = castNames,
+                    names = meta?.cast?.takeIf { it.isNotEmpty() } ?: item.cast?.split(',', ';')?.map { it.trim() }?.filter { it.isNotBlank() }.orEmpty(),
                     people = meta?.castMembers.orEmpty()
                 )
             }
-            item(key = "tv-ratings-${item.id}") { TvRatingsBlock(detailRating, ratings, traktRating) }
+            item(key = "tv-ratings-${item.id}") { TvRatingsBlock(meta?.rating ?: item.rating, ratings, traktRating) }
         }
     } else Box(Modifier.fillMaxSize()) {
         LazyColumn(
@@ -288,7 +270,7 @@ fun MovieDetailScreen(
             contentPadding = PaddingValues(bottom = 42.dp),
             verticalArrangement = Arrangement.spacedBy(0.dp)
         ) {
-            item(key = "hero-${item.id}") { MediaDetailHero(item = heroItem, meta = meta) }
+            item(key = "hero-${item.id}") { MediaDetailHero(item = item, meta = meta) }
             item(key = "main-${item.id}") {
                 Column(
                     Modifier.fillMaxWidth().padding(horizontal = 22.dp),
@@ -296,9 +278,9 @@ fun MovieDetailScreen(
                 ) {
                     Spacer(Modifier.height(2.dp))
                     MediaDetailMetaRow(
-                        rating = detailRating,
-                        secondary = listOfNotNull(detailYear, detailRuntime).joinToString(" · ").ifBlank { null },
-                        genres = metadataGenres(meta, item, xtreamSeed)
+                        rating = meta?.rating ?: item.rating,
+                        secondary = listOfNotNull(meta?.year ?: item.year, movieRuntimeLabel(meta, item)).joinToString(" · ").ifBlank { null },
+                        genres = metadataGenres(meta, item)
                     )
                     Button(
                         onClick = { onPlay(item, currentWatch?.resumeFromMs() ?: 0L) },
@@ -358,7 +340,7 @@ fun MovieDetailScreen(
                         ) { showAlternates = true }
                     }
                     actionMessage?.let { Text(it, color = DetailAccent, fontSize = 12.sp) }
-                    val overview = meta?.overview?.takeIf { it.isNotBlank() } ?: heroItem.plot?.takeIf { it.isNotBlank() }
+                    val overview = meta?.overview?.takeIf { it.isNotBlank() } ?: item.plot?.takeIf { it.isNotBlank() }
                     if (!overview.isNullOrBlank()) {
                         Text(overview, color = DetailText.copy(.92f), fontSize = 14.sp, lineHeight = 21.sp)
                     } else if (isLoadingDetail) {
@@ -368,7 +350,7 @@ fun MovieDetailScreen(
             }
             item(key = "ratings-${item.id}") {
                 MediaDetailRatings(
-                    tmdb = detailRating,
+                    tmdb = meta?.rating ?: item.rating,
                     ratings = ratings,
                     trakt = traktRating,
                     modifier = Modifier.padding(top = 22.dp)
@@ -376,7 +358,7 @@ fun MovieDetailScreen(
             }
             item(key = "cast-${item.id}") {
                 MediaDetailCast(
-                    names = castNames,
+                    names = meta?.cast?.takeIf { it.isNotEmpty() } ?: item.cast?.split(',', ';')?.map { it.trim() }?.filter { it.isNotBlank() }.orEmpty(),
                     people = meta?.castMembers.orEmpty(),
                     modifier = Modifier.padding(top = 20.dp)
                 )
@@ -462,17 +444,14 @@ fun SeriesDetailScreen(
     var loadingEpisodes by remember(series.id) { mutableStateOf(false) }
     var loadError by remember(series.id) { mutableStateOf<String?>(null) }
     var meta by remember(series.id) { mutableStateOf(initialMeta) }
-    // `info` di get_series_info (SeriesEpisodesView.swift: seriesInfo -> MediaDetailSeed) e voti OMDb/Trakt.
-    var xtreamSeed by remember(series.id) { mutableStateOf<XtreamDetailSeed?>(null) }
-    var seriesInfoLoaded by remember(series.id) { mutableStateOf(false) }
-    var isLoadingDetail by remember(series.id) { mutableStateOf(true) }
-    var ratings by remember(series.id) { mutableStateOf<Ratings?>(null) }
-    var traktRating by remember(series.id) { mutableStateOf<Double?>(null) }
     var showAlternates by remember(series.id) { mutableStateOf(false) }
     var actionMessage by remember(series.id) { mutableStateOf<String?>(null) }
     var downloadWorkId by remember(series.id) { mutableStateOf<String?>(null) }
     val downloadInfo = rememberDownloadWorkInfo(app, downloadWorkId)
     var tmdbEpisodesBySeason by remember(series.id) { mutableStateOf<Map<Int, Map<Int, TmdbEpisodeResult>>>(emptyMap()) }
+    var ratings by remember(series.id) { mutableStateOf<Ratings?>(null) }
+    var traktRating by remember(series.id) { mutableStateOf<Double?>(null) }
+    var isLoadingDetail by remember(series.id) { mutableStateOf(true) }
     var season by remember(series.id) { mutableStateOf(0) }
     val seriesKey = series.id.substringAfterLast(':')
     val topProgress = detailTopProgress(scrollState)
@@ -490,49 +469,43 @@ fun SeriesDetailScreen(
         sourceConfigs.any { it.isEnabled && it.type == SourceType.XTREAM && it.id != series.sourceId }
     }
 
-    suspend fun fetchEpisodes() {
+    suspend fun fetchEpisodes(fresh: Boolean = false) {
         loadingEpisodes = true
         loadError = null
-        val result = runCatching { app.catalog.loadSeriesEpisodes(series.sourceId, seriesKey, series.title) }
+        val result = runCatching { app.catalog.loadSeriesEpisodes(series.sourceId, seriesKey, series.title, fresh) }
         result.onSuccess { fetched ->
             loadedEpisodes = (loadedEpisodes + fetched).filter { it.seriesId == seriesKey || it.seriesId == series.id }.distinctBy { it.id }
         }.onFailure { loadError = it.message ?: "Impossibile caricare gli episodi" }
-        app.catalog.seriesDetailSeed(series.sourceId, seriesKey)?.let { xtreamSeed = it }
-        seriesInfoLoaded = true
         loadingEpisodes = false
     }
 
+    // SeriesEpisodesView.loadDetail (iOS): `info` di get_series_info → MediaDetailSeed → MediaDetailLoader
+    // (TMDB + OMDb + Trakt: anche le serie ricevono ora IMDb, Rotten Tomatoes, Metacritic e Trakt).
     LaunchedEffect(series.id, settings.tmdbApiKey, settings.omdbApiKey, settings.traktClientId) {
         isLoadingDetail = true
-        // MediaDetailLoader.load iOS dopo get_series_info (tmdb_id, anno, cast del pannello), al massimo 8 s di attesa.
-        withTimeoutOrNull(8_000L) { snapshotFlow { seriesInfoLoaded }.first { it } }
-        val seed = xtreamSeed
-        val fetched = if (settings.tmdbApiKey.isBlank()) null else runCatching {
-            app.tmdb.fullDetails(
-                title = series.title,
-                isSeries = true,
-                apiKey = settings.tmdbApiKey,
-                year = seed?.year ?: series.year,
-                tmdbId = seed?.tmdbId ?: series.tmdbId ?: initialMeta?.id,
-                castNames = seed?.castNames?.takeIf { it.isNotEmpty() } ?: series.castNameList(),
-            )
-        }.getOrNull()
-        meta = fetched ?: meta // keep the metadata already shown if the request fails
+        val info = loadXtreamSeriesInfo(app, series, seriesKey)
+        val seed = MediaDetailSeed(
+            title = series.title,
+            isSeries = true,
+            overview = info?.details?.plot ?: series.plot,
+            backdropUrl = info?.backdropUrl ?: series.backdropUrl ?: series.posterUrl,
+            genreNames = info?.genreNames?.takeIf { it.isNotEmpty() } ?: splitProviderList(series.genre),
+            castNames = info?.castNames?.takeIf { it.isNotEmpty() } ?: splitProviderList(series.cast),
+            year = info?.year ?: series.year,
+            runtimeMinutes = null,
+            xtreamRating = info?.ratingValue ?: series.rating,
+            tmdbId = info?.tmdbIdValue?.toString() ?: series.tmdbId,
+        )
+        val detail = runCatching { app.mediaDetails.load(seed, settings.tmdbApiKey, settings.omdbApiKey, settings.traktClientId) }
+            .getOrElse { MediaDetail(overview = seed.overview, backdropUrl = seed.backdropUrl, genres = seed.genreNames, year = seed.year) }
+        meta = detail.toMetadataResult(series.title, meta) // i dati già mostrati restano se una fonte non risponde
+        ratings = detail.ratings.toRatings()
+        traktRating = detail.ratings.traktPercent?.toDouble()
         isLoadingDetail = false
-        // Valutazioni come la scheda film: OMDb e Trakt per IMDb id (TMDB external_ids), OMDb per titolo senza id.
-        val imdbId = meta?.externalId?.takeIf { it.isNotBlank() }
-        val omdbTitle = meta?.originalTitle?.takeIf { it.isNotBlank() } ?: meta?.title?.takeIf { it.isNotBlank() } ?: series.title
-        val omdbYear = meta?.year ?: seed?.year ?: series.year
-        coroutineScope {
-            val omdb = async { runCatching { app.omdb.lookup(omdbTitle, settings.omdbApiKey, imdbId, omdbYear, series = true) }.getOrNull() }
-            val trakt = async { imdbId?.let { id -> runCatching { app.trakt.ratingsByImdb(id, series = true, clientId = settings.traktClientId) }.getOrNull() } }
-            ratings = omdb.await()
-            traktRating = trakt.await()
-        }
     }
     LaunchedEffect(series.id) { fetchEpisodes() }
     LaunchedEffect(meta?.id, season, settings.tmdbApiKey) {
-        val tvId = meta?.id ?: return@LaunchedEffect
+        val tvId = meta?.id?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
         if (settings.tmdbApiKey.isBlank() || season < 0 || season in tmdbEpisodesBySeason) return@LaunchedEffect
         val seasonEpisodes = runCatching { app.tmdb.seasonEpisodes(tvId, season, settings.tmdbApiKey).associateBy { it.episodeNumber } }.getOrDefault(emptyMap())
         tmdbEpisodesBySeason = tmdbEpisodesBySeason + (season to seasonEpisodes)
@@ -563,14 +536,8 @@ fun SeriesDetailScreen(
         if (seasonFollowsResume && resumeSeason != null && resumeSeason in seasons.keys) season = resumeSeason
     }
 
-    // Dati mostrati dalla scheda come MediaDetailLoader iOS: TMDB, poi il pannello (get_series_info), poi il catalogo.
-    val heroSeries = remember(series, xtreamSeed) { series.withDetailSeed(xtreamSeed) }
-    val castNames = detailCastNames(meta, xtreamSeed, series)
-    val detailRating = detailRating(meta, xtreamSeed, series)
-    val detailYear = meta?.year?.takeIf { it.isNotBlank() } ?: xtreamSeed?.year ?: series.year
-
     // Immagine di "Continua a guardare" allineata a quella della scheda (SeriesEpisodesView.swift: updateImage).
-    val detailImage = meta?.backdropUrl ?: heroSeries.backdropUrl
+    val detailImage = meta?.backdropUrl ?: series.backdropUrl
     LaunchedEffect(detailImage, watch, sortedEpisodes) {
         val url = detailImage?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
         val episodeIds = sortedEpisodes.mapTo(HashSet()) { it.id }
@@ -592,14 +559,14 @@ fun SeriesDetailScreen(
             runCatching { episodesRowState.scrollToItem(index.coerceAtLeast(0)) }
         }
         TvMediaDetailLayout(
-            item = heroSeries,
+            item = series,
             meta = meta,
             listState = scrollState,
-            rating = detailRating,
-            secondary = listOfNotNull(detailYear, seasons.size.takeIf { it > 0 }?.let { if (it == 1) "1 stagione" else "$it stagioni" }).joinToString(" · ").ifBlank { null },
-            genres = metadataGenres(meta, series, xtreamSeed),
-            overview = meta?.overview?.takeIf { it.isNotBlank() } ?: heroSeries.plot?.takeIf { it.isNotBlank() },
-            loading = isLoadingDetail,
+            rating = meta?.rating ?: series.rating,
+            secondary = listOfNotNull(meta?.year ?: series.year, seasons.size.takeIf { it > 0 }?.let { if (it == 1) "1 stagione" else "$it stagioni" }).joinToString(" · ").ifBlank { null },
+            genres = metadataGenres(meta, series),
+            overview = meta?.overview?.takeIf { it.isNotBlank() } ?: series.plot?.takeIf { it.isNotBlank() },
+            loading = isLoadingDetail && meta?.overview.isNullOrBlank() && series.plot.isNullOrBlank(),
             playLabel = when {
                 resumeEpisode != null && (allWatch[resumeEpisode.id]?.resumeFromMs() ?: 0L) > 0L ->
                     "Riprendi S${resumeEpisode.seasonNumber ?: 1} E${resumeEpisode.episodeNumber ?: 1}"
@@ -619,7 +586,7 @@ fun SeriesDetailScreen(
                     tint = if (series.id in favorite.series) Color(0xFFFF88A5) else Color.Unspecified
                 ),
                 TvDetailAction(Icons.Default.Search, "Altre fonti", onClick = { showAlternates = true }, enabled = canSearchAlternates),
-                TvDetailAction(Icons.Default.Refresh, if (loadingEpisodes) "Aggiorno…" else "Aggiorna", onClick = { if (!loadingEpisodes) scope.launch { fetchEpisodes() } }),
+                TvDetailAction(Icons.Default.Refresh, if (loadingEpisodes) "Aggiorno…" else "Aggiorna", onClick = { if (!loadingEpisodes) scope.launch { fetchEpisodes(fresh = true) } }),
             ),
             actionMessage = actionMessage ?: loadError,
             onClose = onBack,
@@ -688,11 +655,11 @@ fun SeriesDetailScreen(
             }
             item(key = "tv-series-cast-${series.id}") {
                 TvCastRow(
-                    names = castNames,
+                    names = meta?.cast?.takeIf { it.isNotEmpty() } ?: series.cast?.split(',', ';')?.map { it.trim() }?.filter { it.isNotBlank() }.orEmpty(),
                     people = meta?.castMembers.orEmpty()
                 )
             }
-            item(key = "tv-series-ratings-${series.id}") { TvRatingsBlock(detailRating, ratings, traktRating) }
+            item(key = "tv-series-ratings-${series.id}") { TvRatingsBlock(meta?.rating ?: series.rating, ratings, traktRating) }
         }
     } else Box(Modifier.fillMaxSize()) {
         LazyColumn(
@@ -701,13 +668,13 @@ fun SeriesDetailScreen(
             contentPadding = PaddingValues(bottom = 44.dp),
             verticalArrangement = Arrangement.spacedBy(0.dp)
         ) {
-            item(key = "series-hero-${series.id}") { MediaDetailHero(item = heroSeries, meta = meta) }
+            item(key = "series-hero-${series.id}") { MediaDetailHero(item = series, meta = meta) }
             item(key = "series-main-${series.id}") {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 22.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     MediaDetailMetaRow(
-                        rating = detailRating,
-                        secondary = detailYear,
-                        genres = metadataGenres(meta, series, xtreamSeed)
+                        rating = meta?.rating ?: series.rating,
+                        secondary = meta?.year ?: series.year,
+                        genres = metadataGenres(meta, series)
                     )
                     Button(
                         onClick = {
@@ -768,17 +735,16 @@ fun SeriesDetailScreen(
                         }
                     }
                     actionMessage?.let { Text(it, color = DetailAccent, fontSize = 12.sp) }
-                    val overview = meta?.overview?.takeIf { it.isNotBlank() } ?: heroSeries.plot?.takeIf { it.isNotBlank() }
+                    val overview = meta?.overview?.takeIf { it.isNotBlank() } ?: series.plot?.takeIf { it.isNotBlank() }
                     if (!overview.isNullOrBlank()) Text(overview, color = DetailText.copy(.92f), fontSize = 14.sp, lineHeight = 21.sp)
-                    else if (isLoadingDetail) LinearProgressIndicator(Modifier.fillMaxWidth(), color = DetailAccent, trackColor = glassForeground(.1f))
                 }
             }
             item(key = "series-ratings-${series.id}") {
-                MediaDetailRatings(detailRating, ratings, traktRating, Modifier.padding(top = 22.dp))
+                MediaDetailRatings(meta?.rating ?: series.rating, ratings, traktRating, Modifier.padding(top = 22.dp))
             }
             item(key = "series-cast-${series.id}") {
                 MediaDetailCast(
-                    names = castNames,
+                    names = meta?.cast?.takeIf { it.isNotEmpty() } ?: series.cast?.split(',', ';')?.map { it.trim() }?.filter { it.isNotBlank() }.orEmpty(),
                     people = meta?.castMembers.orEmpty(),
                     modifier = Modifier.padding(top = 20.dp)
                 )
@@ -801,7 +767,7 @@ fun SeriesDetailScreen(
                     }
                     Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text("${visibleEpisodes.size} episodi", color = DetailMuted, fontSize = 12.sp, modifier = Modifier.weight(1f))
-                        TextButton(onClick = { scope.launch { fetchEpisodes() } }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp), enabled = !loadingEpisodes) {
+                        TextButton(onClick = { scope.launch { fetchEpisodes(fresh = true) } }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp), enabled = !loadingEpisodes) {
                             if (loadingEpisodes) CircularProgressIndicator(Modifier.size(15.dp), strokeWidth = 2.dp)
                             else Icon(Icons.Default.Refresh, null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(4.dp)); Text("Aggiorna")
@@ -878,8 +844,9 @@ private fun MediaDetailHero(item: MediaItem, meta: MetadataResult?, height: andr
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             val logoUrl = meta?.logoUrl
-            // MediaHeroHeader iOS: logo TMDB; se manca o non si scarica, il titolo (mai un hero senza nome).
-            val fallbackTitle: @Composable () -> Unit = {
+            if (!logoUrl.isNullOrBlank()) {
+                ArtworkImage(logoUrl, contentDescription = meta?.title, modifier = Modifier.fillMaxWidth(.72f).heightIn(max = 88.dp), contentScale = ContentScale.Fit)
+            } else {
                 Text(
                     meta?.title?.takeIf { it.isNotBlank() } ?: item.title,
                     color = Color.White,
@@ -890,12 +857,6 @@ private fun MediaDetailHero(item: MediaItem, meta: MetadataResult?, height: andr
                     overflow = TextOverflow.Ellipsis,
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center
                 )
-            }
-            if (!logoUrl.isNullOrBlank()) {
-                ArtworkImage(logoUrl, contentDescription = meta?.title, modifier = Modifier.fillMaxWidth(.72f).heightIn(max = 88.dp), contentScale = ContentScale.Fit,
-                    fallback = { fallbackTitle() })
-            } else {
-                fallbackTitle()
             }
         }
     }
@@ -1104,7 +1065,8 @@ private fun formatEpisodeDate(value: String?): String? {
     val raw = value.trim()
     return runCatching {
         val parsed = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { isLenient = false }.parse(raw) ?: return@runCatching raw
-        SimpleDateFormat("d MMM yyyy", Locale.ITALIAN).format(parsed)
+        // iOS `formattedReleaseDate`: italiano esteso, "1 febbraio 2006".
+        SimpleDateFormat("d MMMM yyyy", Locale.ITALIAN).format(parsed)
     }.getOrElse { raw }
 }
 
@@ -1182,30 +1144,45 @@ private fun rememberDownloadWorkInfo(app: GassPlayerApplication, workId: String?
     return result
 }
 
-private fun metadataGenres(meta: MetadataResult?, item: MediaItem, seed: XtreamDetailSeed? = null): List<String> =
+private fun metadataGenres(meta: MetadataResult?, item: MediaItem): List<String> =
     meta?.genres?.takeIf { it.isNotEmpty() }
-        ?: seed?.genres?.takeIf { it.isNotEmpty() }
         ?: item.genre?.split(',', ';', '|')?.map { it.trim() }?.filter { it.isNotBlank() }.orEmpty()
 
-/** Nomi del cast dichiarati dal catalogo ("Attore Uno, Attore Due"). */
-private fun MediaItem.castNameList(): List<String> =
-    cast?.split(',', ';')?.map { it.trim() }?.filter { it.isNotBlank() }.orEmpty()
-
-/** Cast testuale di riserva (TMDB, poi pannello Xtream, poi catalogo); con TMDB si usano le persone con foto. */
-private fun detailCastNames(meta: MetadataResult?, seed: XtreamDetailSeed?, item: MediaItem): List<String> =
-    meta?.cast?.takeIf { it.isNotEmpty() } ?: seed?.castNames?.takeIf { it.isNotEmpty() } ?: item.castNameList()
-
-/** Voto della scheda come MediaDetailLoader iOS: TMDB se > 0, altrimenti il voto del pannello Xtream. */
-private fun detailRating(meta: MetadataResult?, seed: XtreamDetailSeed?, item: MediaItem): Double? =
-    meta?.rating?.takeIf { it > 0 } ?: seed?.rating?.takeIf { it > 0 } ?: item.rating?.takeIf { it > 0 }
-
-/** Il titolo del catalogo completato con trama/backdrop di get_vod_info / get_series_info quando mancano. */
-private fun MediaItem.withDetailSeed(seed: XtreamDetailSeed?): MediaItem {
-    if (seed == null) return this
-    val seededPlot = seed.plot?.takeIf { it.isNotBlank() } ?: plot
-    val seededBackdrop = backdropUrl?.takeIf { it.isNotBlank() } ?: seed.backdropUrl?.takeIf { it.isNotBlank() }
-    return if (seededPlot == plot && seededBackdrop == backdropUrl) this else copy(plot = seededPlot, backdropUrl = seededBackdrop)
+/** `get_vod_info` del film (solo sorgenti Xtream); `null` se la sorgente non è Xtream o il pannello non risponde. */
+private suspend fun loadXtreamVodInfo(app: GassPlayerApplication, item: MediaItem): XtreamVodInfo? {
+    val source = runCatching { app.sources.sources.first() }.getOrNull()?.firstOrNull { it.id == item.sourceId }
+        ?.takeIf { it.type == SourceType.XTREAM } ?: return null
+    val vodId = item.id.substringAfterLast(':').takeIf { it.isNotBlank() } ?: return null
+    return try {
+        app.xtream.vodInfo(source, vodId)
+    } catch (cancel: kotlinx.coroutines.CancellationException) {
+        throw cancel
+    } catch (_: Throwable) {
+        null
+    }
 }
+
+/** `info` + `seasons` di `get_series_info` (risposta condivisa in cache con il caricamento degli episodi). */
+private suspend fun loadXtreamSeriesInfo(app: GassPlayerApplication, series: MediaItem, seriesKey: String): XtreamSeriesInfo? {
+    val source = runCatching { app.sources.sources.first() }.getOrNull()?.firstOrNull { it.id == series.sourceId }
+        ?.takeIf { it.type == SourceType.XTREAM } ?: return null
+    if (seriesKey.isBlank()) return null
+    return try {
+        app.xtream.seriesInfo(source, seriesKey)
+    } catch (cancel: kotlinx.coroutines.CancellationException) {
+        throw cancel
+    } catch (_: Throwable) {
+        null
+    }
+}
+
+private fun splitProviderList(raw: String?): List<String> =
+    raw?.split(',', ';', '|')?.map { it.trim() }?.filter { it.isNotBlank() }.orEmpty()
+
+/** Durata del film: prima quella TMDB/`get_vod_info` della scheda, poi quella del catalogo. */
+private fun movieRuntimeLabel(meta: MetadataResult?, item: MediaItem): String? =
+    meta?.runtimeMinutes?.takeIf { it > 0 }?.let { formatRuntime(it * 60L) }
+        ?: item.durationSec?.takeIf { it > 0 }?.let(::formatRuntime)
 
 private fun formatRuntime(seconds: Long): String {
     val totalMinutes = seconds / 60

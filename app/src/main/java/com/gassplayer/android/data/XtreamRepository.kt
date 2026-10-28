@@ -2,6 +2,7 @@ package com.gassplayer.android.data
 
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.*
 import java.net.URLEncoder
 import java.net.URI
@@ -203,49 +204,120 @@ class XtreamRepository(private val api: NetworkApi) {
 
     suspend fun vodDetail(source: MediaSourceConfig, vodId: String): MediaItem? {
         val creds = XtreamCredentials(serverBase(source.host), source.username.orEmpty(), source.password.orEmpty())
-        val root = api.getJson(playerApi(creds, mapOf("action" to "get_vod_info", "vod_id" to vodId))).jsonObject
-        val o = root["info"]?.jsonObject ?: root.jsonObjectOrNull() ?: return null
+        val root = api.getJson(playerApi(creds, mapOf("action" to "get_vod_info", "vod_id" to vodId))).jsonObjectOrNull() ?: return null
+        // `info` arriva come `[]` sui pannelli che non hanno dettagli: prima `.jsonObject` lanciava un'eccezione.
+        val o = root["info"]?.jsonObjectOrNull() ?: root
         return o.toVod(source, 0, creds, forceId = vodId)
     }
 
     /**
-     * Base Xtream della scheda film (MovieDetailView.swift: `vodInfo` -> MediaDetailSeed): trama, backdrop,
-     * generi, cast, anno, durata, voto e `tmdb_id` di get_vod_info, usati prima/al posto di TMDB.
+     * `get_vod_info` come su iOS (`XtreamVODInfo`, usato da MovieDetailView): trama, cast, regista, genere,
+     * data di uscita, voto, durata, backdrop, trailer YouTube e `tmdb_id`/`tmdb` dichiarato dal pannello.
+     * `null` se il pannello non risponde o non ha il blocco `info`.
      */
-    suspend fun vodDetailSeed(source: MediaSourceConfig, vodId: String): XtreamDetailSeed? {
+    suspend fun vodInfo(source: MediaSourceConfig, vodId: String): XtreamVodInfo? {
         val creds = XtreamCredentials(serverBase(source.host), source.username.orEmpty(), source.password.orEmpty())
-        val root = api.getJson(playerApi(creds, mapOf("action" to "get_vod_info", "vod_id" to vodId))).jsonObject
-        val info = root["info"]?.jsonObjectOrNull() ?: return null
-        return info.toDetailSeed(source, fallbackImage = info.stringOrNull("movie_image"))
+        val key = "vod|${source.id}|$vodId"
+        detailCacheGet(key)?.let { return parseVodInfo(source, it) }
+        val root = api.getJson(playerApi(creds, mapOf("action" to "get_vod_info", "vod_id" to vodId))).jsonObjectOrNull() ?: return null
+        detailCachePut(key, root)
+        return parseVodInfo(source, root)
     }
 
-    /** Base Xtream della scheda serie (`info` di get_series_info), memorizzata da [seriesEpisodes]. */
-    fun cachedSeriesDetailSeed(sourceId: String, seriesId: String): XtreamDetailSeed? = seriesSeedCache["$sourceId|$seriesId"]
-    private val seriesSeedCache = java.util.concurrent.ConcurrentHashMap<String, XtreamDetailSeed>()
-
-    private fun JsonObject.toDetailSeed(source: MediaSourceConfig, fallbackImage: String?): XtreamDetailSeed {
-        fun list(value: String?) = value.orEmpty().split(',').map { it.trim() }.filter { it.isNotEmpty() }
-        val release = stringOrNull("releasedate") ?: stringOrNull("releaseDate") ?: stringOrNull("release_date")
-        return XtreamDetailSeed(
-            plot = stringOrNull("plot") ?: stringOrNull("description"),
-            backdropUrl = artwork(source, firstString("backdrop_path"), fallbackImage),
-            genres = list(stringOrNull("genre")),
-            castNames = list(stringOrNull("cast")),
-            year = release?.takeIf { it.length >= 4 }?.take(4)?.takeIf { y -> y.all { it.isDigit() } },
-            runtimeMinutes = longOrNull("duration_secs")?.takeIf { it > 0 }?.let { (it / 60).toInt() },
-            rating = stringOrNull("rating")?.replace(',', '.')?.toDoubleOrNull(),
-            tmdbId = stringOrNull("tmdb_id") ?: stringOrNull("tmdb"),
+    private fun parseVodInfo(source: MediaSourceConfig, root: JsonObject): XtreamVodInfo? {
+        val info = root["info"]?.jsonObjectOrNull() ?: return null
+        return XtreamVodInfo(
+            movieImage = artwork(source, info.stringOrNull("movie_image")),
+            backdropPaths = info.flexibleStringArray("backdrop_path").mapNotNull { artwork(source, it) },
+            youtubeTrailer = info.stringOrNull("youtube_trailer"),
+            plot = info.stringOrNull("plot") ?: info.stringOrNull("description"),
+            cast = info.stringOrNull("cast") ?: info.stringOrNull("actors"),
+            director = info.stringOrNull("director"),
+            genre = info.stringOrNull("genre"),
+            releaseDate = info.stringOrNull("releasedate") ?: info.stringOrNull("releaseDate") ?: info.stringOrNull("release_date"),
+            rating = info.stringOrNull("rating"),
+            durationSecs = info.longOrNull("duration_secs")?.toInt(),
+            duration = info.stringOrNull("duration"),
+            tmdbId = info.stringOrNull("tmdb_id") ?: info.stringOrNull("tmdb"),
         )
     }
 
-    suspend fun seriesEpisodes(source: MediaSourceConfig, seriesId: String, seriesTitleHint: String? = null): List<MediaItem> {
+    /**
+     * `get_series_info` come su iOS (`XtreamSeriesInfo.details` + `seasons`): trama, cast, regista, genere,
+     * data, voto, backdrop, trailer, `tmdb`/`tmdb_id` della serie e le informazioni per stagione.
+     * Condivide la risposta (cache di 10 minuti) con [seriesEpisodes]: aprire una serie fa UNA sola richiesta.
+     */
+    suspend fun seriesInfo(source: MediaSourceConfig, seriesId: String): XtreamSeriesInfo? {
         val creds = XtreamCredentials(serverBase(source.host), source.username.orEmpty(), source.password.orEmpty())
-        val info = runCatching {
-            api.getJson(playerApi(creds, mapOf("action" to "get_series_info", "series_id" to seriesId))).jsonObject
-        }.getOrNull()
-        info?.get("info")?.jsonObjectOrNull()?.let { details ->
-            runCatching { seriesSeedCache["${source.id}|$seriesId"] = details.toDetailSeed(source, fallbackImage = details.stringOrNull("cover")) }
+        val root = seriesInfoRoot(source, creds, seriesId) ?: return null
+        val info = root["info"]?.jsonObjectOrNull()
+        val details = info?.let {
+            XtreamSeriesDetails(
+                name = it.stringOrNull("name") ?: it.stringOrNull("title"),
+                cover = artwork(source, it.stringOrNull("cover"), it.stringOrNull("cover_big")),
+                plot = it.stringOrNull("plot") ?: it.stringOrNull("description") ?: it.stringOrNull("overview"),
+                cast = it.stringOrNull("cast") ?: it.stringOrNull("actors"),
+                director = it.stringOrNull("director"),
+                genre = it.stringOrNull("genre"),
+                releaseDate = it.stringOrNull("releaseDate") ?: it.stringOrNull("releasedate") ?: it.stringOrNull("release_date"),
+                rating = it.stringOrNull("rating"),
+                backdropPaths = it.flexibleStringArray("backdrop_path").mapNotNull { url -> artwork(source, url) },
+                youtubeTrailer = it.stringOrNull("youtube_trailer"),
+                tmdbId = it.stringOrNull("tmdb_id") ?: it.stringOrNull("tmdb"),
+            )
         }
+        val seasons = when (val raw = root["seasons"]) {
+            is JsonArray -> raw.mapNotNull { it.jsonObjectOrNull() }
+            is JsonObject -> raw.values.mapNotNull { it.jsonObjectOrNull() }
+            else -> emptyList()
+        }.map { s ->
+            XtreamSeasonInfo(
+                seasonNumber = s.intOrNull("season_number") ?: s.intOrNull("season") ?: 0,
+                name = s.stringOrNull("name"),
+                overview = s.stringOrNull("overview"),
+                cover = artwork(source, s.stringOrNull("cover"), s.stringOrNull("cover_big")),
+                airDate = s.stringOrNull("air_date"),
+                episodeCount = s.intOrNull("episode_count"),
+            )
+        }.distinctBy { it.seasonNumber }.sortedBy { it.seasonNumber }
+        if (details == null && seasons.isEmpty()) return null
+        return XtreamSeriesInfo(details, seasons)
+    }
+
+    /** Risposta grezza di `get_series_info`, con deduplica delle richieste concorrenti e cache breve. */
+    private suspend fun seriesInfoRoot(source: MediaSourceConfig, creds: XtreamCredentials, seriesId: String, fresh: Boolean = false): JsonObject? {
+        val key = "series|${source.id}|$seriesId"
+        if (!fresh) detailCacheGet(key)?.let { return it }
+        val lock = detailLocks.getOrPut(key) { kotlinx.coroutines.sync.Mutex() }
+        return lock.withLock {
+            if (!fresh) detailCacheGet(key)?.let { return@withLock it }
+            val root = runCatching {
+                api.getJson(playerApi(creds, mapOf("action" to "get_series_info", "series_id" to seriesId))).jsonObjectOrNull()
+            }.getOrNull()
+            if (root != null) detailCachePut(key, root)
+            root
+        }.also { detailLocks.remove(key) }
+    }
+
+    private val detailLocks = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.sync.Mutex>()
+    private val detailCache = object : LinkedHashMap<String, Pair<Long, JsonObject>>(16, .75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Pair<Long, JsonObject>>?): Boolean = size > DETAIL_CACHE_SIZE
+    }
+    private fun detailCacheGet(key: String): JsonObject? = synchronized(detailCache) {
+        val entry = detailCache[key] ?: return null
+        if (System.currentTimeMillis() - entry.first > DETAIL_CACHE_TTL_MS) { detailCache.remove(key); null } else entry.second
+    }
+    private fun detailCachePut(key: String, value: JsonObject) = synchronized(detailCache) { detailCache[key] = System.currentTimeMillis() to value }
+
+    suspend fun seriesEpisodes(
+        source: MediaSourceConfig,
+        seriesId: String,
+        seriesTitleHint: String? = null,
+        /** true = ignora la risposta in cache (pulsante "Aggiorna" della scheda). */
+        fresh: Boolean = false,
+    ): List<MediaItem> {
+        val creds = XtreamCredentials(serverBase(source.host), source.username.orEmpty(), source.password.orEmpty())
+        val info = seriesInfoRoot(source, creds, seriesId, fresh)
         // A number of compatible Xtream panels expose a lighter streams endpoint instead of embedding the complete
         // episode object in get_series_info. Requested ONLY when get_series_info has no episodes (prima veniva
         // sempre richiesto: una seconda chiamata di rete a ogni apertura di una serie).
@@ -435,7 +507,7 @@ class XtreamRepository(private val api: NetworkApi) {
             plot = stringOrNull("plot") ?: stringOrNull("description"), genre = stringOrNull("genre"),
             cast = stringOrNull("cast"), director = stringOrNull("director"), rating = doubleOrNull("rating"),
             durationSec = longOrNull("duration_secs") ?: durationTextToSeconds(stringOrNull("duration")),
-            tmdbId = stringOrNull("tmdb_id"), streamMimeType = mimeForExtension(ext)
+            tmdbId = stringOrNull("tmdb_id") ?: stringOrNull("tmdb"), streamMimeType = mimeForExtension(ext)
         )
     }
 
@@ -448,7 +520,10 @@ class XtreamRepository(private val api: NetworkApi) {
             posterUrl = artwork(source, stringOrNull("cover"), stringOrNull("cover_big"), stringOrNull("stream_icon"), firstString("backdrop_path")),
             backdropUrl = firstString("backdrop_path"), plot = stringOrNull("plot") ?: stringOrNull("description"),
             genre = stringOrNull("genre"), rating = doubleOrNull("rating"), categoryId = stringOrNull("category_id"),
-            group = stringOrNull("category_id")
+            group = stringOrNull("category_id"),
+            cast = stringOrNull("cast"), director = stringOrNull("director"),
+            year = (stringOrNull("releaseDate") ?: stringOrNull("releasedate"))?.take(4)?.takeIf { y -> y.length == 4 && y.all { it.isDigit() } },
+            tmdbId = stringOrNull("tmdb_id") ?: stringOrNull("tmdb")
         )
     }
 
@@ -464,7 +539,12 @@ class XtreamRepository(private val api: NetworkApi) {
             stringOrNull("title") ?: stringOrNull("name").orEmpty(), streamUrl(creds, id, MediaKind.EPISODE, ext),
             posterUrl = artwork(source, stringOrNull("movie_image"), stringOrNull("cover"), info?.stringOrNull("movie_image"), info?.stringOrNull("cover"), info?.stringOrNull("cover_big")),
             seasonNumber = season, episodeNumber = episode, seriesId = seriesId,
-            plot = stringOrNull("plot") ?: info?.stringOrNull("plot") ?: info?.stringOrNull("description"),
+            // iOS: info.plot, poi info.description, poi info.overview (il primo non vuoto vince).
+            plot = stringOrNull("plot") ?: info?.stringOrNull("plot") ?: info?.stringOrNull("description") ?: info?.stringOrNull("overview")
+                ?: stringOrNull("description") ?: stringOrNull("overview"),
+            // Data di uscita dell'episodio (iOS `releaseDateRaw`: info.releasedate, poi info.air_date), mostrata sotto la trama.
+            year = info?.stringOrNull("releasedate") ?: info?.stringOrNull("air_date") ?: info?.stringOrNull("releaseDate")
+                ?: stringOrNull("releasedate") ?: stringOrNull("air_date"),
             rating = doubleOrNull("rating") ?: info?.doubleOrNull("rating"),
             durationSec = longOrNull("duration_secs") ?: info?.longOrNull("duration_secs") ?: durationTextToSeconds(info?.stringOrNull("duration")),
             streamMimeType = mimeForExtension(ext)
@@ -556,9 +636,18 @@ private fun normalizeSeriesMatch(title: String): String {
     return base.replace(Regex("[\\s._:-]+$"), "").trim().lowercase(Locale.ROOT)
 }
 
+/** iOS `decodeFlexibleStringArray`: array di stringhe, stringa singola, stringa vuota o campo assente. */
+private fun JsonObject.flexibleStringArray(key: String): List<String> = when (val element = this[key]) {
+    is JsonArray -> element.mapNotNull { it.jsonPrimitiveOrNull()?.contentOrNull?.trim()?.takeIf { v -> v.isNotEmpty() && v != "null" } }
+    is JsonPrimitive -> listOfNotNull(element.contentOrNull?.trim()?.takeIf { it.isNotEmpty() && it != "null" })
+    else -> emptyList()
+}
+
 private fun durationTextToSeconds(s: String?): Long? = s?.split(":")?.let { parts -> if (parts.size in 2..3) parts.fold(0L) { a, p -> a * 60 + (p.toLongOrNull() ?: 0) } else null }
 
 private const val CATEGORY_BATCH_SIZE = 6
+private const val DETAIL_CACHE_SIZE = 12
+private const val DETAIL_CACHE_TTL_MS = 10 * 60_000L
 
 /** Categories confirmed empty by the provider, remembered 12 h per source+list (iOS: `emptyCategories` defaults). */
 object EmptyCategoryStore {
@@ -585,15 +674,3 @@ object EmptyCategoryStore {
         editor.putString(key, "$savedAt|${ids.joinToString(",")}").apply()
     }
 }
-
-/** MediaDetailSeed iOS: quanto il pannello Xtream dichiara del titolo, base e riserva degli arricchimenti esterni. */
-data class XtreamDetailSeed(
-    val plot: String? = null,
-    val backdropUrl: String? = null,
-    val genres: List<String> = emptyList(),
-    val castNames: List<String> = emptyList(),
-    val year: String? = null,
-    val runtimeMinutes: Int? = null,
-    val rating: Double? = null,
-    val tmdbId: String? = null,
-)

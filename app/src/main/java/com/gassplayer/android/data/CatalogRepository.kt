@@ -273,26 +273,15 @@ class CatalogRepository(private val context: Context, private val prefs: AppPref
     fun m3uEpgUrls(sourceId: String): List<String> =
         loadState.getString("epg_$sourceId", null)?.split('\n')?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
 
-    suspend fun loadSeriesEpisodes(sourceId: String, seriesId: String, seriesTitle: String? = null): List<MediaItem> = withContext(Dispatchers.IO) {
+    suspend fun loadSeriesEpisodes(sourceId: String, seriesId: String, seriesTitle: String? = null, fresh: Boolean = false): List<MediaItem> = withContext(Dispatchers.IO) {
         val source = prefs.sourcesFlow.first().firstOrNull { it.id == sourceId } ?: return@withContext emptyList()
         val cached = db.episodesFor(sourceId, seriesId)
         if (source.type != SourceType.XTREAM) return@withContext cached
-        val fetched = runCatching { xtream.seriesEpisodes(source, seriesId, seriesTitle) }.getOrDefault(emptyList())
+        val fetched = runCatching { xtream.seriesEpisodes(source, seriesId, seriesTitle, fresh) }.getOrDefault(emptyList())
         if (fetched.isEmpty()) return@withContext cached
         runCatching { db.replaceEpisodes(sourceId, seriesId, fetched.distinctBy { it.id }) }
         fetched.map(ArtworkUrls::normalize)
     }
-
-    /** get_vod_info del film (solo sorgenti Xtream): base della scheda dettaglio come MovieDetailView.swift. */
-    suspend fun vodDetailSeed(item: MediaItem): XtreamDetailSeed? = withContext(Dispatchers.IO) {
-        if (item.kind != MediaKind.MOVIE) return@withContext null
-        val source = prefs.sourcesFlow.first().firstOrNull { it.id == item.sourceId } ?: return@withContext null
-        if (source.type != SourceType.XTREAM) return@withContext null
-        runCatching { xtream.vodDetailSeed(source, item.id.substringAfterLast(':')) }.getOrNull()
-    }
-
-    /** `info` di get_series_info letto dall'ultimo [loadSeriesEpisodes] della serie (nessuna richiesta in più). */
-    fun seriesDetailSeed(sourceId: String, seriesId: String): XtreamDetailSeed? = xtream.cachedSeriesDetailSeed(sourceId, seriesId)
 
     private fun deleteLegacyCaches() {
         runCatching { context.filesDir.listFiles()?.filter { it.name.startsWith("catalog_v2_") || it.name.startsWith("catalog_v3_") }?.forEach { it.delete() } }
