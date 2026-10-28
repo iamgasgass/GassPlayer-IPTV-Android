@@ -376,7 +376,7 @@ class NetworkApi {
          */
         private val exactOnlyHosts = setOf(
             "api.themoviedb.org", "www.omdbapi.com", "omdbapi.com", "api.trakt.tv", "trakt.tv",
-            "api.opensubtitles.com", "1.1.1.1", "8.8.8.8"
+            "api.opensubtitles.com"
         )
 
         fun isExactOnlyHost(host: String?): Boolean = host?.lowercase()?.let { it in exactOnlyHosts } == true

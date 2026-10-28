@@ -28,7 +28,8 @@ class XtreamRepository(private val api: NetworkApi) {
      */
     suspend fun fetchAccountInfo(creds: XtreamCredentials): XtreamAccountInfo {
         val obj = api.getJson(playerApi(creds, emptyMap())) as? JsonObject ?: error("Risposta Xtream non valida")
-        val info = obj["user_info"] as? JsonObject ?: error("Il pannello non ha restituito le informazioni account")
+        // Come `authenticate` dell'allegato: alcuni pannelli omettono user_info, non è un errore.
+        val info = obj["user_info"] as? JsonObject ?: return XtreamAccountInfo()
         return accountInfoOf(obj, info)
     }
 
@@ -45,6 +46,7 @@ class XtreamRepository(private val api: NetworkApi) {
             isTrial = info.stringOrNull("is_trial")?.let { it == "1" || it.equals("true", true) },
             createdAt = info.longOrNull("created_at"),
             serverTimezone = server?.stringOrNull("timezone"),
+            auth = info.intOrNull("auth"),
         )
     }
 

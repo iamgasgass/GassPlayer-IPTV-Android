@@ -8,11 +8,11 @@ import java.util.Date
 import java.util.Locale
 
 class BackupService(private val context: Context, private val prefs: AppPreferences) {
-    /**
-     * Backup sorgenti nel formato di SourceBackupCodec.swift (leggibile anche dall'app iOS: "Importa backup"
-     * nelle Sorgenti); Android lo rilegge con [importAny].
-     */
+    /** Backup sorgenti nel formato Android dell'allegato (invariato). */
     suspend fun exportSources(selectedSources: List<MediaSourceConfig>? = null): String =
+        JsonStore.json.encodeToString(SourceBackup(sources = selectedSources ?: prefs.sourcesFlow.first()))
+    /** Backup sorgenti nel formato di SourceBackupCodec.swift, da incollare in "Importa backup" sull'app iOS. */
+    suspend fun exportSourcesForIos(selectedSources: List<MediaSourceConfig>? = null): String =
         IosBackupCodec.encodeSources(selectedSources ?: prefs.sourcesFlow.first())
     suspend fun exportPreferences(): String = JsonStore.json.encodeToString(PreferencesBackup(settings = prefs.settingsFlow.first()))
     /** Preferenze nel formato di AppPreferencesBackupCodec.swift (incollabile in Impostazioni → Importa su iOS). */
@@ -35,7 +35,11 @@ class BackupService(private val context: Context, private val prefs: AppPreferen
         for (source in imported) {
             val duplicate = current.any { it.host.equals(source.host, ignoreCase = true) && it.username == source.username }
             if (duplicate) continue
-            current += source.copy(id = java.util.UUID.randomUUID().toString(), sortOrder = current.size, isPinned = false)
+            // Come l'allegato Android, la sorgente ripristinata conserva id, ordine e "fissata" quando non entrano in
+            // conflitto con quelle già presenti (così preferiti e cronologia restano collegati); altrimenti nuovo id
+            // e coda dell'elenco come su iOS.
+            val idFree = current.none { it.id == source.id }
+            current += if (idFree) source else source.copy(id = java.util.UUID.randomUUID().toString(), sortOrder = current.size, isPinned = false)
             added++
         }
         if (added > 0) prefs.saveSources(current)

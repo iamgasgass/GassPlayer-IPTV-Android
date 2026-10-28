@@ -126,16 +126,17 @@ class MediaDetailLoader(
             ratings = MediaRatings(tmdbPercent = seed.xtreamRating?.takeIf { it > 0 }?.let { (it * 10).roundToInt() }),
         )
 
-        if (tmdbApiKey.isBlank()) return detail
-
-        val found = tmdb.fullDetails(
-            title = seed.title,
-            isSeries = seed.isSeries,
-            apiKey = tmdbApiKey,
-            year = seed.year,
-            tmdbId = seed.tmdbId,
-            castNames = seed.castNames,
-        ) ?: return detail
+        val found = if (tmdbApiKey.isBlank()) null else {
+            tmdb.fullDetails(
+                title = seed.title,
+                isSeries = seed.isSeries,
+                apiKey = tmdbApiKey,
+                year = seed.year,
+                tmdbId = seed.tmdbId,
+                castNames = seed.castNames,
+            ) ?: fallbackTmdb(seed, tmdbApiKey)
+        }
+        if (found == null) return withExternalRatings(detail, seed, null, null, omdbApiKey, traktClientId)
 
         val tmdbCast = found.castMembers.take(12).mapIndexed { index, member ->
             MediaCastMember(id = "tmdb-$index-${member.name}", name = member.name, role = member.character, photoUrl = member.profileUrl)
@@ -157,11 +158,68 @@ class MediaDetailLoader(
             tmdb = found,
         )
 
-        val imdbId = detail.imdbId ?: return detail
+        return withExternalRatings(detail, seed, found.originalTitle, detail.imdbId, omdbApiKey, traktClientId)
+    }
+
+    /**
+     * Comportamento dell'allegato Android quando il matching di precisione non trova nulla: id del pannello,
+     * poi il PRIMO risultato della ricerca per tipo (film/serie). Così nessuna scheda resta senza dati TMDB
+     * rispetto alla versione precedente.
+     */
+    private suspend fun fallbackTmdb(seed: MediaDetailSeed, apiKey: String): MetadataResult? {
+        seed.tmdbId?.takeIf { it.isNotBlank() }?.let { id -> safe { tmdb.details(id, apiKey, seed.isSeries) } }?.let { return it }
+        // Titolo come nell'allegato, poi ripulito dai tag del provider ("IT - Titolo [4K]" → "Titolo").
+        val queries = listOf(seed.title, TmdbTitleMatcher.parseTitle(seed.title).query).filter { it.isNotBlank() }.distinct()
+        val first = queries.firstNotNullOfOrNull { query ->
+            safe { if (seed.isSeries) tmdb.searchSeries(query, apiKey) else tmdb.searchMovies(query, apiKey) }?.firstOrNull()
+        } ?: return null
+        return safe { tmdb.details(first.id, apiKey, seed.isSeries) } ?: first
+    }
+
+    /**
+     * Valutazioni esterne. Con l'IMDb id (da TMDB) esattamente come iOS. Senza IMDb id, come l'allegato Android:
+     * OMDb per titolo (titolo originale, poi titolo); l'IMDb id trovato da OMDb, o dalla ricerca Trakt, serve poi
+     * per il voto Trakt.
+     */
+    private suspend fun withExternalRatings(
+        base: MediaDetail,
+        seed: MediaDetailSeed,
+        originalTitle: String?,
+        knownImdbId: String?,
+        omdbApiKey: String,
+        traktClientId: String,
+    ): MediaDetail {
+        var detail = base
+        var imdbId = knownImdbId
+        if (imdbId == null && omdbApiKey.isNotBlank()) {
+            val titles = listOfNotNull(originalTitle, TmdbTitleMatcher.parseTitle(seed.title).query.takeIf { it.isNotBlank() }, seed.title).distinct()
+            for (title in titles) {
+                val (foundId, foundRatings) = safe { omdb.ratingsByTitle(title, omdbApiKey, detail.year, seed.isSeries) } ?: continue
+                detail = detail.copy(
+                    ratings = detail.ratings.copy(
+                        imdbScore = foundRatings.imdbScore ?: detail.ratings.imdbScore,
+                        rottenTomatoesPercent = foundRatings.rottenTomatoesPercent ?: detail.ratings.rottenTomatoesPercent,
+                        metacriticScore = foundRatings.metacriticScore ?: detail.ratings.metacriticScore,
+                    ),
+                    imdbId = foundId ?: detail.imdbId,
+                )
+                imdbId = foundId
+                break
+            }
+            if (imdbId != null) {
+                val traktRating = if (traktClientId.isBlank()) null else safe { trakt.ratings(imdbId!!, seed.isSeries, traktClientId.trim()) }
+                return detail.copy(ratings = detail.ratings.copy(traktPercent = traktRating?.rating?.let { (it * 10).roundToInt() } ?: detail.ratings.traktPercent))
+            }
+        }
+        if (imdbId == null && traktClientId.isNotBlank()) {
+            imdbId = safe { trakt.imdbIdForTitle(originalTitle ?: TmdbTitleMatcher.parseTitle(seed.title).query, seed.isSeries, traktClientId.trim(), detail.year) }
+            detail = detail.copy(imdbId = imdbId ?: detail.imdbId)
+        }
+        val id = imdbId ?: return detail
 
         return coroutineScope {
-            val omdbD = async { if (omdbApiKey.isBlank()) null else safe { omdb.ratings(imdbId, omdbApiKey) } }
-            val traktD = async { if (traktClientId.isBlank()) null else safe { trakt.ratings(imdbId, seed.isSeries, traktClientId.trim()) } }
+            val omdbD = async { if (omdbApiKey.isBlank()) null else safe { omdb.ratings(id, omdbApiKey) } }
+            val traktD = async { if (traktClientId.isBlank()) null else safe { trakt.ratings(id, seed.isSeries, traktClientId.trim()) } }
             val omdbRatings = omdbD.await()
             val traktRatings = traktD.await()
             detail.copy(

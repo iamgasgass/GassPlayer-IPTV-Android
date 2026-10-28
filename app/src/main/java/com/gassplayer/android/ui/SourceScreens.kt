@@ -263,7 +263,10 @@ fun SourcesView(
         SourceActionRow(Icons.Default.FileDownload, "Esporta sorgenti (JSON)", "Il file contiene le impostazioni delle sorgenti e può includere credenziali", Color(0xFF73A7FF).readable()) {
             scope.launch { exportJson = runCatching { app.backup.exportSources() }.getOrElse { "Errore: ${it.message}" } }
         }
-        SourceActionRow(Icons.Default.FileUpload, "Importa sorgenti (JSON)", "Importa un backup GassPlayer compatibile", Color(0xFF73A7FF).readable()) { importJson = ""; importDialog = true }
+        SourceActionRow(Icons.Default.FileDownload, "Esporta sorgenti per iPhone/iPad", "Formato dell'app iOS (Sorgenti → Importa backup)", Color(0xFF73A7FF).readable()) {
+            scope.launch { exportJson = runCatching { app.backup.exportSourcesForIos() }.getOrElse { "Errore: ${it.message}" } }
+        }
+        SourceActionRow(Icons.Default.FileUpload, "Importa sorgenti (JSON)", "Importa un backup GassPlayer Android o iOS", Color(0xFF73A7FF).readable()) { importJson = ""; importDialog = true }
         SourceActionRow(Icons.Default.Shield, "Verifica tutte le sorgenti Xtream", if (verifyingAll) "Verifica in corso…" else "Controlla connessione e catalogo", SourcesGreen, enabled = !verifyingAll && sources.any { it.type == SourceType.XTREAM }) {
             scope.launch {
                 verifyingAll = true
@@ -505,7 +508,7 @@ private fun SourceManageView(
             accountError = null
             // iOS SourceManageView: fetchAccountInfo (stato reale anche se scaduto/disabilitato), non authenticate.
             val result = runCatching { app.xtream.fetchAccountInfo(XtreamCredentials(current.host, current.username.orEmpty(), current.password.orEmpty())) }
-            result.onSuccess { account = it }.onFailure { accountError = it.message ?: "Errore account Xtream" }
+            result.onSuccess { account = it; accountError = it.problemMessage() }.onFailure { accountError = it.message ?: "Errore account Xtream" }
             accountLoading = false
         }
     }

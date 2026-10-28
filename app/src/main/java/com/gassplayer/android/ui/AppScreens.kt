@@ -2836,7 +2836,7 @@ fun AddSourceDialog(app: GassPlayerApplication, vm: MainViewModel, onDismiss: ()
             onClick = { create.launch("gassplayer-backup.json") },
             modifier = Modifier.then(entryFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier).remoteFocusOutline(cornerRadius = 50.dp),
         ) { Text("Esporta sorgenti + preferenze") }
-        OutlinedButton(onClick = { pick.launch(arrayOf("application/json", "text/*")) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp)) { Text("Importa JSON (Android o iOS)") }
+        OutlinedButton(onClick = { pick.launch(arrayOf("application/json", "text/*")) }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp)) { Text("Importa JSON") }
         OutlinedButton(onClick = { createIosPrefs.launch("gassplayer-preferenze-ios.json") }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp)) { Text("Esporta preferenze per iPhone/iPad") }
         // CloudSyncService.swift: "Sincronizza" invia sorgenti + preferiti, "Ripristina" aggiunge le sorgenti mancanti.
         Button(onClick = { scope.launch { runCatching { app.cloud.syncToCloud() }.onSuccess { status = "Sorgenti e preferiti sincronizzati con il backup Android." }.onFailure { status = "Sincronizzazione non riuscita: ${it.message}" } } }, modifier = Modifier.remoteFocusOutline(cornerRadius = 50.dp)) { Text("Sincronizza con backup Android") }

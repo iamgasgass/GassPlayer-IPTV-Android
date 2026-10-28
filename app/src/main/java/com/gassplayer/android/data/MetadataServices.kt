@@ -378,6 +378,29 @@ class OmdbService(private val api: NetworkApi) {
         OmdbRatings(imdb, rt, metacritic).also { cache[imdbId] = it }
     }
 
+    /**
+     * Ricerca OMDb per TITOLO (comportamento dell'allegato Android, usato quando TMDB non fornisce l'IMDb id):
+     * voti + `imdbID` del titolo trovato, così anche Trakt può essere interrogato.
+     */
+    suspend fun ratingsByTitle(title: String, apiKey: String, year: String? = null, isSeries: Boolean = false): Pair<String?, OmdbRatings>? = withContext(Dispatchers.IO) {
+        if (apiKey.isBlank() || title.isBlank()) return@withContext null
+        val typeParam = if (isSeries) "&type=series" else "&type=movie"
+        val yearParam = year?.takeIf { it.isNotBlank() }?.let { "&y=${enc(it)}" }.orEmpty()
+        val o = api.getJson("https://www.omdbapi.com/?apikey=${enc(apiKey)}&t=${enc(title)}$typeParam$yearParam").jsonObject
+        if (o["Response"]?.jsonPrimitive?.contentOrNull?.lowercase() != "true") return@withContext null
+        val list = o["Ratings"]?.jsonArray?.mapNotNull { el ->
+            val r = el as? JsonObject ?: return@mapNotNull null
+            (r["Source"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null) to r["Value"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        }.orEmpty()
+        val ratings = OmdbRatings(
+            o["imdbRating"]?.jsonPrimitive?.contentOrNull?.takeIf { it != "N/A" }?.toDoubleOrNull(),
+            list.firstOrNull { it.first == "Rotten Tomatoes" }?.second?.replace("%", "")?.trim()?.toIntOrNull(),
+            o["Metascore"]?.jsonPrimitive?.contentOrNull?.takeIf { it != "N/A" }?.toIntOrNull()
+                ?: list.firstOrNull { it.first == "Metacritic" }?.second?.substringBefore('/')?.trim()?.toIntOrNull()
+        )
+        o["imdbID"]?.jsonPrimitive?.contentOrNull?.takeIf { it.startsWith("tt") } to ratings
+    }
+
     suspend fun lookup(title: String, apiKey: String, imdbId: String? = null): Ratings? = withContext(Dispatchers.IO) { if (apiKey.isBlank()) return@withContext null; val o = api.getJson("https://www.omdbapi.com/?apikey=${enc(apiKey)}&" + (if (!imdbId.isNullOrBlank()) "i=${enc(imdbId)}" else "t=${enc(title)}")).jsonObject; Ratings(o["imdbRating"]?.jsonPrimitive?.doubleOrNull, o["Ratings"]?.jsonArray?.firstOrNull { it.jsonObject["Source"]?.jsonPrimitive?.contentOrNull == "Rotten Tomatoes" }?.jsonObject?.get("Value")?.jsonPrimitive?.contentOrNull, o["Metascore"]?.jsonPrimitive?.intOrNull) }
     private fun enc(v:String)=URLEncoder.encode(v,"UTF-8")
 }
@@ -393,6 +416,27 @@ class TraktService(private val api: NetworkApi) {
      * Pubblico: basta il Client ID Trakt nell'header, nessun login. (Prima Android usava lo `score` di
      * `/search/movie`, che è la pertinenza della ricerca e non un voto, e solo per i film.)
      */
+    /**
+     * Firma dell'allegato (`ratings(title, clientId)`, voto 0-100 per un film cercato per titolo), mantenuta per
+     * compatibilità: ora restituisce il vero voto community (prima era lo `score` di pertinenza della ricerca).
+     */
+    suspend fun ratings(title: String, clientId: String): Double? {
+        val imdb = imdbIdForTitle(title, isSeries = false, clientId = clientId) ?: return null
+        return ratings(imdb, isSeries = false, clientId = clientId)?.rating?.times(10)
+    }
+
+    /** IMDb id del primo risultato della ricerca Trakt per titolo (riserva dell'allegato quando TMDB non lo fornisce). */
+    suspend fun imdbIdForTitle(title: String, isSeries: Boolean, clientId: String, year: String? = null): String? = withContext(Dispatchers.IO) {
+        if (clientId.isBlank() || title.isBlank()) return@withContext null
+        val type = if (isSeries) "show" else "movie"
+        val yearParam = year?.takeIf { it.isNotBlank() }?.let { "&years=${URLEncoder.encode(it, "UTF-8")}" }.orEmpty()
+        val results = api.getJson(
+            "https://api.trakt.tv/search/$type?query=${URLEncoder.encode(title, "UTF-8")}&limit=1$yearParam",
+            mapOf("trakt-api-version" to "2", "trakt-api-key" to clientId)
+        ) as? JsonArray ?: return@withContext null
+        results.firstOrNull()?.jsonObject?.get(type)?.jsonObject?.get("ids")?.jsonObject?.get("imdb")?.jsonPrimitive?.contentOrNull?.takeIf { it.startsWith("tt") }
+    }
+
     suspend fun ratings(imdbId: String, isSeries: Boolean, clientId: String): TraktRatings? = withContext(Dispatchers.IO) {
         if (clientId.isBlank() || imdbId.isBlank()) return@withContext null
         val path = if (isSeries) "shows" else "movies"

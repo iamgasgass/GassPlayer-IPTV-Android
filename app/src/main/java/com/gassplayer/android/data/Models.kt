@@ -41,7 +41,17 @@ data class XtreamAccountInfo(
     val isTrial: Boolean? = null,
     val createdAt: Long? = null,
     val serverTimezone: String? = null,
-)
+    /** `user_info.auth` (0 = credenziali rifiutate). */
+    val auth: Int? = null,
+) {
+    /** Stessi messaggi di `XtreamRepository.authenticate` dell'allegato, mostrati accanto allo stato reale. */
+    fun problemMessage(): String? = when {
+        auth == 0 -> "Credenziali Xtream non valide"
+        status.equals("Disabled", true) || status.equals("Banned", true) -> "Account Xtream non attivo ($status)"
+        status.equals("Expired", true) -> "Account Xtream scaduto"
+        else -> null
+    }
+}
 
 @Serializable
 data class Category(val id: String, val name: String, val sourceId: String = "")
